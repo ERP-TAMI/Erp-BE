@@ -4,21 +4,34 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { typeOrmConfig } from './database/typeorm.config';
-
-const databaseImports =
-  process.env.DB_AUTO_CONNECT === 'true'
-    ? [
-        TypeOrmModule.forRootAsync({
-          useFactory: typeOrmConfig,
-        }),
-      ]
-    : [];
+import { AuthModule } from './features/auth/auth.module';
+import { MasterDataModule } from './features/master-data/master-data.module';
+import { DocumentsModule } from './features/documents/documents.module';
+import { StylesModule } from './features/styles/styles.module';
+import { DraftBomsModule } from './features/draft-boms/draft-boms.module';
+import { PurchaseOrdersModule } from './features/purchase-orders/purchase-orders.module';
+import { BomsModule } from './features/boms/boms.module';
+import { ProductionModule } from './features/production/production.module';
+import { NotificationsModule } from './features/notifications/notifications.module';
+import { AuditModule } from './features/audit/audit.module';
+import { PlatformModule } from './features/platform/platform.module';
+import { AppLoggerModule } from './common/logger/logger.module';
 
 const imports = [
-  ConfigModule.forRoot({
-    isGlobal: true,
-  }),
-  ...databaseImports,
+  ConfigModule.forRoot({ isGlobal: true }),
+  AppLoggerModule,
+  TypeOrmModule.forRootAsync({ useFactory: typeOrmConfig }),
+  AuthModule,
+  MasterDataModule,
+  DocumentsModule,
+  StylesModule,
+  DraftBomsModule,
+  PurchaseOrdersModule,
+  BomsModule,
+  ProductionModule,
+  NotificationsModule,
+  AuditModule,
+  PlatformModule,
 ];
 
 @Module({
