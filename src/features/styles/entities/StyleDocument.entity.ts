@@ -1,0 +1,20 @@
+import { Entity, Column, PrimaryColumn } from 'typeorm';
+import { DocumentPurpose } from '../../../common/enums/database.enums';
+
+@Entity('style_documents')
+export class StyleDocument {
+  @PrimaryColumn({ type: 'uuid' })
+  styleId: string;
+
+  @PrimaryColumn({ type: 'uuid' })
+  documentId: string;
+
+  @Column({ type: 'enum', enum: DocumentPurpose, enumName: 'document_purpose' })
+  purpose: DocumentPurpose;
+
+  @Column({ type: 'uuid', nullable: true, name: 'linked_by' })
+  linkedBy: string;
+
+  @Column({ type: 'timestamptz', name: 'linked_at' })
+  linkedAt: Date;
+}
