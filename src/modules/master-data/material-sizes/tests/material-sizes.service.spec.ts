@@ -1,7 +1,8 @@
 import { ConflictException, NotFoundException } from '@nestjs/common';
-import { RecordStatus } from '../../../common/enums/database.enums';
-import { MaterialSizeReferenceMap } from './material-size-reference-map';
-import { MaterialSizesService } from './material-sizes.service';
+import { RecordStatus } from '../../../../common/enums/database.enums';
+import { MaterialSizeReferenceMap } from '../repositories/material-size-reference-map';
+import { MaterialSizesRepository } from '../repositories/material-sizes.repository';
+import { MaterialSizesService } from '../services/material-sizes.service';
 
 describe('MaterialSizesService', () => {
   const materialId = 'c5ab824e-8e6d-42b0-8d9d-a02d34762d40';
@@ -17,18 +18,18 @@ describe('MaterialSizesService', () => {
     lowStockThreshold: '10.0000',
     status: RecordStatus.ACTIVE,
   };
-  const sizes = {
-    find: jest.fn(),
-    findOneBy: jest.fn(),
+  const repository = {
+    materialExists: jest.fn(),
+    findAll: jest.fn(),
+    findById: jest.fn(),
+    findByCode: jest.fn(),
     create: jest.fn(),
     save: jest.fn(),
     remove: jest.fn(),
   };
-  const materials = { findOneBy: jest.fn() };
   const referenceMap = { hasReference: jest.fn() };
   const service = new MaterialSizesService(
-    materials as never,
-    sizes as never,
+    repository as unknown as MaterialSizesRepository,
     referenceMap as unknown as MaterialSizeReferenceMap,
   );
 
@@ -38,10 +39,10 @@ describe('MaterialSizesService', () => {
   });
 
   it('normalizes size code, applies defaults, and returns numeric values', async () => {
-    materials.findOneBy.mockResolvedValue(material);
-    sizes.findOneBy.mockResolvedValue(null);
-    sizes.create.mockImplementation((value) => value);
-    sizes.save.mockImplementation(async (value) => ({
+    repository.materialExists.mockResolvedValue(Boolean(material));
+    repository.findByCode.mockResolvedValue(null);
+    repository.create.mockImplementation((value) => value);
+    repository.save.mockImplementation(async (value) => ({
       id: sizeId,
       ...value,
       unitCost: '0.00',
@@ -61,20 +62,17 @@ describe('MaterialSizesService', () => {
   });
 
   it('rejects a duplicate size within one material', async () => {
-    materials.findOneBy.mockResolvedValue(material);
-    sizes.findOneBy.mockResolvedValue({ id: 'existing' });
+    repository.materialExists.mockResolvedValue(Boolean(material));
+    repository.findByCode.mockResolvedValue({ id: 'existing' });
 
     await expect(
       service.create(materialId, { sizeCode: ' m ' }),
     ).rejects.toThrow(ConflictException);
-    expect(sizes.findOneBy).toHaveBeenCalledWith({
-      materialId,
-      sizeCode: 'M',
-    });
+    expect(repository.findByCode).toHaveBeenCalledWith(materialId, 'M');
   });
 
   it('returns not found when the parent material does not exist', async () => {
-    materials.findOneBy.mockResolvedValue(null);
+    repository.materialExists.mockResolvedValue(false);
 
     await expect(service.create(materialId, { sizeCode: 'M' })).rejects.toThrow(
       NotFoundException,
@@ -82,10 +80,9 @@ describe('MaterialSizesService', () => {
   });
 
   it('normalizes size code when updating without restoring the raw value', async () => {
-    sizes.findOneBy
-      .mockResolvedValueOnce({ ...existingSize })
-      .mockResolvedValueOnce(null);
-    sizes.save.mockImplementation(async (value) => value);
+    repository.findById.mockResolvedValueOnce({ ...existingSize });
+    repository.findByCode.mockResolvedValueOnce(null);
+    repository.save.mockImplementation(async (value) => value);
 
     await expect(
       service.update(materialId, sizeId, {
@@ -93,29 +90,29 @@ describe('MaterialSizesService', () => {
         barcode: ' 12345 ',
       }),
     ).resolves.toMatchObject({ sizeCode: 'XL', barcode: '12345' });
-    expect(sizes.save).toHaveBeenCalledWith(
+    expect(repository.save).toHaveBeenCalledWith(
       expect.objectContaining({ sizeCode: 'XL', barcode: '12345' }),
     );
   });
 
   it('clears an existing barcode when update receives an empty value', async () => {
-    sizes.findOneBy.mockResolvedValue({
+    repository.findById.mockResolvedValue({
       ...existingSize,
       barcode: '12345',
     });
-    sizes.save.mockImplementation(async (value) => value);
+    repository.save.mockImplementation(async (value) => value);
 
     await expect(
       service.update(materialId, sizeId, { barcode: '' }),
     ).resolves.toMatchObject({ barcode: null });
-    expect(sizes.save).toHaveBeenCalledWith(
+    expect(repository.save).toHaveBeenCalledWith(
       expect.objectContaining({ barcode: null }),
     );
   });
 
   it('updates status for a size belonging to the material', async () => {
-    sizes.findOneBy.mockResolvedValue({ ...existingSize });
-    sizes.save.mockImplementation(async (value) => value);
+    repository.findById.mockResolvedValue({ ...existingSize });
+    repository.save.mockImplementation(async (value) => value);
 
     await expect(
       service.updateStatus(materialId, sizeId, RecordStatus.INACTIVE),
@@ -123,20 +120,20 @@ describe('MaterialSizesService', () => {
   });
 
   it('blocks deletion when the reference map reports a consumer', async () => {
-    sizes.findOneBy.mockResolvedValue({ ...existingSize });
+    repository.findById.mockResolvedValue({ ...existingSize });
     referenceMap.hasReference.mockResolvedValue(true);
 
     await expect(service.remove(materialId, sizeId)).rejects.toThrow(
       ConflictException,
     );
-    expect(sizes.remove).not.toHaveBeenCalled();
+    expect(repository.remove).not.toHaveBeenCalled();
   });
 
   it('deletes an unreferenced size', async () => {
-    sizes.findOneBy.mockResolvedValue({ ...existingSize });
+    repository.findById.mockResolvedValue({ ...existingSize });
 
     await expect(service.remove(materialId, sizeId)).resolves.toBeUndefined();
-    expect(sizes.remove).toHaveBeenCalledWith(
+    expect(repository.remove).toHaveBeenCalledWith(
       expect.objectContaining({ id: sizeId }),
     );
   });

@@ -3,34 +3,26 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import { RecordStatus } from '../../../common/enums/database.enums';
-import { Material } from '../../../features/master-data/entities/Material.entity';
-import { MaterialSize } from '../../../features/master-data/entities/MaterialSize.entity';
-import { CreateMaterialSizeDto } from './dto/request/create-material-size.dto';
-import { UpdateMaterialSizeDto } from './dto/request/update-material-size.dto';
-import { MaterialSizeResponseDto } from './dto/response/material-size-response.dto';
-import { MaterialSizeReferenceMap } from './material-size-reference-map';
+import { RecordStatus } from '../../../../common/enums/database.enums';
+import { MaterialSize } from '../../../../features/master-data/entities/MaterialSize.entity';
+import { CreateMaterialSizeDto } from '../dto/request/create-material-size.dto';
+import { UpdateMaterialSizeDto } from '../dto/request/update-material-size.dto';
+import { MaterialSizeResponseDto } from '../dto/response/material-size-response.dto';
+import { MaterialSizeReferenceMap } from '../repositories/material-size-reference-map';
+import { MaterialSizesRepository } from '../repositories/material-sizes.repository';
 
 @Injectable()
 export class MaterialSizesService {
   constructor(
-    @InjectRepository(Material)
-    private readonly materials: Repository<Material>,
-    @InjectRepository(MaterialSize)
-    private readonly sizes: Repository<MaterialSize>,
+    private readonly repository: MaterialSizesRepository,
     private readonly referenceMap: MaterialSizeReferenceMap,
   ) {}
 
   async list(materialId: string): Promise<MaterialSizeResponseDto[]> {
     await this.ensureMaterial(materialId);
-    return (
-      await this.sizes.find({
-        where: { materialId },
-        order: { sizeCode: 'ASC' },
-      })
-    ).map(MaterialSizeResponseDto.fromEntity);
+    return (await this.repository.findAll(materialId)).map(
+      MaterialSizeResponseDto.fromEntity,
+    );
   }
 
   async create(
@@ -40,7 +32,7 @@ export class MaterialSizesService {
     await this.ensureMaterial(materialId);
     const sizeCode = this.normalizeSizeCode(input.sizeCode);
     await this.assertUnique(materialId, sizeCode);
-    const size = this.sizes.create({
+    const size = this.repository.create({
       materialId,
       sizeCode,
       barcode: this.normalizeBarcode(input.barcode) ?? undefined,
@@ -93,11 +85,11 @@ export class MaterialSizesService {
         'Material size cannot be deleted because it is referenced',
       );
     }
-    await this.sizes.remove(size);
+    await this.repository.remove(size);
   }
 
   private async ensureMaterial(id: string): Promise<void> {
-    if (!(await this.materials.findOneBy({ id }))) {
+    if (!(await this.repository.materialExists(id))) {
       throw new NotFoundException('Material not found');
     }
   }
@@ -106,7 +98,7 @@ export class MaterialSizesService {
     materialId: string,
     id: string,
   ): Promise<MaterialSize> {
-    const size = await this.sizes.findOneBy({ id, materialId });
+    const size = await this.repository.findById(materialId, id);
     if (!size) throw new NotFoundException('Material size not found');
     return size;
   }
@@ -115,7 +107,7 @@ export class MaterialSizesService {
     materialId: string,
     sizeCode: string,
   ): Promise<void> {
-    if (await this.sizes.findOneBy({ materialId, sizeCode })) {
+    if (await this.repository.findByCode(materialId, sizeCode)) {
       throw new ConflictException('Material size already exists');
     }
   }
@@ -130,7 +122,7 @@ export class MaterialSizesService {
 
   private async save(size: MaterialSize): Promise<MaterialSize> {
     try {
-      return await this.sizes.save(size);
+      return await this.repository.save(size);
     } catch (error) {
       const code = (error as { driverError?: { code?: string } }).driverError
         ?.code;

@@ -10,11 +10,11 @@ import {
   Patch,
   Post,
 } from '@nestjs/common';
-import { CreateMaterialSizeDto } from './dto/request/create-material-size.dto';
-import { UpdateMaterialSizeStatusDto } from './dto/request/update-material-size-status.dto';
-import { UpdateMaterialSizeDto } from './dto/request/update-material-size.dto';
-import { MaterialSizeResponseDto } from './dto/response/material-size-response.dto';
-import { MaterialSizesService } from './material-sizes.service';
+import { CreateMaterialSizeDto } from '../dto/request/create-material-size.dto';
+import { UpdateMaterialSizeStatusDto } from '../dto/request/update-material-size-status.dto';
+import { UpdateMaterialSizeDto } from '../dto/request/update-material-size.dto';
+import { MaterialSizeResponseDto } from '../dto/response/material-size-response.dto';
+import { MaterialSizesService } from '../services/material-sizes.service';
 
 @Controller('masters/materials/:materialId/sizes')
 export class MaterialSizesController {
