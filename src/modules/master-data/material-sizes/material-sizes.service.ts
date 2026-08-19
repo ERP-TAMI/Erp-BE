@@ -43,7 +43,7 @@ export class MaterialSizesService {
     const size = this.sizes.create({
       materialId,
       sizeCode,
-      barcode: this.normalizeBarcode(input.barcode),
+      barcode: this.normalizeBarcode(input.barcode) ?? undefined,
       unitCost: input.unitCost ?? 0,
       currentStock: input.currentStock ?? 0,
       lowStockThreshold: input.lowStockThreshold ?? 10,
@@ -66,7 +66,7 @@ export class MaterialSizesService {
       }
     }
     if (input.barcode !== undefined) {
-      size.barcode = this.normalizeBarcode(input.barcode) as string;
+      size.barcode = this.normalizeBarcode(input.barcode) as unknown as string;
     }
     if (input.unitCost !== undefined) size.unitCost = input.unitCost;
     if (input.currentStock !== undefined)
@@ -124,8 +124,8 @@ export class MaterialSizesService {
     return value.trim().toUpperCase();
   }
 
-  private normalizeBarcode(value?: string | null): string | undefined {
-    return value?.trim() || undefined;
+  private normalizeBarcode(value?: string | null): string | null {
+    return value?.trim() || null;
   }
 
   private async save(size: MaterialSize): Promise<MaterialSize> {

@@ -98,6 +98,21 @@ describe('MaterialSizesService', () => {
     );
   });
 
+  it('clears an existing barcode when update receives an empty value', async () => {
+    sizes.findOneBy.mockResolvedValue({
+      ...existingSize,
+      barcode: '12345',
+    });
+    sizes.save.mockImplementation(async (value) => value);
+
+    await expect(
+      service.update(materialId, sizeId, { barcode: '' }),
+    ).resolves.toMatchObject({ barcode: null });
+    expect(sizes.save).toHaveBeenCalledWith(
+      expect.objectContaining({ barcode: null }),
+    );
+  });
+
   it('updates status for a size belonging to the material', async () => {
     sizes.findOneBy.mockResolvedValue({ ...existingSize });
     sizes.save.mockImplementation(async (value) => value);
