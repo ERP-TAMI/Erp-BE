@@ -10,6 +10,7 @@ import { PRODUCTION_ENTITIES } from '../features/production/entities';
 import { NOTIFICATIONS_ENTITIES } from '../features/notifications/entities';
 import { AUDIT_ENTITIES } from '../features/audit/entities';
 import { PLATFORM_ENTITIES } from '../features/platform/entities';
+import { MaterialGroup } from '../features/master-data/entities/MaterialGroup.entity';
 
 const entities = [
   ...AUTH_ENTITIES,
@@ -42,5 +43,19 @@ describe('schema entities', () => {
         'audit_events',
       ]),
     );
+  });
+
+  it('maps the material group display order column with a zero default', () => {
+    const displayOrderColumn = getMetadataArgsStorage().columns.find(
+      (column) =>
+        column.target === MaterialGroup &&
+        column.propertyName === 'displayOrder',
+    );
+
+    expect(displayOrderColumn?.options).toMatchObject({
+      name: 'display_order',
+      type: 'integer',
+      default: 0,
+    });
   });
 });
