@@ -8,6 +8,7 @@ import { AuthModule } from './features/auth/auth.module';
 import { MasterDataModule } from './features/master-data/master-data.module';
 import { MaterialGroupsModule } from './modules/master-data/material-groups/material-groups.module';
 import { MaterialsModule } from './modules/master-data/materials/materials.module';
+import { MaterialSizesModule } from './modules/master-data/material-sizes/material-sizes.module';
 import { DocumentsModule } from './features/documents/documents.module';
 import { StylesModule } from './features/styles/styles.module';
 import { DraftBomsModule } from './features/draft-boms/draft-boms.module';
@@ -27,6 +28,7 @@ const imports = [
   MasterDataModule,
   MaterialGroupsModule,
   MaterialsModule,
+  MaterialSizesModule,
   DocumentsModule,
   StylesModule,
   DraftBomsModule,
