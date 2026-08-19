@@ -9,6 +9,7 @@ import { MaterialsService } from '../src/modules/master-data/materials/services/
 describe('Materials API (e2e)', () => {
   const id = 'c5ab824e-8e6d-42b0-8d9d-a02d34762d40';
   const groupId = 'c6df31f6-7df0-43d1-a5e7-03fa5087bf90';
+  const unitId = '75f6349c-6866-478c-866a-33c0148df9b6';
   const material = {
     id,
     materialCode: 'COTTON',
@@ -22,6 +23,7 @@ describe('Materials API (e2e)', () => {
     create: jest.fn(),
     update: jest.fn(),
     updateStatus: jest.fn(),
+    remove: jest.fn(),
   };
   let app: INestApplication;
 
@@ -52,6 +54,11 @@ describe('Materials API (e2e)', () => {
         materialCode: ' cotton ',
         materialName: ' Cotton ',
         materialGroupId: groupId,
+        defaultUnitId: unitId,
+        defaultYieldPct: 2.5,
+        lastUnitCost: 35000,
+        currentStock: 12.5,
+        lowStockThreshold: 3,
       })
       .expect(201)
       .expect(material);
@@ -59,6 +66,11 @@ describe('Materials API (e2e)', () => {
       materialCode: 'COTTON',
       materialName: 'Cotton',
       materialGroupId: groupId,
+      defaultUnitId: unitId,
+      defaultYieldPct: 2.5,
+      lastUnitCost: 35000,
+      currentStock: 12.5,
+      lowStockThreshold: 3,
     });
   });
 
@@ -69,8 +81,50 @@ describe('Materials API (e2e)', () => {
         materialCode: 'COTTON',
         materialName: 'Cotton',
         materialGroupId: 'not-a-uuid',
+        defaultUnitId: unitId,
       })
       .expect(400);
     expect(service.create).not.toHaveBeenCalled();
+  });
+
+  it('rejects negative inventory values before they reach the service', async () => {
+    await request(app.getHttpServer())
+      .post('/masters/materials')
+      .send({
+        materialCode: 'COTTON',
+        materialName: 'Cotton',
+        materialGroupId: groupId,
+        defaultUnitId: unitId,
+        currentStock: -1,
+      })
+      .expect(400);
+    expect(service.create).not.toHaveBeenCalled();
+  });
+
+  it('passes list filters to the service', async () => {
+    service.findAll.mockResolvedValue([material]);
+
+    await request(app.getHttpServer())
+      .get(
+        `/masters/materials?search=cotton&materialGroupId=${groupId}&status=active`,
+      )
+      .expect(200)
+      .expect([material]);
+
+    expect(service.findAll).toHaveBeenCalledWith({
+      search: 'cotton',
+      materialGroupId: groupId,
+      status: RecordStatus.ACTIVE,
+    });
+  });
+
+  it('deletes a material through the HTTP API', async () => {
+    service.remove.mockResolvedValue(undefined);
+
+    await request(app.getHttpServer())
+      .delete(`/masters/materials/${id}`)
+      .expect(204);
+
+    expect(service.remove).toHaveBeenCalledWith(id);
   });
 });
