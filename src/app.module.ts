@@ -9,6 +9,7 @@ import { MasterDataModule } from './features/master-data/master-data.module';
 import { MaterialGroupsModule } from './modules/master-data/material-groups/material-groups.module';
 import { MaterialsModule } from './modules/master-data/materials/materials.module';
 import { MaterialSizesModule } from './modules/master-data/material-sizes/material-sizes.module';
+import { BomLinesModule } from './modules/production/bom-lines/bom-lines.module';
 import { DocumentsModule } from './features/documents/documents.module';
 import { StylesModule } from './features/styles/styles.module';
 import { DraftBomsModule } from './features/draft-boms/draft-boms.module';
@@ -29,6 +30,7 @@ const imports = [
   MaterialGroupsModule,
   MaterialsModule,
   MaterialSizesModule,
+  BomLinesModule,
   DocumentsModule,
   StylesModule,
   DraftBomsModule,
