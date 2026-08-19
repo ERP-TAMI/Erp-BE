@@ -3,8 +3,8 @@ import { Test } from '@nestjs/testing';
 import * as request from 'supertest';
 import { RecordStatus } from '../src/common/enums/database.enums';
 import { HttpExceptionFilter } from '../src/common/filters/http-exception.filter';
-import { MaterialSizesController } from '../src/modules/master-data/material-sizes/material-sizes.controller';
-import { MaterialSizesService } from '../src/modules/master-data/material-sizes/material-sizes.service';
+import { MaterialSizesController } from '../src/modules/master-data/material-sizes/controllers/material-sizes.controller';
+import { MaterialSizesService } from '../src/modules/master-data/material-sizes/services/material-sizes.service';
 
 describe('Material Sizes API (e2e)', () => {
   const materialId = 'c5ab824e-8e6d-42b0-8d9d-a02d34762d40';
