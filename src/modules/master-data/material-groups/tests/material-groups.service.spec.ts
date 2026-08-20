@@ -87,6 +87,19 @@ describe('MaterialGroupsService', () => {
     ).rejects.toThrow(ConflictException);
   });
 
+  it('rejects a duplicate normalized name when updating a group', async () => {
+    repository.findById.mockResolvedValue({ ...group });
+    repository.findByNormalizedName.mockResolvedValue({
+      ...group,
+      id: 'f38d4470-ad4f-4da0-b13c-90999a81432f',
+    });
+
+    await expect(
+      service.update(group.id, { name: ' FABRIC ' }),
+    ).rejects.toThrow(ConflictException);
+    expect(repository.save).not.toHaveBeenCalled();
+  });
+
   it('passes the active filter to the repository for material creation lookups', async () => {
     repository.findAll.mockResolvedValue([group]);
 
