@@ -109,14 +109,18 @@ describe('MaterialGroupsService', () => {
     expect(repository.findAll).toHaveBeenCalledWith(RecordStatus.ACTIVE);
   });
 
-  it('does not allow code changes after a material references the group', async () => {
-    repository.findById.mockResolvedValue(group);
+  it('allows changing a unique code without treating material references as a blocker', async () => {
+    repository.findById.mockResolvedValue({ ...group });
     repository.hasMaterialReference.mockResolvedValue(true);
+    repository.findByCode.mockResolvedValue(null);
+    repository.save.mockImplementation(async (materialGroup) => materialGroup);
 
     await expect(
       service.update(group.id, { code: 'NEW-FABRIC' }),
-    ).rejects.toThrow(ConflictException);
-    expect(repository.save).not.toHaveBeenCalled();
+    ).resolves.toMatchObject({ code: 'NEW-FABRIC' });
+    expect(repository.findByCode).toHaveBeenCalledWith('NEW-FABRIC');
+    expect(repository.hasMaterialReference).not.toHaveBeenCalled();
+    expect(repository.save).toHaveBeenCalled();
   });
 
   it('does not hard-delete a group that is referenced by materials', async () => {

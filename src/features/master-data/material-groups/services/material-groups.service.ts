@@ -61,11 +61,6 @@ export class MaterialGroupsService {
       dto.name === undefined ? undefined : this.normalizeName(dto.name);
 
     if (code && code !== materialGroup.code) {
-      if (await this.materialGroupsRepository.hasMaterialReference(id)) {
-        throw new ConflictException(
-          'Material group code cannot be changed after materials reference this group',
-        );
-      }
       await this.ensureCodeUnique(code, id);
       materialGroup.code = code;
     }
