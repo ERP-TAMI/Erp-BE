@@ -19,12 +19,12 @@ import {
   ApiOkResponse,
   ApiTags,
 } from '@nestjs/swagger';
-import { CreateMaterialGroupDto } from '../dto/request/create-material-group.dto';
-import { QueryMaterialGroupsDto } from '../dto/request/query-material-groups.dto';
-import { UpdateMaterialGroupDto } from '../dto/request/update-material-group.dto';
-import { UpdateMaterialGroupStatusDto } from '../dto/request/update-material-group-status.dto';
-import { MaterialGroupResponseDto } from '../dto/response/material-group-response.dto';
-import { MaterialGroupsService } from '../services/material-groups.service';
+import { CreateMaterialGroupDto } from './dto/create-material-group.dto';
+import { MaterialGroupResponseDto } from './dto/material-group-response.dto';
+import { QueryMaterialGroupsDto } from './dto/query-material-groups.dto';
+import { UpdateMaterialGroupStatusDto } from './dto/update-material-group-status.dto';
+import { UpdateMaterialGroupDto } from './dto/update-material-group.dto';
+import { MaterialGroupsService } from './material-groups.service';
 
 @ApiTags('Material Groups')
 @Controller('masters/material-groups')
@@ -61,9 +61,7 @@ export class MaterialGroupsController {
 
   @Patch(':id')
   @ApiOkResponse({ type: MaterialGroupResponseDto })
-  @ApiConflictResponse({
-    description: 'Code is immutable after a material references the group',
-  })
+  @ApiConflictResponse({ description: 'Code or name already exists' })
   update(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @Body() dto: UpdateMaterialGroupDto,

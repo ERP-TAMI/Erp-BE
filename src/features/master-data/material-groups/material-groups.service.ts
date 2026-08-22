@@ -3,28 +3,34 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
 import { randomUUID } from 'node:crypto';
-import { RecordStatus } from '../../../../common/enums/database.enums';
-import { MaterialGroup } from '../../entities/MaterialGroup.entity';
-import { CreateMaterialGroupDto } from '../dto/request/create-material-group.dto';
-import { QueryMaterialGroupsDto } from '../dto/request/query-material-groups.dto';
-import { UpdateMaterialGroupDto } from '../dto/request/update-material-group.dto';
-import { UpdateMaterialGroupStatusDto } from '../dto/request/update-material-group-status.dto';
-import { MaterialGroupResponseDto } from '../dto/response/material-group-response.dto';
-import { MaterialGroupsRepository } from '../repositories/material-groups.repository';
+import { Repository } from 'typeorm';
+import { RecordStatus } from '../../../common/enums/database.enums';
+import { Material } from '../entities/Material.entity';
+import { MaterialGroup } from '../entities/MaterialGroup.entity';
+import { CreateMaterialGroupDto } from './dto/create-material-group.dto';
+import { MaterialGroupResponseDto } from './dto/material-group-response.dto';
+import { QueryMaterialGroupsDto } from './dto/query-material-groups.dto';
+import { UpdateMaterialGroupStatusDto } from './dto/update-material-group-status.dto';
+import { UpdateMaterialGroupDto } from './dto/update-material-group.dto';
 
 @Injectable()
 export class MaterialGroupsService {
   constructor(
-    private readonly materialGroupsRepository: MaterialGroupsRepository,
+    @InjectRepository(MaterialGroup)
+    private readonly materialGroups: Repository<MaterialGroup>,
+    @InjectRepository(Material)
+    private readonly materials: Repository<Material>,
   ) {}
 
   async findAll(
     query: QueryMaterialGroupsDto,
   ): Promise<MaterialGroupResponseDto[]> {
-    const materialGroups = await this.materialGroupsRepository.findAll(
-      query.status,
-    );
+    const materialGroups = await this.materialGroups.find({
+      where: query.status ? { status: query.status } : {},
+      order: { displayOrder: 'ASC', name: 'ASC' },
+    });
     return materialGroups.map(MaterialGroupResponseDto.fromEntity);
   }
 
@@ -39,7 +45,7 @@ export class MaterialGroupsService {
     const name = this.normalizeName(dto.name);
     await this.ensureUnique(code, name);
 
-    const materialGroup = this.materialGroupsRepository.create({
+    const materialGroup = this.materialGroups.create({
       code,
       name,
       displayOrder: dto.displayOrder ?? 0,
@@ -92,13 +98,13 @@ export class MaterialGroupsService {
 
   async remove(id: string): Promise<void> {
     const materialGroup = await this.getExistingGroup(id);
-    if (await this.materialGroupsRepository.hasMaterialReference(id)) {
+    if ((await this.materials.countBy({ materialGroupId: id })) > 0) {
       throw new ConflictException(
         'Material group cannot be deleted because materials reference it',
       );
     }
     try {
-      await this.materialGroupsRepository.remove(materialGroup);
+      await this.materialGroups.remove(materialGroup);
     } catch (error) {
       if (this.isForeignKeyViolation(error)) {
         throw new ConflictException(
@@ -110,7 +116,7 @@ export class MaterialGroupsService {
   }
 
   private async getExistingGroup(id: string): Promise<MaterialGroup> {
-    const materialGroup = await this.materialGroupsRepository.findById(id);
+    const materialGroup = await this.materialGroups.findOneBy({ id });
     if (!materialGroup) {
       throw new NotFoundException('Material group not found');
     }
@@ -126,7 +132,7 @@ export class MaterialGroupsService {
     code: string,
     ignoredId?: string,
   ): Promise<void> {
-    const existing = await this.materialGroupsRepository.findByCode(code);
+    const existing = await this.materialGroups.findOneBy({ code });
     if (existing && existing.id !== ignoredId) {
       throw new ConflictException('Material group code already exists');
     }
@@ -136,8 +142,10 @@ export class MaterialGroupsService {
     name: string,
     ignoredId?: string,
   ): Promise<void> {
-    const existing =
-      await this.materialGroupsRepository.findByNormalizedName(name);
+    const existing = await this.materialGroups
+      .createQueryBuilder('materialGroup')
+      .where('LOWER(BTRIM(materialGroup.name)) = LOWER(BTRIM(:name))', { name })
+      .getOne();
     if (existing && existing.id !== ignoredId) {
       throw new ConflictException('Material group name already exists');
     }
@@ -147,7 +155,7 @@ export class MaterialGroupsService {
     materialGroup: MaterialGroup,
   ): Promise<MaterialGroup> {
     try {
-      return await this.materialGroupsRepository.save(materialGroup);
+      return await this.materialGroups.save(materialGroup);
     } catch (error) {
       if (this.isUniqueViolation(error)) {
         throw new ConflictException(

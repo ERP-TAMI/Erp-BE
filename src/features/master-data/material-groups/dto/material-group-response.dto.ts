@@ -1,6 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { RecordStatus } from '../../../../../common/enums/database.enums';
-import { MaterialGroup } from '../../../entities/MaterialGroup.entity';
+import { RecordStatus } from '../../../../common/enums/database.enums';
+import { MaterialGroup } from '../../entities/MaterialGroup.entity';
 
 export class MaterialGroupResponseDto {
   @ApiProperty({ format: 'uuid' })
