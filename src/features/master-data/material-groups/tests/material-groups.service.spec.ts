@@ -1,6 +1,6 @@
 import { ConflictException, NotFoundException } from '@nestjs/common';
 import { RecordStatus } from '../../../../common/enums/database.enums';
-import { MaterialGroup } from '../../../../features/master-data/entities/MaterialGroup.entity';
+import { MaterialGroup } from '../../entities/MaterialGroup.entity';
 import { MaterialGroupsRepository } from '../repositories/material-groups.repository';
 import { MaterialGroupsService } from '../services/material-groups.service';
 

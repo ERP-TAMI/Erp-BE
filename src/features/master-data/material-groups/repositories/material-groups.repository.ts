@@ -2,8 +2,8 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { RecordStatus } from '../../../../common/enums/database.enums';
-import { Material } from '../../../../features/master-data/entities/Material.entity';
-import { MaterialGroup } from '../../../../features/master-data/entities/MaterialGroup.entity';
+import { Material } from '../../entities/Material.entity';
+import { MaterialGroup } from '../../entities/MaterialGroup.entity';
 
 @Injectable()
 export class MaterialGroupsRepository {

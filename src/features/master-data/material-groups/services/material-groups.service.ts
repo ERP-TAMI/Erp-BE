@@ -5,7 +5,7 @@ import {
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { RecordStatus } from '../../../../common/enums/database.enums';
-import { MaterialGroup } from '../../../../features/master-data/entities/MaterialGroup.entity';
+import { MaterialGroup } from '../../entities/MaterialGroup.entity';
 import { CreateMaterialGroupDto } from '../dto/request/create-material-group.dto';
 import { QueryMaterialGroupsDto } from '../dto/request/query-material-groups.dto';
 import { UpdateMaterialGroupDto } from '../dto/request/update-material-group.dto';

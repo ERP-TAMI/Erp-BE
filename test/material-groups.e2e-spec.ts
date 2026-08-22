@@ -7,8 +7,8 @@ import { Test } from '@nestjs/testing';
 import * as request from 'supertest';
 import { HttpExceptionFilter } from '../src/common/filters/http-exception.filter';
 import { RecordStatus } from '../src/common/enums/database.enums';
-import { MaterialGroupsController } from '../src/modules/master-data/material-groups/controllers/material-groups.controller';
-import { MaterialGroupsService } from '../src/modules/master-data/material-groups/services/material-groups.service';
+import { MaterialGroupsController } from '../src/features/master-data/material-groups/controllers/material-groups.controller';
+import { MaterialGroupsService } from '../src/features/master-data/material-groups/services/material-groups.service';
 
 describe('Material groups API (e2e)', () => {
   const id = '9fb4d58f-0e6d-4ed5-b122-2b9f61aae115';
