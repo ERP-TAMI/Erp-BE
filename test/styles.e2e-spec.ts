@@ -1,6 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
-import request from 'supertest';
+import * as request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { StylesService } from '../src/features/styles/styles.service';
 import { StyleStatus } from '../src/common/enums/database.enums';

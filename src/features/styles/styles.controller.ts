@@ -76,7 +76,7 @@ export class StylesController {
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Xóa mẫu Fit theo ID' })
-  @ApiResponse({ status: 24, description: 'Đã xóa mẫu Fit' })
+  @ApiResponse({ status: HttpStatus.NO_CONTENT, description: 'Đã xóa mẫu Fit' })
   @ApiResponse({ status: 404, description: 'Không tìm thấy mẫu Fit' })
   async remove(@Param('id', ParseUUIDPipe) id: string): Promise<void> {
     return this.stylesService.remove(id);

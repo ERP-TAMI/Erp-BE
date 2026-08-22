@@ -1,6 +1,5 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { Style } from './entities/Style.entity';
 import { STYLES_ENTITIES } from './entities';
 import { StylesService } from './styles.service';
 import { StylesController } from './styles.controller';

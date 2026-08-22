@@ -93,6 +93,15 @@ describe('StylesService', () => {
         }),
       ).rejects.toThrow(BadRequestException);
     });
+
+    it('should throw BadRequestException if styleName is empty', async () => {
+      await expect(
+        service.create({
+          styleCode: 'FIT-2026-001',
+          styleName: '   ',
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
   });
 
   describe('findAll', () => {
@@ -135,6 +144,16 @@ describe('StylesService', () => {
 
       expect(updated.styleName).toBe('Áo Polo Nam Mới');
       expect(updated.status).toBe(StyleStatus.APPROVED);
+    });
+
+    it('should throw BadRequestException if updating styleName to whitespace', async () => {
+      repositoryMock.findOne.mockResolvedValue({ ...mockStyle });
+
+      await expect(
+        service.update('123e4567-e89b-12d3-a456-426614174000', {
+          styleName: '   ',
+        }),
+      ).rejects.toThrow(BadRequestException);
     });
   });
 });

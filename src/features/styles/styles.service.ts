@@ -5,7 +5,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, ILike } from 'typeorm';
+import { Repository } from 'typeorm';
 import { Style } from './entities/Style.entity';
 import { StyleStatus } from '../../common/enums/database.enums';
 import { CreateStyleDto, UpdateStyleDto, StyleQueryDto } from './dto';
@@ -33,6 +33,11 @@ export class StylesService {
       throw new BadRequestException('Mã mẫu Fit không được để trống');
     }
 
+    const styleNameClean = dto.styleName?.trim();
+    if (!styleNameClean) {
+      throw new BadRequestException('Tên mẫu Fit không được để trống');
+    }
+
     const existing = await this.styleRepository.findOne({
       where: { styleCode: styleCodeClean },
     });
@@ -45,7 +50,7 @@ export class StylesService {
 
     const style = this.styleRepository.create({
       styleCode: styleCodeClean,
-      styleName: dto.styleName.trim(),
+      styleName: styleNameClean,
       description: dto.description?.trim() ?? null,
       category: dto.category?.trim() ?? null,
       baseImageVersionId: dto.baseImageVersionId ?? null,
@@ -127,21 +132,30 @@ export class StylesService {
   ): Promise<Style> {
     const style = await this.findOne(id);
 
-    if (dto.styleCode && dto.styleCode.trim() !== style.styleCode) {
+    if (dto.styleCode !== undefined) {
       const codeClean = dto.styleCode.trim();
-      const existing = await this.styleRepository.findOne({
-        where: { styleCode: codeClean },
-      });
-      if (existing && existing.id !== id) {
-        throw new ConflictException(
-          `Mã mẫu Fit "${codeClean}" đã tồn tại trong hệ thống`,
-        );
+      if (!codeClean) {
+        throw new BadRequestException('Mã mẫu Fit không được để trống');
       }
-      style.styleCode = codeClean;
+      if (codeClean !== style.styleCode) {
+        const existing = await this.styleRepository.findOne({
+          where: { styleCode: codeClean },
+        });
+        if (existing && existing.id !== id) {
+          throw new ConflictException(
+            `Mã mẫu Fit "${codeClean}" đã tồn tại trong hệ thống`,
+          );
+        }
+        style.styleCode = codeClean;
+      }
     }
 
     if (dto.styleName !== undefined) {
-      style.styleName = dto.styleName.trim();
+      const styleNameClean = dto.styleName.trim();
+      if (!styleNameClean) {
+        throw new BadRequestException('Tên mẫu Fit không được để trống');
+      }
+      style.styleName = styleNameClean;
     }
     if (dto.description !== undefined) {
       style.description = dto.description?.trim() ?? null;
