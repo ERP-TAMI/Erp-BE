@@ -1255,7 +1255,7 @@ Schema được chuẩn hoá theo aggregate Style, PurchaseOrder, PurchaseOrderP
 | `record_status` | `active`, `inactive` | users, customers, material_groups, units, materials, stages, material_sizes, stage_groups, workshops, size_charts |
 | `po_status` | `draft`, `pending_rd`, `in_progress`, `closed`, `cancelled` | purchase_orders, purchase_order_status_history |
 | `product_status` | `draft`, `in_review`, `sampling`, `closed`, `cancelled` | purchase_order_products, purchase_order_product_status_history |
-| `style_status` | `draft`, `approved`, `active` | styles |
+| `style_status` | `draft`, `active` | styles |
 | `sample_status` | `working`, `needs_revision`, `approved` | style_sample_rounds, purchase_order_product_sample_rounds |
 | `production_doc_status` | `draft`, `in_progress`, `completed` | production_documents |
 | `upload_status` | `pending`, `ready`, `failed`, `quarantined` | document_versions |
