@@ -13,7 +13,7 @@ export class Stage {
   stageName: string;
 
   @Column({ type: 'text', nullable: true })
-  description: string;
+  description: string | null;
 
   @Column({
     type: 'numeric',
@@ -22,7 +22,7 @@ export class Stage {
     default: 0,
     name: 'default_ssv',
   })
-  defaultSsv: number;
+  defaultSsv: string;
 
   @Column({ type: 'enum', enum: RecordStatus, enumName: 'record_status' })
   status: RecordStatus;
