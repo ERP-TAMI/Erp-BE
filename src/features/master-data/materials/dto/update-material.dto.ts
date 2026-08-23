@@ -11,8 +11,6 @@ import {
 } from 'class-validator';
 import {
   isProvided,
-  MATERIAL_COST_PATTERN,
-  MATERIAL_STOCK_PATTERN,
   MATERIAL_YIELD_PATTERN,
   trimText,
 } from './material-dto.transforms';
@@ -42,25 +40,4 @@ export class UpdateMaterialDto {
   @IsString()
   @Matches(MATERIAL_YIELD_PATTERN)
   defaultYieldPct?: string;
-
-  @ApiPropertyOptional({ type: String, example: '123.45' })
-  @Transform(trimText)
-  @ValidateIf(isProvided)
-  @IsString()
-  @Matches(MATERIAL_COST_PATTERN)
-  lastUnitCost?: string;
-
-  @ApiPropertyOptional({ type: String, example: '30.2500' })
-  @Transform(trimText)
-  @ValidateIf(isProvided)
-  @IsString()
-  @Matches(MATERIAL_STOCK_PATTERN)
-  currentStock?: string;
-
-  @ApiPropertyOptional({ type: String, example: '10.0000' })
-  @Transform(trimText)
-  @ValidateIf(isProvided)
-  @IsString()
-  @Matches(MATERIAL_STOCK_PATTERN)
-  lowStockThreshold?: string;
 }

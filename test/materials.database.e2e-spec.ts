@@ -75,9 +75,7 @@ databaseE2e('Materials database API (e2e)', () => {
     materialGroupIds.push(materialGroup.id);
 
     const unit = await dataSource.getRepository(Unit).save({
-      code: `E2E-${testSuffix}`.slice(0, 30),
       name: `E2E Meter ${testSuffix}`.slice(0, 100),
-      decimalScale: 4,
       status: RecordStatus.ACTIVE,
     });
     unitIds.push(unit.id);
@@ -90,9 +88,6 @@ databaseE2e('Materials database API (e2e)', () => {
         materialGroupId: materialGroup.id,
         defaultUnitId: unit.id,
         defaultYieldPct: '2.5000',
-        lastUnitCost: '123.45',
-        currentStock: '30.2500',
-        lowStockThreshold: '10.0000',
       })
       .expect(201);
     materialIds.push(createResponse.body.id);
@@ -103,12 +98,8 @@ databaseE2e('Materials database API (e2e)', () => {
       materialGroupId: materialGroup.id,
       materialGroupName: materialGroup.name,
       defaultUnitId: unit.id,
-      defaultUnitCode: unit.code,
       defaultUnitName: unit.name,
       defaultYieldPct: '2.5000',
-      lastUnitCost: '123.45',
-      currentStock: '30.2500',
-      lowStockThreshold: '10.0000',
       status: RecordStatus.ACTIVE,
     });
 

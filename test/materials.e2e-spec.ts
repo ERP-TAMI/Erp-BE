@@ -24,12 +24,8 @@ describe('Materials API (e2e)', () => {
     materialGroupId,
     materialGroupName: 'Fabric',
     defaultUnitId,
-    defaultUnitCode: 'M',
     defaultUnitName: 'Meter',
     defaultYieldPct: '2.5000',
-    lastUnitCost: '0.00',
-    currentStock: '0.0000',
-    lowStockThreshold: '10.0000',
     status: RecordStatus.ACTIVE,
   };
   const materialsService = {
@@ -70,7 +66,7 @@ describe('Materials API (e2e)', () => {
     await app.close();
   });
 
-  it('normalizes and creates a material through the HTTP API', async () => {
+  it('normalizes the code and trims the name when creating a material', async () => {
     materialsService.create.mockResolvedValue(material);
 
     await request(app.getHttpServer())
@@ -81,7 +77,6 @@ describe('Materials API (e2e)', () => {
         materialGroupId,
         defaultUnitId,
         defaultYieldPct: '2.5000',
-        lastUnitCost: '9007199254740991.01',
       })
       .expect(201)
       .expect(material);
@@ -92,7 +87,6 @@ describe('Materials API (e2e)', () => {
       materialGroupId,
       defaultUnitId,
       defaultYieldPct: '2.5000',
-      lastUnitCost: '9007199254740991.01',
     });
   });
 
@@ -143,9 +137,8 @@ describe('Materials API (e2e)', () => {
   });
 
   it.each([
-    { currentStock: '-1' },
+    { materialCode: undefined },
     { defaultYieldPct: '1.12345' },
-    { lastUnitCost: 12.5 },
     { ignored: true },
   ])(
     'rejects invalid create input before it reaches the service',

@@ -3,7 +3,7 @@ import {
   ConflictException,
   NotFoundException,
 } from '@nestjs/common';
-import { Repository, SelectQueryBuilder } from 'typeorm';
+import { Repository } from 'typeorm';
 import { RecordStatus } from '../../../../common/enums/database.enums';
 import { BillOfMaterialLine } from '../../../boms/entities/BillOfMaterialLine.entity';
 import { DraftBomLine } from '../../../draft-boms/entities/DraftBomLine.entity';
@@ -21,9 +21,7 @@ describe('MaterialsService', () => {
   };
   const unit: Unit = {
     id: '0a989bfe-fb34-489c-b5fe-30f74a1dc09d',
-    code: 'M',
     name: 'Meter',
-    decimalScale: 4,
     status: RecordStatus.ACTIVE,
   };
   const material: Material = {
@@ -33,9 +31,6 @@ describe('MaterialsService', () => {
     materialGroupId: materialGroup.id,
     defaultUnitId: unit.id,
     defaultYieldPct: 2.5,
-    lastUnitCost: 12.75,
-    currentStock: 100,
-    lowStockThreshold: 10,
     status: RecordStatus.ACTIVE,
     createdAt: new Date('2026-08-23T00:00:00.000Z'),
     updatedAt: new Date('2026-08-23T00:00:00.000Z'),
@@ -47,20 +42,12 @@ describe('MaterialsService', () => {
   let materialSizes: jest.Mocked<Repository<MaterialSize>>;
   let draftBomLines: jest.Mocked<Repository<DraftBomLine>>;
   let billOfMaterialLines: jest.Mocked<Repository<BillOfMaterialLine>>;
-  let normalizedCodeResult: jest.Mock<Promise<Material | null>, []>;
   let service: MaterialsService;
 
   beforeEach(() => {
-    normalizedCodeResult = jest.fn().mockResolvedValue(null);
-    const queryBuilder = {
-      where: jest.fn().mockReturnThis(),
-      getOne: normalizedCodeResult,
-    } as unknown as SelectQueryBuilder<Material>;
-
     materials = {
       find: jest.fn(),
       findOneBy: jest.fn(),
-      createQueryBuilder: jest.fn().mockReturnValue(queryBuilder),
       create: jest.fn(),
       save: jest.fn(),
       remove: jest.fn(),
@@ -99,16 +86,13 @@ describe('MaterialsService', () => {
       materialCode: 'FAB-NEW',
       materialName: 'New fabric',
       defaultYieldPct: 0,
-      lastUnitCost: 0,
-      currentStock: 0,
-      lowStockThreshold: 10,
     };
     materials.create.mockReturnValue(createdMaterial);
     materials.save.mockResolvedValue(createdMaterial);
 
     await expect(
       service.create({
-        materialCode: ' fab-new ',
+        materialCode: 'FAB-NEW',
         materialName: ' New fabric ',
         materialGroupId: materialGroup.id,
         defaultUnitId: unit.id,
@@ -117,10 +101,9 @@ describe('MaterialsService', () => {
       materialCode: 'FAB-NEW',
       materialName: 'New fabric',
       materialGroupName: 'Fabric',
-      defaultUnitCode: 'M',
+      defaultUnitName: 'Meter',
       status: RecordStatus.ACTIVE,
       defaultYieldPct: '0',
-      lowStockThreshold: '10',
     });
 
     expect(materials.create).toHaveBeenCalledWith({
@@ -129,24 +112,20 @@ describe('MaterialsService', () => {
       materialGroupId: materialGroup.id,
       defaultUnitId: unit.id,
       defaultYieldPct: '0',
-      lastUnitCost: '0',
-      currentStock: '0',
-      lowStockThreshold: '10',
       status: RecordStatus.ACTIVE,
     });
   });
 
-  it('rejects a duplicate code after trim and uppercase normalization', async () => {
-    normalizedCodeResult.mockResolvedValue(material);
+  it('rejects a duplicate code raised by the database unique index', async () => {
+    materials.save.mockRejectedValue({ code: '23505' });
 
     await expect(
       service.create({
-        materialCode: ' fab-001 ',
+        materialCode: 'FAB-001',
         materialName: 'Duplicate',
         defaultUnitId: unit.id,
       }),
     ).rejects.toThrow(ConflictException);
-    expect(materials.save).not.toHaveBeenCalled();
   });
 
   it('rejects a missing or inactive material group on create', async () => {
@@ -182,7 +161,6 @@ describe('MaterialsService', () => {
       {
         ...material,
         defaultYieldPct: '2.5000' as unknown as number,
-        lastUnitCost: '12.75' as unknown as number,
       },
     ]);
 
@@ -198,7 +176,6 @@ describe('MaterialsService', () => {
         materialGroupName: 'Fabric',
         defaultUnitName: 'Meter',
         defaultYieldPct: '2.5000',
-        lastUnitCost: '12.75',
       }),
     ]);
     expect(materials.find).toHaveBeenCalledWith(
@@ -211,13 +188,11 @@ describe('MaterialsService', () => {
   it('returns database decimals without converting them to JavaScript numbers', async () => {
     materials.findOneBy.mockResolvedValue({
       ...material,
-      lastUnitCost: '9007199254740991.01' as unknown as number,
-      currentStock: '99999999999999.9999' as unknown as number,
+      defaultYieldPct: '9007199254.7401' as unknown as number,
     });
 
     await expect(service.findOne(material.id)).resolves.toMatchObject({
-      lastUnitCost: '9007199254740991.01',
-      currentStock: '99999999999999.9999',
+      defaultYieldPct: '9007199254.7401',
     });
   });
 

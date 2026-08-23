@@ -66,9 +66,8 @@ export class MaterialsService {
   }
 
   async create(dto: CreateMaterialDto): Promise<MaterialResponseDto> {
-    const materialCode = this.normalizeCode(dto.materialCode);
+    const materialCode = dto.materialCode;
     const materialName = dto.materialName.trim();
-    await this.ensureCodeUnique(materialCode);
 
     const [materialGroup, defaultUnit] = await Promise.all([
       dto.materialGroupId
@@ -83,9 +82,6 @@ export class MaterialsService {
       materialGroupId: materialGroup?.id,
       defaultUnitId: defaultUnit.id,
       defaultYieldPct: this.asEntityDecimal(dto.defaultYieldPct ?? '0'),
-      lastUnitCost: this.asEntityDecimal(dto.lastUnitCost ?? '0'),
-      currentStock: this.asEntityDecimal(dto.currentStock ?? '0'),
-      lowStockThreshold: this.asEntityDecimal(dto.lowStockThreshold ?? '10'),
       status: RecordStatus.ACTIVE,
     });
     const saved = await this.saveMaterial(material);
@@ -120,15 +116,6 @@ export class MaterialsService {
     }
     if (dto.defaultYieldPct !== undefined) {
       material.defaultYieldPct = this.asEntityDecimal(dto.defaultYieldPct);
-    }
-    if (dto.lastUnitCost !== undefined) {
-      material.lastUnitCost = this.asEntityDecimal(dto.lastUnitCost);
-    }
-    if (dto.currentStock !== undefined) {
-      material.currentStock = this.asEntityDecimal(dto.currentStock);
-    }
-    if (dto.lowStockThreshold !== undefined) {
-      material.lowStockThreshold = this.asEntityDecimal(dto.lowStockThreshold);
     }
 
     return this.mapMaterial(await this.saveMaterial(material));
@@ -208,19 +195,7 @@ export class MaterialsService {
   }
 
   private async mapMaterial(material: Material): Promise<MaterialResponseDto> {
-    const [materialGroup, defaultUnit] = await Promise.all([
-      material.materialGroupId
-        ? this.materialGroups.findOneBy({ id: material.materialGroupId })
-        : Promise.resolve(null),
-      material.defaultUnitId
-        ? this.units.findOneBy({ id: material.defaultUnitId })
-        : Promise.resolve(null),
-    ]);
-    return MaterialResponseDto.fromEntities(
-      material,
-      materialGroup,
-      defaultUnit,
-    );
+    return (await this.mapMaterials([material]))[0];
   }
 
   private async getExistingMaterial(id: string): Promise<Material> {
@@ -247,18 +222,6 @@ export class MaterialsService {
     return unit;
   }
 
-  private async ensureCodeUnique(materialCode: string): Promise<void> {
-    const existing = await this.materials
-      .createQueryBuilder('material')
-      .where('UPPER(BTRIM(material.materialCode)) = :materialCode', {
-        materialCode,
-      })
-      .getOne();
-    if (existing) {
-      throw new ConflictException('Material code already exists');
-    }
-  }
-
   private async saveMaterial(material: Material): Promise<Material> {
     try {
       return await this.materials.save(material);
@@ -275,10 +238,6 @@ export class MaterialsService {
       }
       throw error;
     }
-  }
-
-  private normalizeCode(materialCode: string): string {
-    return materialCode.trim().toUpperCase();
   }
 
   private asEntityDecimal(value: string): number {

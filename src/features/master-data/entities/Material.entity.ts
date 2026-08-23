@@ -1,4 +1,10 @@
-import { Entity, Column, PrimaryGeneratedColumn } from 'typeorm';
+import {
+  Entity,
+  Column,
+  CreateDateColumn,
+  PrimaryGeneratedColumn,
+  UpdateDateColumn,
+} from 'typeorm';
 import { RecordStatus } from '../../../common/enums/database.enums';
 
 @Entity('materials')
@@ -28,42 +34,12 @@ export class Material {
   })
   defaultYieldPct: number;
 
-  @Column({
-    type: 'numeric',
-    precision: 18,
-    scale: 2,
-    default: 0,
-    nullable: false,
-    name: 'last_unit_cost',
-  })
-  lastUnitCost: number;
-
-  @Column({
-    type: 'numeric',
-    precision: 18,
-    scale: 4,
-    default: 0,
-    nullable: false,
-    name: 'current_stock',
-  })
-  currentStock: number;
-
-  @Column({
-    type: 'numeric',
-    precision: 18,
-    scale: 4,
-    default: 10,
-    nullable: false,
-    name: 'low_stock_threshold',
-  })
-  lowStockThreshold: number;
-
   @Column({ type: 'enum', enum: RecordStatus, enumName: 'record_status' })
   status: RecordStatus;
 
-  @Column({ type: 'timestamptz', name: 'created_at' })
+  @CreateDateColumn({ type: 'timestamptz', name: 'created_at' })
   createdAt: Date;
 
-  @Column({ type: 'timestamptz', name: 'updated_at' })
+  @UpdateDateColumn({ type: 'timestamptz', name: 'updated_at' })
   updatedAt: Date;
 }

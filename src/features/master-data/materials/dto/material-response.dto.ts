@@ -24,22 +24,10 @@ export class MaterialResponseDto {
   defaultUnitId: string | null;
 
   @ApiProperty({ nullable: true })
-  defaultUnitCode: string | null;
-
-  @ApiProperty({ nullable: true })
   defaultUnitName: string | null;
 
   @ApiProperty({ type: String, example: '2.5000' })
   defaultYieldPct: string;
-
-  @ApiProperty({ type: String, example: '123.45' })
-  lastUnitCost: string;
-
-  @ApiProperty({ type: String, example: '30.2500' })
-  currentStock: string;
-
-  @ApiProperty({ type: String, example: '10.0000' })
-  lowStockThreshold: string;
 
   @ApiProperty({ enum: RecordStatus })
   status: RecordStatus;
@@ -62,12 +50,8 @@ export class MaterialResponseDto {
       materialGroupId: material.materialGroupId ?? null,
       materialGroupName: materialGroup?.name ?? null,
       defaultUnitId: material.defaultUnitId ?? null,
-      defaultUnitCode: defaultUnit?.code ?? null,
       defaultUnitName: defaultUnit?.name ?? null,
       defaultYieldPct: String(material.defaultYieldPct),
-      lastUnitCost: String(material.lastUnitCost),
-      currentStock: String(material.currentStock),
-      lowStockThreshold: String(material.lowStockThreshold),
       status: material.status,
       createdAt: material.createdAt,
       updatedAt: material.updatedAt,
