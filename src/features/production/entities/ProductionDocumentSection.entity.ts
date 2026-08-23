@@ -15,7 +15,7 @@ export class ProductionDocumentSection {
   title: string;
 
   @Column({ type: 'text', nullable: true })
-  content: string;
+  content: string | null;
 
   @Column({ type: 'int', name: 'order_index' })
   orderIndex: number;
