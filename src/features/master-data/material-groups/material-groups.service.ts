@@ -4,7 +4,6 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { randomUUID } from 'node:crypto';
 import { Repository } from 'typeorm';
 import { RecordStatus } from '../../../common/enums/database.enums';
 import { Material } from '../entities/Material.entity';
@@ -39,14 +38,10 @@ export class MaterialGroupsService {
   }
 
   async create(dto: CreateMaterialGroupDto): Promise<MaterialGroupResponseDto> {
-    const code = dto.code
-      ? this.normalizeCode(dto.code)
-      : this.generateInternalCode();
     const name = this.normalizeName(dto.name);
-    await this.ensureUnique(code, name);
+    await this.ensureNameUnique(name);
 
     const materialGroup = this.materialGroups.create({
-      code,
       name,
       status: RecordStatus.ACTIVE,
     });
@@ -60,15 +55,8 @@ export class MaterialGroupsService {
     dto: UpdateMaterialGroupDto,
   ): Promise<MaterialGroupResponseDto> {
     const materialGroup = await this.getExistingGroup(id);
-    const code =
-      dto.code === undefined ? undefined : this.normalizeCode(dto.code);
     const name =
       dto.name === undefined ? undefined : this.normalizeName(dto.name);
-
-    if (code && code !== materialGroup.code) {
-      await this.ensureCodeUnique(code, id);
-      materialGroup.code = code;
-    }
 
     if (name && name !== materialGroup.name) {
       await this.ensureNameUnique(name, id);
@@ -118,21 +106,6 @@ export class MaterialGroupsService {
     return materialGroup;
   }
 
-  private async ensureUnique(code: string, name: string): Promise<void> {
-    await this.ensureCodeUnique(code);
-    await this.ensureNameUnique(name);
-  }
-
-  private async ensureCodeUnique(
-    code: string,
-    ignoredId?: string,
-  ): Promise<void> {
-    const existing = await this.materialGroups.findOneBy({ code });
-    if (existing && existing.id !== ignoredId) {
-      throw new ConflictException('Material group code already exists');
-    }
-  }
-
   private async ensureNameUnique(
     name: string,
     ignoredId?: string,
@@ -153,24 +126,14 @@ export class MaterialGroupsService {
       return await this.materialGroups.save(materialGroup);
     } catch (error) {
       if (this.isUniqueViolation(error)) {
-        throw new ConflictException(
-          'Material group code or name already exists',
-        );
+        throw new ConflictException('Material group name already exists');
       }
       throw error;
     }
   }
 
-  private normalizeCode(code: string): string {
-    return code.trim().toUpperCase();
-  }
-
   private normalizeName(name: string): string {
     return name.trim();
-  }
-
-  private generateInternalCode(): string {
-    return `MG-${randomUUID().replaceAll('-', '').toUpperCase()}`;
   }
 
   private isUniqueViolation(error: unknown): error is { code: string } {

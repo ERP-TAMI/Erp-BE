@@ -6,9 +6,6 @@ export class MaterialGroup {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column({ type: 'varchar', length: 50 })
-  code: string;
-
   @Column({ type: 'varchar', length: 150 })
   name: string;
 

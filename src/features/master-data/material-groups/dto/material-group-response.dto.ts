@@ -7,9 +7,6 @@ export class MaterialGroupResponseDto {
   id: string;
 
   @ApiProperty()
-  code: string;
-
-  @ApiProperty()
   name: string;
 
   @ApiProperty({ enum: RecordStatus })
@@ -18,7 +15,6 @@ export class MaterialGroupResponseDto {
   static fromEntity(entity: MaterialGroup): MaterialGroupResponseDto {
     return {
       id: entity.id,
-      code: entity.code,
       name: entity.name,
       status: entity.status,
     };

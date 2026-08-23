@@ -12,7 +12,6 @@ const databaseE2e =
 
 databaseE2e('Material groups database API (e2e)', () => {
   const testSuffix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const reusedCode = `E2E-REUSED-${testSuffix}`.toUpperCase();
   const createdIds: string[] = [];
   let app: INestApplication;
   let dataSource: DataSource;
@@ -44,7 +43,7 @@ databaseE2e('Material groups database API (e2e)', () => {
     await app.close();
   });
 
-  it('supports the material group lifecycle and code reuse', async () => {
+  it('supports the material group lifecycle end to end', async () => {
     const createResponse = await request(app.getHttpServer())
       .post('/masters/material-groups')
       .send({
@@ -69,12 +68,11 @@ databaseE2e('Material groups database API (e2e)', () => {
     const updatedGroup = await request(app.getHttpServer())
       .patch(`/masters/material-groups/${createResponse.body.id}`)
       .send({
-        code: reusedCode,
         name: `Updated E2E group ${testSuffix}`,
       })
       .expect(200);
     expect(updatedGroup.body).toEqual(
-      expect.objectContaining({ code: reusedCode }),
+      expect.objectContaining({ name: `Updated E2E group ${testSuffix}` }),
     );
 
     const inactiveGroup = await request(app.getHttpServer())
@@ -99,12 +97,8 @@ databaseE2e('Material groups database API (e2e)', () => {
       .expect(204);
     createdIds.splice(createdIds.indexOf(createResponse.body.id), 1);
 
-    const reusedResponse = await request(app.getHttpServer())
-      .post('/masters/material-groups')
-      .send({ code: reusedCode, name: `Reused E2E group ${testSuffix}` })
-      .expect(201);
-    createdIds.push(reusedResponse.body.id);
-
-    expect(reusedResponse.body.code).toBe(reusedCode);
+    await request(app.getHttpServer())
+      .get(`/masters/material-groups/${createResponse.body.id}`)
+      .expect(404);
   });
 });

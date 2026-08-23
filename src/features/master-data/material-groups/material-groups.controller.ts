@@ -51,7 +51,7 @@ export class MaterialGroupsController {
   @Post()
   @ApiCreatedResponse({ type: MaterialGroupResponseDto })
   @ApiConflictResponse({
-    description: 'Code or normalized name already exists',
+    description: 'Normalized name already exists',
   })
   create(
     @Body() dto: CreateMaterialGroupDto,
@@ -61,7 +61,7 @@ export class MaterialGroupsController {
 
   @Patch(':id')
   @ApiOkResponse({ type: MaterialGroupResponseDto })
-  @ApiConflictResponse({ description: 'Code or name already exists' })
+  @ApiConflictResponse({ description: 'Name already exists' })
   update(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @Body() dto: UpdateMaterialGroupDto,

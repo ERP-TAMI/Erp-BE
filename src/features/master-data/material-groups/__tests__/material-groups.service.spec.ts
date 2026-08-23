@@ -8,7 +8,6 @@ import { MaterialGroupsService } from '../material-groups.service';
 describe('MaterialGroupsService', () => {
   const group: MaterialGroup = {
     id: '9fb4d58f-0e6d-4ed5-b122-2b9f61aae115',
-    code: 'FABRIC',
     name: 'Fabric',
     status: RecordStatus.ACTIVE,
   };
@@ -39,59 +38,28 @@ describe('MaterialGroupsService', () => {
     service = new MaterialGroupsService(materialGroups, materials);
   });
 
-  it('creates an active group with a generated code when only the documented fields are provided', async () => {
-    materialGroups.findOneBy.mockResolvedValue(null);
+  it('creates an active group with the documented fields', async () => {
     normalizedNameResult.mockResolvedValue(null);
     materialGroups.create.mockReturnValue({ ...group });
     materialGroups.save.mockResolvedValue({ ...group });
 
-    await expect(
-      service.create({ name: ' Fabric ' }),
-    ).resolves.toMatchObject({
+    await expect(service.create({ name: ' Fabric ' })).resolves.toMatchObject({
       name: 'Fabric',
       status: RecordStatus.ACTIVE,
     });
 
-    expect(materialGroups.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        code: expect.stringMatching(/^MG-[A-F0-9]{32}$/),
-        name: 'Fabric',
-            status: RecordStatus.ACTIVE,
-      }),
-    );
-  });
-
-  it('rejects a duplicate code before creating a group', async () => {
-    materialGroups.findOneBy.mockResolvedValue(group);
-
-    await expect(
-      service.create({ code: 'fabric', name: 'Another name' }),
-    ).rejects.toThrow(ConflictException);
-  });
-
-  it('keeps supporting an explicitly supplied code for existing API clients', async () => {
-    materialGroups.findOneBy.mockResolvedValue(null);
-    normalizedNameResult.mockResolvedValue(null);
-    materialGroups.create.mockReturnValue({ ...group });
-    materialGroups.save.mockResolvedValue({ ...group });
-
-    await service.create({
-      code: ' fabric ',
-      name: ' Fabric ',
-      });
-
-    expect(materialGroups.create).toHaveBeenCalledWith(
-      expect.objectContaining({ code: 'FABRIC' }),
-    );
+    expect(materialGroups.create).toHaveBeenCalledWith({
+      name: 'Fabric',
+      status: RecordStatus.ACTIVE,
+    });
   });
 
   it('rejects a duplicate name after trim and case normalization', async () => {
-    materialGroups.findOneBy.mockResolvedValue(null);
     normalizedNameResult.mockResolvedValue(group);
 
-    await expect(
-      service.create({ code: 'ACCESSORY', name: ' fabric ' }),
-    ).rejects.toThrow(ConflictException);
+    await expect(service.create({ name: ' fabric ' })).rejects.toThrow(
+      ConflictException,
+    );
   });
 
   it('rejects a duplicate normalized name when updating a group', async () => {
@@ -119,21 +87,17 @@ describe('MaterialGroupsService', () => {
     });
   });
 
-  it('allows changing a unique code without treating material references as a blocker', async () => {
-    materialGroups.findOneBy
-      .mockResolvedValueOnce({ ...group })
-      .mockResolvedValueOnce(null);
+  it('renames a group without treating material references as a blocker', async () => {
+    materialGroups.findOneBy.mockResolvedValue({ ...group });
+    normalizedNameResult.mockResolvedValue(null);
     materialGroups.save.mockResolvedValue({
       ...group,
-      code: 'NEW-FABRIC',
+      name: 'New fabric',
     });
 
     await expect(
-      service.update(group.id, { code: 'NEW-FABRIC' }),
-    ).resolves.toMatchObject({ code: 'NEW-FABRIC' });
-    expect(materialGroups.findOneBy).toHaveBeenLastCalledWith({
-      code: 'NEW-FABRIC',
-    });
+      service.update(group.id, { name: 'New fabric' }),
+    ).resolves.toMatchObject({ name: 'New fabric' });
     expect(materials.countBy).not.toHaveBeenCalled();
     expect(materialGroups.save).toHaveBeenCalled();
   });

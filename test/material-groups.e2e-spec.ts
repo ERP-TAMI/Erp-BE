@@ -14,7 +14,6 @@ describe('Material groups API (e2e)', () => {
   const id = '9fb4d58f-0e6d-4ed5-b122-2b9f61aae115';
   const group = {
     id,
-    code: 'FABRIC',
     name: 'Fabric',
     status: RecordStatus.ACTIVE,
   };
