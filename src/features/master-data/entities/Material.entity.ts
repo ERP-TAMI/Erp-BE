@@ -18,6 +18,46 @@ export class Material {
   @Column({ type: 'uuid', nullable: true, name: 'default_unit_id' })
   defaultUnitId: string;
 
+  @Column({
+    type: 'numeric',
+    precision: 8,
+    scale: 4,
+    default: 0,
+    nullable: false,
+    name: 'default_yield_pct',
+  })
+  defaultYieldPct: number;
+
+  @Column({
+    type: 'numeric',
+    precision: 18,
+    scale: 2,
+    default: 0,
+    nullable: false,
+    name: 'last_unit_cost',
+  })
+  lastUnitCost: number;
+
+  @Column({
+    type: 'numeric',
+    precision: 18,
+    scale: 4,
+    default: 0,
+    nullable: false,
+    name: 'current_stock',
+  })
+  currentStock: number;
+
+  @Column({
+    type: 'numeric',
+    precision: 18,
+    scale: 4,
+    default: 10,
+    nullable: false,
+    name: 'low_stock_threshold',
+  })
+  lowStockThreshold: number;
+
   @Column({ type: 'enum', enum: RecordStatus, enumName: 'record_status' })
   status: RecordStatus;
 
