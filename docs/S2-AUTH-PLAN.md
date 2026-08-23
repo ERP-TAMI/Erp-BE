@@ -1,7 +1,9 @@
 # S2-AUTH: Kế hoạch triển khai Authentication & Authorization (Backend)
 
 ## Status
-S2-AUTH-01: đã merge vào dev (#21). S2-AUTH-02: code xong, test đầy đủ (unit + e2e + test tay trên server thật), PR đang mở (#22). S2-AUTH-03, S2-AUTH-05-BE chưa bắt đầu.
+S2-AUTH-01 (#21) và S2-AUTH-02 (#22) đã merge vào dev. S2-AUTH-05-BE: code xong (thêm `permission.guard.spec.ts`, rà soát CORS/cookie/refresh policy, báo cáo test tại `docs/S2-AUTH-05-BE-TEST-REPORT.md`), PR đang mở.
+
+> ⏸️ **S2-AUTH-03 tạm hoãn (quyết định 2026-08-23):** FE đang tắt tạm route guard (`AUTH_GUARD_ENABLED=false`, xem `FE-TAMI/docs/S2-AUTH-PLAN.md`) để không chặn các tính năng khác đang code song song. Nếu làm S2-AUTH-03 bây giờ (gắn `@Auth()`/`@Permission()` khoá thật các API material-groups/styles), các API đó sẽ đòi token/quyền → chặn ngược lại đúng những người mà việc tắt guard FE đang cố tránh chặn (BE mới là nơi bảo mật thật, guard FE chỉ là UX). → **Làm S2-AUTH-03 cùng lúc với việc bật lại `AUTH_GUARD_ENABLED=true` ở FE**, khi các tính năng khác đã code xong. Khung `JwtAuthGuard`/`PermissionGuard`/`@Permission` đã có sẵn (và giờ đã có unit test riêng), hoãn không mất công làm lại gì.
 
 ## Scope
 Tài liệu này lên kế hoạch chi tiết cho 4 nhánh việc thuộc repo `Erp-BE`:
