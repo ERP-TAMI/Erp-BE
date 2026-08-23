@@ -137,12 +137,16 @@ describe('UnitsService', () => {
     units.findOneBy.mockResolvedValue(existing);
     units.remove.mockRejectedValue({ code: '23503' });
 
-    await expect(service.remove(existing.id)).rejects.toThrow(ConflictException);
+    await expect(service.remove(existing.id)).rejects.toThrow(
+      ConflictException,
+    );
   });
 
   it('returns not found when deleting an unknown unit', async () => {
     units.findOneBy.mockResolvedValue(null);
 
-    await expect(service.remove('missing-id')).rejects.toThrow(NotFoundException);
+    await expect(service.remove('missing-id')).rejects.toThrow(
+      NotFoundException,
+    );
   });
 });

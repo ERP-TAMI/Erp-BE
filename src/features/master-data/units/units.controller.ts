@@ -70,7 +70,9 @@ export class UnitsController {
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiNoContentResponse({ description: 'Unit deleted' })
-  @ApiConflictResponse({ description: 'The unit is referenced by business data' })
+  @ApiConflictResponse({
+    description: 'The unit is referenced by business data',
+  })
   remove(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
   ): Promise<void> {
