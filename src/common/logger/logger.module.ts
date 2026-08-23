@@ -23,7 +23,12 @@ mkdirSync(logsDirectory, { recursive: true });
             }),
           },
         ]),
-        redact: ['req.headers.authorization', 'req.headers.cookie'],
+        redact: [
+          'req.headers.authorization',
+          'req.headers.cookie',
+          'req.body.password',
+          'res.headers["set-cookie"]',
+        ],
       },
     }),
   ],

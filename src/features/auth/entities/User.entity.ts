@@ -16,10 +16,10 @@ export class User {
   fullName: string;
 
   @Column({ type: 'varchar', length: 20, nullable: true })
-  phone: string;
+  phone: string | null;
 
   @Column({ type: 'varchar', length: 500, nullable: true, name: 'avatar_url' })
-  avatarUrl: string;
+  avatarUrl: string | null;
 
   @Column({ type: 'enum', enum: RecordStatus, enumName: 'record_status' })
   status: RecordStatus;
@@ -31,10 +31,10 @@ export class User {
   loginFailedCount: number;
 
   @Column({ type: 'timestamptz', nullable: true, name: 'lockout_until' })
-  lockoutUntil: Date;
+  lockoutUntil: Date | null;
 
   @Column({ type: 'timestamptz', nullable: true, name: 'last_login_at' })
-  lastLoginAt: Date;
+  lastLoginAt: Date | null;
 
   @Column({ type: 'bigint', default: 1, name: 'row_version' })
   rowVersion: number;
