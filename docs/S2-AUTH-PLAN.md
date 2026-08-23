@@ -247,7 +247,7 @@ Nếu cần test ràng buộc DB thật (unique email, `uq_user_single_role`), t
 | S2-AUTH-01 | `feat/Nguyen_S2-AUTH-01-user-role-permission-seed` | https://github.com/ERP-TAMI/Erp-BE/pull/21 |
 | S2-AUTH-02 | `feat/Nguyen_S2-AUTH-02-login-session-api` | https://github.com/ERP-TAMI/Erp-BE/pull/22 |
 | S2-AUTH-03 | `feat/Nguyen_S2-AUTH-03-permission-guard` | _(điền sau khi tạo)_ |
-| S2-AUTH-05 (BE) | `feat/Nguyen_S2-AUTH-05-be-auth-tests` | _(điền sau khi tạo)_ |
+| S2-AUTH-05 (BE) | `feat/Nguyen_S2-AUTH-05-be-auth-tests` | https://github.com/ERP-TAMI/Erp-BE/pull/23 |
 
 ## Giả định nghiệp vụ cần xác nhận
 1. Mapping role → permission ở mục "Danh mục quyền" là suy luận, chưa có xác nhận chính thức từ Product Owner.
