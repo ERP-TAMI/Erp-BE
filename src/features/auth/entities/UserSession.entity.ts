@@ -12,19 +12,19 @@ export class UserSession {
   refreshTokenHash: string;
 
   @Column({ type: 'varchar', length: 500, nullable: true, name: 'user_agent' })
-  userAgent: string;
+  userAgent: string | null;
 
   @Column({ type: 'inet', nullable: true, name: 'ip_address' })
-  ipAddress: string;
+  ipAddress: string | null;
 
   @Column({ type: 'timestamptz', name: 'expires_at' })
   expiresAt: Date;
 
   @Column({ type: 'timestamptz', nullable: true, name: 'revoked_at' })
-  revokedAt: Date;
+  revokedAt: Date | null;
 
   @Column({ type: 'text', nullable: true, name: 'revoke_reason' })
-  revokeReason: string;
+  revokeReason: string | null;
 
   @Column({ type: 'timestamptz', name: 'created_at' })
   createdAt: Date;

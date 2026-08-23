@@ -1,7 +1,7 @@
 # S2-AUTH: Kế hoạch triển khai Authentication & Authorization (Backend)
 
 ## Status
-S2-AUTH-01: code xong, đã test migration/seed thật trên DB dev (idempotent), PR đang mở (#21). Cần xác nhận phần "Giả định nghiệp vụ" bên dưới trước khi merge. Các task còn lại (02, 03, 05-BE) chưa bắt đầu.
+S2-AUTH-01: đã merge vào dev (#21). S2-AUTH-02: code xong, test đầy đủ (unit + e2e + test tay trên server thật), PR đang mở (#22). S2-AUTH-03, S2-AUTH-05-BE chưa bắt đầu.
 
 ## Scope
 Tài liệu này lên kế hoạch chi tiết cho 4 nhánh việc thuộc repo `Erp-BE`:
@@ -133,7 +133,7 @@ Mật khẩu: dùng chung 1 giá trị từ `SEED_TEST_ACCOUNT_PASSWORD` (đủ 
 - Body (DTO + class-validator): `{ email: string (IsEmail), password: string (IsString, MinLength(1)) }`.
 - Luồng: tìm user theo email → không thấy hoặc `status !== 'active'` → phân biệt rõ (xem bảng lỗi) → nếu có `lockout_until` còn hiệu lực → 403 `ACCOUNT_LOCKED` → `bcryptjs.compare(password, user.password_hash)`:
   - Sai → tăng `login_failed_count`; nếu đạt ngưỡng (đề xuất 5 lần) → set `lockout_until = now() + 15 phút`; trả 401 `INVALID_CREDENTIALS` (không tiết lộ email hay sai mật khẩu, message chung chung).
-  - Đúng → reset `login_failed_count = 0`, `lockout_until = null`, `last_login_at = now()`; sinh access token (JWT, payload `{ sub: userId, email, roleCode, permissions: string[] }`, exp 15 phút, ký bằng `JWT_SECRET`); sinh refresh token (`crypto.randomBytes(64).toString('hex')`), lưu `sha256(refreshToken)` vào `user_sessions.refresh_token_hash` cùng `expires_at` (đề xuất 7 ngày), `user_agent`, `ip_address`; set cookie `refresh_token` (`httpOnly`, `secure` khi `NODE_ENV=production`, `sameSite=lax`, `path=/auth`, `maxAge` = 7 ngày).
+  - Đúng → reset `login_failed_count = 0`, `lockout_until = null`, `last_login_at = now()`; sinh access token (JWT, payload `{ sub: userId, email, roleCode, permissions: string[] }`, exp 15 phút, ký bằng `JWT_SECRET`); sinh refresh token (`crypto.randomBytes(64).toString('hex')`), lưu `sha256(refreshToken)` vào `user_sessions.refresh_token_hash` cùng `expires_at` (đề xuất 7 ngày), `user_agent`, `ip_address`; set cookie `refresh_token` (`httpOnly`, `secure` khi `NODE_ENV=production`, `sameSite=lax`, `path=/`, `maxAge` = 7 ngày). **Lưu ý (bug thực tế đã gặp và fix):** ban đầu dùng `path=/auth`, nhưng FE gọi qua reverse proxy dưới prefix `/api` (`/api/auth/refresh`), nên trình duyệt không match path `/auth` → cookie không được gửi lại → mất phiên khi F5. Đổi về `path=/` để không phụ thuộc vào prefix proxy.
 - Response 200: `{ accessToken, user: { id, email, fullName, roleCode, roleName, permissions } }`. **Không bao giờ trả `password_hash` hay refresh token trong body.**
 
 **`POST /auth/refresh`**
@@ -243,7 +243,7 @@ Nếu cần test ràng buộc DB thật (unique email, `uq_user_single_role`), t
 | Task | Branch | PR |
 |---|---|---|
 | S2-AUTH-01 | `feat/Nguyen_S2-AUTH-01-user-role-permission-seed` | https://github.com/ERP-TAMI/Erp-BE/pull/21 |
-| S2-AUTH-02 | `feat/Nguyen_S2-AUTH-02-login-session-api` | _(điền sau khi tạo)_ |
+| S2-AUTH-02 | `feat/Nguyen_S2-AUTH-02-login-session-api` | https://github.com/ERP-TAMI/Erp-BE/pull/22 |
 | S2-AUTH-03 | `feat/Nguyen_S2-AUTH-03-permission-guard` | _(điền sau khi tạo)_ |
 | S2-AUTH-05 (BE) | `feat/Nguyen_S2-AUTH-05-be-auth-tests` | _(điền sau khi tạo)_ |
 
