@@ -1,8 +1,6 @@
 import { MigrationInterface, QueryRunner } from 'typeorm';
 
-export class RemoveMaterialGroupDisplayOrder1740000000004
-  implements MigrationInterface
-{
+export class RemoveMaterialGroupDisplayOrder1740000000004 implements MigrationInterface {
   name = 'RemoveMaterialGroupDisplayOrder1740000000004';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
