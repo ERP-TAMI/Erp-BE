@@ -1,4 +1,11 @@
-import { IsString, IsNotEmpty, IsOptional, IsEnum, IsUUID, MaxLength } from 'class-validator';
+import {
+  IsString,
+  IsNotEmpty,
+  IsOptional,
+  IsEnum,
+  IsUUID,
+  MaxLength,
+} from 'class-validator';
 import { StyleStatus } from '../../../common/enums/database.enums';
 
 export class CreateStyleDto {

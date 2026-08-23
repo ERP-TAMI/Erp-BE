@@ -23,7 +23,9 @@ describe('StylesController', () => {
       }),
       findOne: jest.fn().mockResolvedValue(mockStyle),
       findByCode: jest.fn().mockResolvedValue(mockStyle),
-      update: jest.fn().mockResolvedValue({ ...mockStyle, status: StyleStatus.ACTIVE }),
+      update: jest
+        .fn()
+        .mockResolvedValue({ ...mockStyle, status: StyleStatus.ACTIVE }),
       remove: jest.fn().mockResolvedValue(undefined),
     };
 
@@ -58,15 +60,22 @@ describe('StylesController', () => {
   });
 
   it('findOne should return style by id', async () => {
-    const res = await controller.findOne('123e4567-e89b-12d3-a456-426614174000');
+    const res = await controller.findOne(
+      '123e4567-e89b-12d3-a456-426614174000',
+    );
     expect(res).toEqual(mockStyle);
-    expect(serviceMock.findOne).toHaveBeenCalledWith('123e4567-e89b-12d3-a456-426614174000');
+    expect(serviceMock.findOne).toHaveBeenCalledWith(
+      '123e4567-e89b-12d3-a456-426614174000',
+    );
   });
 
   it('update should return updated style', async () => {
-    const res = await controller.update('123e4567-e89b-12d3-a456-426614174000', {
-      status: StyleStatus.ACTIVE,
-    });
+    const res = await controller.update(
+      '123e4567-e89b-12d3-a456-426614174000',
+      {
+        status: StyleStatus.ACTIVE,
+      },
+    );
     expect(res.status).toBe(StyleStatus.ACTIVE);
     expect(serviceMock.update).toHaveBeenCalled();
   });

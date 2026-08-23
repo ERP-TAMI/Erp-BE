@@ -28,18 +28,19 @@ export class StylesController {
   @ApiResponse({ status: 201, description: 'Mẫu Fit đã được tạo thành công' })
   @ApiResponse({ status: 400, description: 'Dữ liệu đầu vào không hợp lệ' })
   @ApiResponse({ status: 409, description: 'Mã mẫu Fit đã tồn tại' })
-  async create(
-    @Body() dto: CreateStyleDto,
-    @Req() req?: any,
-  ): Promise<Style> {
+  async create(@Body() dto: CreateStyleDto, @Req() req?: any): Promise<Style> {
     const userId = req?.user?.id || req?.user?.sub;
     return this.stylesService.create(dto, userId);
   }
 
   @Get()
-  @ApiOperation({ summary: 'Lấy danh sách mẫu Fit (tìm kiếm, lọc & phân trang)' })
+  @ApiOperation({
+    summary: 'Lấy danh sách mẫu Fit (tìm kiếm, lọc & phân trang)',
+  })
   @ApiResponse({ status: 200, description: 'Danh sách mẫu Fit' })
-  async findAll(@Query() query: StyleQueryDto): Promise<PaginatedResult<Style>> {
+  async findAll(
+    @Query() query: StyleQueryDto,
+  ): Promise<PaginatedResult<Style>> {
     return this.stylesService.findAll(query);
   }
 
