@@ -55,7 +55,6 @@ databaseE2e('Material groups database API (e2e)', () => {
 
     expect(createResponse.body).toMatchObject({
       status: RecordStatus.ACTIVE,
-      displayOrder: 0,
     });
 
     const listedGroups = await request(app.getHttpServer())
@@ -72,11 +71,10 @@ databaseE2e('Material groups database API (e2e)', () => {
       .send({
         code: reusedCode,
         name: `Updated E2E group ${testSuffix}`,
-        displayOrder: 2,
       })
       .expect(200);
     expect(updatedGroup.body).toEqual(
-      expect.objectContaining({ code: reusedCode, displayOrder: 2 }),
+      expect.objectContaining({ code: reusedCode }),
     );
 
     const inactiveGroup = await request(app.getHttpServer())

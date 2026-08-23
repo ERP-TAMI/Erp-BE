@@ -29,7 +29,7 @@ export class MaterialGroupsService {
   ): Promise<MaterialGroupResponseDto[]> {
     const materialGroups = await this.materialGroups.find({
       where: query.status ? { status: query.status } : {},
-      order: { displayOrder: 'ASC', name: 'ASC' },
+      order: { name: 'ASC' },
     });
     return materialGroups.map(MaterialGroupResponseDto.fromEntity);
   }
@@ -48,7 +48,6 @@ export class MaterialGroupsService {
     const materialGroup = this.materialGroups.create({
       code,
       name,
-      displayOrder: dto.displayOrder ?? 0,
       status: RecordStatus.ACTIVE,
     });
     return MaterialGroupResponseDto.fromEntity(
@@ -74,10 +73,6 @@ export class MaterialGroupsService {
     if (name && name !== materialGroup.name) {
       await this.ensureNameUnique(name, id);
       materialGroup.name = name;
-    }
-
-    if (dto.displayOrder !== undefined) {
-      materialGroup.displayOrder = dto.displayOrder;
     }
 
     return MaterialGroupResponseDto.fromEntity(

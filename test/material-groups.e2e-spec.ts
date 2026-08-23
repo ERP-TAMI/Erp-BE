@@ -16,7 +16,6 @@ describe('Material groups API (e2e)', () => {
     id,
     code: 'FABRIC',
     name: 'Fabric',
-    displayOrder: 0,
     status: RecordStatus.ACTIVE,
   };
   const materialGroupsService = {
@@ -59,13 +58,12 @@ describe('Material groups API (e2e)', () => {
 
     await request(app.getHttpServer())
       .post('/masters/material-groups')
-      .send({ name: ' Fabric ', displayOrder: 0 })
+      .send({ name: ' Fabric ' })
       .expect(201)
       .expect(group);
 
     expect(materialGroupsService.create).toHaveBeenCalledWith({
       name: 'Fabric',
-      displayOrder: 0,
     });
   });
 
@@ -97,35 +95,33 @@ describe('Material groups API (e2e)', () => {
     const updatedGroup = {
       ...group,
       name: 'Main fabric',
-      displayOrder: 2,
     };
     materialGroupsService.update.mockResolvedValue(updatedGroup);
 
     await request(app.getHttpServer())
       .patch(`/masters/material-groups/${id}`)
-      .send({ name: ' Main fabric ', displayOrder: 2 })
+      .send({ name: ' Main fabric ' })
       .expect(200)
       .expect(updatedGroup);
 
     expect(materialGroupsService.update).toHaveBeenCalledWith(id, {
       name: 'Main fabric',
-      displayOrder: 2,
     });
   });
 
   it('rejects invalid input before it reaches the service', async () => {
     await request(app.getHttpServer())
       .post('/masters/material-groups')
-      .send({ name: 'Fabric', displayOrder: -1, ignored: true })
+      .send({ name: 'Fabric', ignored: true })
       .expect(400);
 
     expect(materialGroupsService.create).not.toHaveBeenCalled();
   });
 
-  it('requires a name and an integer display order', async () => {
+  it('requires a name', async () => {
     await request(app.getHttpServer())
       .post('/masters/material-groups')
-      .send({ name: '   ', displayOrder: 1.5 })
+      .send({ name: '   ' })
       .expect(400);
 
     expect(materialGroupsService.create).not.toHaveBeenCalled();

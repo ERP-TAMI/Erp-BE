@@ -12,9 +12,6 @@ export class MaterialGroupResponseDto {
   @ApiProperty()
   name: string;
 
-  @ApiProperty()
-  displayOrder: number;
-
   @ApiProperty({ enum: RecordStatus })
   status: RecordStatus;
 
@@ -23,7 +20,6 @@ export class MaterialGroupResponseDto {
       id: entity.id,
       code: entity.code,
       name: entity.name,
-      displayOrder: entity.displayOrder,
       status: entity.status,
     };
   }

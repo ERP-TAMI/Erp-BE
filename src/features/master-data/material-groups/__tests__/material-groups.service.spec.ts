@@ -10,7 +10,6 @@ describe('MaterialGroupsService', () => {
     id: '9fb4d58f-0e6d-4ed5-b122-2b9f61aae115',
     code: 'FABRIC',
     name: 'Fabric',
-    displayOrder: 0,
     status: RecordStatus.ACTIVE,
   };
 
@@ -47,7 +46,7 @@ describe('MaterialGroupsService', () => {
     materialGroups.save.mockResolvedValue({ ...group });
 
     await expect(
-      service.create({ name: ' Fabric ', displayOrder: 0 }),
+      service.create({ name: ' Fabric ' }),
     ).resolves.toMatchObject({
       name: 'Fabric',
       status: RecordStatus.ACTIVE,
@@ -57,8 +56,7 @@ describe('MaterialGroupsService', () => {
       expect.objectContaining({
         code: expect.stringMatching(/^MG-[A-F0-9]{32}$/),
         name: 'Fabric',
-        displayOrder: 0,
-        status: RecordStatus.ACTIVE,
+            status: RecordStatus.ACTIVE,
       }),
     );
   });
@@ -67,7 +65,7 @@ describe('MaterialGroupsService', () => {
     materialGroups.findOneBy.mockResolvedValue(group);
 
     await expect(
-      service.create({ code: 'fabric', name: 'Another name', displayOrder: 1 }),
+      service.create({ code: 'fabric', name: 'Another name' }),
     ).rejects.toThrow(ConflictException);
   });
 
@@ -80,8 +78,7 @@ describe('MaterialGroupsService', () => {
     await service.create({
       code: ' fabric ',
       name: ' Fabric ',
-      displayOrder: 0,
-    });
+      });
 
     expect(materialGroups.create).toHaveBeenCalledWith(
       expect.objectContaining({ code: 'FABRIC' }),
@@ -93,7 +90,7 @@ describe('MaterialGroupsService', () => {
     normalizedNameResult.mockResolvedValue(group);
 
     await expect(
-      service.create({ code: 'ACCESSORY', name: ' fabric ', displayOrder: 1 }),
+      service.create({ code: 'ACCESSORY', name: ' fabric ' }),
     ).rejects.toThrow(ConflictException);
   });
 
@@ -118,7 +115,7 @@ describe('MaterialGroupsService', () => {
     ).resolves.toEqual([group]);
     expect(materialGroups.find).toHaveBeenCalledWith({
       where: { status: RecordStatus.ACTIVE },
-      order: { displayOrder: 'ASC', name: 'ASC' },
+      order: { name: 'ASC' },
     });
   });
 
