@@ -80,8 +80,8 @@ describe('Styles API (e2e)', () => {
   it('PATCH /styles/:id should update style', async () => {
     const res = await request(app.getHttpServer())
       .patch(`/styles/${mockStyle.id}`)
-      .send({ status: StyleStatus.APPROVED })
+      .send({ status: StyleStatus.ACTIVE })
       .expect(200);
-    expect(res.body.status).toBe(StyleStatus.APPROVED);
+    expect(res.body.status).toBe(StyleStatus.ACTIVE);
   });
 });

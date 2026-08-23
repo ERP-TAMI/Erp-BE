@@ -139,11 +139,11 @@ describe('StylesService', () => {
 
       const updated = await service.update('123e4567-e89b-12d3-a456-426614174000', {
         styleName: 'Áo Polo Nam Mới',
-        status: StyleStatus.APPROVED,
+        status: StyleStatus.ACTIVE,
       });
 
       expect(updated.styleName).toBe('Áo Polo Nam Mới');
-      expect(updated.status).toBe(StyleStatus.APPROVED);
+      expect(updated.status).toBe(StyleStatus.ACTIVE);
     });
 
     it('should throw BadRequestException if updating styleName to whitespace', async () => {

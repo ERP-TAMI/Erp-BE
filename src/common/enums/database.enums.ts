@@ -21,7 +21,6 @@ export enum ProductStatus {
 
 export enum StyleStatus {
   DRAFT = 'draft',
-  APPROVED = 'approved',
   ACTIVE = 'active',
 }
 
