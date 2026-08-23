@@ -21,7 +21,6 @@ Enum product_status {
 
 Enum style_status {
   draft
-  approved
   active
 }
 

@@ -1,28 +1,42 @@
-import { Entity, Column, PrimaryGeneratedColumn } from 'typeorm';
+import {
+  Entity,
+  Column,
+  PrimaryGeneratedColumn,
+  CreateDateColumn,
+  UpdateDateColumn,
+  Index,
+} from 'typeorm';
 import { StyleStatus } from '../../../common/enums/database.enums';
 
 @Entity('styles')
+@Index('ix_styles_lookup', ['status', 'category', 'createdAt', 'id'])
 export class Style {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column({ type: 'varchar', length: 100, name: 'style_code' })
+  @Index('ix_styles_code', { unique: true })
+  @Column({ type: 'varchar', length: 100, name: 'style_code', unique: true })
   styleCode: string;
 
   @Column({ type: 'varchar', length: 255, name: 'style_name' })
   styleName: string;
 
   @Column({ type: 'text', nullable: true })
-  description: string;
+  description: string | null;
 
   @Column({ type: 'varchar', length: 100, nullable: true })
-  category: string;
+  category: string | null;
 
-  @Column({ type: 'enum', enum: StyleStatus, enumName: 'style_status' })
+  @Column({
+    type: 'enum',
+    enum: StyleStatus,
+    enumName: 'style_status',
+    default: StyleStatus.DRAFT,
+  })
   status: StyleStatus;
 
   @Column({ type: 'uuid', nullable: true, name: 'base_image_version_id' })
-  baseImageVersionId: string;
+  baseImageVersionId: string | null;
 
   @Column({ type: 'int', default: 30, name: 'as3b_cm_base_days' })
   as3bCmBaseDays: number;
@@ -31,14 +45,14 @@ export class Style {
   rowVersion: number;
 
   @Column({ type: 'uuid', nullable: true, name: 'created_by' })
-  createdBy: string;
+  createdBy: string | null;
 
-  @Column({ type: 'timestamptz', name: 'created_at' })
+  @CreateDateColumn({ type: 'timestamptz', name: 'created_at' })
   createdAt: Date;
 
   @Column({ type: 'uuid', nullable: true, name: 'updated_by' })
-  updatedBy: string;
+  updatedBy: string | null;
 
-  @Column({ type: 'timestamptz', name: 'updated_at' })
+  @UpdateDateColumn({ type: 'timestamptz', name: 'updated_at' })
   updatedAt: Date;
 }
