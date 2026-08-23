@@ -22,7 +22,9 @@ export class AddProductionDocIndexes1740000000008 implements MigrationInterface 
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(`DROP INDEX IF EXISTS ix_prod_doc_size_rows_order;`);
+    await queryRunner.query(
+      `DROP INDEX IF EXISTS ix_prod_doc_size_rows_order;`,
+    );
     await queryRunner.query(`DROP INDEX IF EXISTS ix_prod_doc_sections_order;`);
     await queryRunner.query(`DROP INDEX IF EXISTS ix_production_docs_style;`);
   }
