@@ -7,13 +7,7 @@ export class UnitResponseDto {
   id: string;
 
   @ApiProperty()
-  code: string;
-
-  @ApiProperty()
   name: string;
-
-  @ApiProperty()
-  decimalScale: number;
 
   @ApiProperty({ enum: RecordStatus })
   status: RecordStatus;
@@ -21,9 +15,7 @@ export class UnitResponseDto {
   static fromEntity(unit: Unit): UnitResponseDto {
     return {
       id: unit.id,
-      code: unit.code,
       name: unit.name,
-      decimalScale: unit.decimalScale,
       status: unit.status,
     };
   }

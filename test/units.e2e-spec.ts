@@ -15,12 +15,15 @@ import { UnitsService } from '../src/features/master-data/units/units.service';
 describe('Units API (e2e)', () => {
   const unit = {
     id: '41fc8e1b-0441-463b-af3f-edf74592084d',
-    code: 'M',
     name: 'Mét',
-    decimalScale: 4,
     status: RecordStatus.ACTIVE,
   };
-  const unitsService = { findAll: jest.fn() };
+  const unitsService = {
+    findAll: jest.fn(),
+    update: jest.fn(),
+    updateStatus: jest.fn(),
+    remove: jest.fn(),
+  };
   let app: INestApplication;
 
   beforeEach(async () => {
@@ -70,6 +73,45 @@ describe('Units API (e2e)', () => {
       .expect(400);
 
     expect(unitsService.findAll).not.toHaveBeenCalled();
+  });
+
+  it('renames a unit through its update endpoint', async () => {
+    unitsService.update.mockResolvedValue({ ...unit, name: 'Mét vải' });
+
+    await request(app.getHttpServer())
+      .patch(`/masters/units/${unit.id}`)
+      .send({ name: 'Mét vải' })
+      .expect(200);
+
+    expect(unitsService.update).toHaveBeenCalledWith(unit.id, {
+      name: 'Mét vải',
+    });
+  });
+
+  it('deactivates a unit through its dedicated status endpoint', async () => {
+    unitsService.updateStatus.mockResolvedValue({
+      ...unit,
+      status: RecordStatus.INACTIVE,
+    });
+
+    await request(app.getHttpServer())
+      .patch(`/masters/units/${unit.id}/status`)
+      .send({ status: RecordStatus.INACTIVE })
+      .expect(200);
+
+    expect(unitsService.updateStatus).toHaveBeenCalledWith(unit.id, {
+      status: RecordStatus.INACTIVE,
+    });
+  });
+
+  it('deletes an unreferenced unit', async () => {
+    unitsService.remove.mockResolvedValue(undefined);
+
+    await request(app.getHttpServer())
+      .delete(`/masters/units/${unit.id}`)
+      .expect(204);
+
+    expect(unitsService.remove).toHaveBeenCalledWith(unit.id);
   });
 
   it('requires authentication', async () => {
