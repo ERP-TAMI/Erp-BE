@@ -182,23 +182,23 @@ describe('AuthService', () => {
 
     it('rejects an unknown, revoked, or expired session', async () => {
       sessionRepository.findOne.mockResolvedValueOnce(null);
-      await expect(
-        service.refresh('raw-token', {}),
-      ).rejects.toBeInstanceOf(UnauthorizedException);
+      await expect(service.refresh('raw-token', {})).rejects.toBeInstanceOf(
+        UnauthorizedException,
+      );
 
       sessionRepository.findOne.mockResolvedValueOnce(
         buildSession({ revokedAt: new Date() }),
       );
-      await expect(
-        service.refresh('raw-token', {}),
-      ).rejects.toBeInstanceOf(UnauthorizedException);
+      await expect(service.refresh('raw-token', {})).rejects.toBeInstanceOf(
+        UnauthorizedException,
+      );
 
       sessionRepository.findOne.mockResolvedValueOnce(
         buildSession({ expiresAt: new Date(Date.now() - 1000) }),
       );
-      await expect(
-        service.refresh('raw-token', {}),
-      ).rejects.toBeInstanceOf(UnauthorizedException);
+      await expect(service.refresh('raw-token', {})).rejects.toBeInstanceOf(
+        UnauthorizedException,
+      );
     });
 
     it('rotates a valid session: revokes the old one and issues a new token pair', async () => {
@@ -222,9 +222,9 @@ describe('AuthService', () => {
         buildUser({ lockoutUntil: new Date(Date.now() + 60_000) }),
       );
 
-      await expect(
-        service.refresh('raw-token', {}),
-      ).rejects.toMatchObject({ response: { code: ErrorCode.ACCOUNT_LOCKED } });
+      await expect(service.refresh('raw-token', {})).rejects.toMatchObject({
+        response: { code: ErrorCode.ACCOUNT_LOCKED },
+      });
     });
   });
 

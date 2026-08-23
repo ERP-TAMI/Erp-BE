@@ -18,15 +18,29 @@ describe('Styles API (e2e)', () => {
   };
 
   const mockStylesService = {
-    create: jest.fn().mockImplementation((dto) => Promise.resolve({ id: mockStyle.id, ...dto, status: dto.status || StyleStatus.DRAFT })),
+    create: jest.fn().mockImplementation((dto) =>
+      Promise.resolve({
+        id: mockStyle.id,
+        ...dto,
+        status: dto.status || StyleStatus.DRAFT,
+      }),
+    ),
     findAll: jest.fn().mockResolvedValue({
       data: [mockStyle],
       meta: { total: 1, page: 1, limit: 10, totalPages: 1 },
     }),
-    findOne: jest.fn().mockImplementation((id) =>
-      id === mockStyle.id ? Promise.resolve(mockStyle) : Promise.reject({ status: 404, message: 'Not Found' }),
-    ),
-    update: jest.fn().mockImplementation((id, dto) => Promise.resolve({ ...mockStyle, ...dto })),
+    findOne: jest
+      .fn()
+      .mockImplementation((id) =>
+        id === mockStyle.id
+          ? Promise.resolve(mockStyle)
+          : Promise.reject({ status: 404, message: 'Not Found' }),
+      ),
+    update: jest
+      .fn()
+      .mockImplementation((id, dto) =>
+        Promise.resolve({ ...mockStyle, ...dto }),
+      ),
     remove: jest.fn().mockResolvedValue(undefined),
   };
 

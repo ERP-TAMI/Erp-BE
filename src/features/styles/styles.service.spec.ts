@@ -1,6 +1,10 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { ConflictException, NotFoundException, BadRequestException } from '@nestjs/common';
+import {
+  ConflictException,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
 import { StylesService } from './styles.service';
 import { Style } from './entities/Style.entity';
 import { StyleStatus } from '../../common/enums/database.enums';
@@ -119,7 +123,9 @@ describe('StylesService', () => {
     it('should return a style if found', async () => {
       repositoryMock.findOne.mockResolvedValue(mockStyle);
 
-      const result = await service.findOne('123e4567-e89b-12d3-a456-426614174000');
+      const result = await service.findOne(
+        '123e4567-e89b-12d3-a456-426614174000',
+      );
 
       expect(result).toEqual(mockStyle);
     });
@@ -137,10 +143,13 @@ describe('StylesService', () => {
     it('should update style fields and status', async () => {
       repositoryMock.findOne.mockResolvedValue({ ...mockStyle });
 
-      const updated = await service.update('123e4567-e89b-12d3-a456-426614174000', {
-        styleName: 'Áo Polo Nam Mới',
-        status: StyleStatus.ACTIVE,
-      });
+      const updated = await service.update(
+        '123e4567-e89b-12d3-a456-426614174000',
+        {
+          styleName: 'Áo Polo Nam Mới',
+          status: StyleStatus.ACTIVE,
+        },
+      );
 
       expect(updated.styleName).toBe('Áo Polo Nam Mới');
       expect(updated.status).toBe(StyleStatus.ACTIVE);
