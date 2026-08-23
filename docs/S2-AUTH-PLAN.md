@@ -1,7 +1,7 @@
 # S2-AUTH: Kế hoạch triển khai Authentication & Authorization (Backend)
 
 ## Status
-S2-AUTH-01: code xong, đã test migration/seed thật trên DB dev (idempotent), PR đang mở (#21). Cần xác nhận phần "Giả định nghiệp vụ" bên dưới trước khi merge. Các task còn lại (02, 03, 05-BE) chưa bắt đầu.
+S2-AUTH-01: đã merge vào dev (#21). S2-AUTH-02: code xong, test đầy đủ (unit + e2e + test tay trên server thật), PR đang mở (#22). S2-AUTH-03, S2-AUTH-05-BE chưa bắt đầu.
 
 ## Scope
 Tài liệu này lên kế hoạch chi tiết cho 4 nhánh việc thuộc repo `Erp-BE`:
@@ -243,7 +243,7 @@ Nếu cần test ràng buộc DB thật (unique email, `uq_user_single_role`), t
 | Task | Branch | PR |
 |---|---|---|
 | S2-AUTH-01 | `feat/Nguyen_S2-AUTH-01-user-role-permission-seed` | https://github.com/ERP-TAMI/Erp-BE/pull/21 |
-| S2-AUTH-02 | `feat/Nguyen_S2-AUTH-02-login-session-api` | _(điền sau khi tạo)_ |
+| S2-AUTH-02 | `feat/Nguyen_S2-AUTH-02-login-session-api` | https://github.com/ERP-TAMI/Erp-BE/pull/22 |
 | S2-AUTH-03 | `feat/Nguyen_S2-AUTH-03-permission-guard` | _(điền sau khi tạo)_ |
 | S2-AUTH-05 (BE) | `feat/Nguyen_S2-AUTH-05-be-auth-tests` | _(điền sau khi tạo)_ |
 
