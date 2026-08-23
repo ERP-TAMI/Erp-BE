@@ -6,6 +6,7 @@ import { AppService } from './app.service';
 import { typeOrmConfig } from './database/typeorm.config';
 import { AuthModule } from './features/auth/auth.module';
 import { MasterDataModule } from './features/master-data/master-data.module';
+import { MaterialGroupsModule } from './features/master-data/material-groups/material-groups.module';
 import { DocumentsModule } from './features/documents/documents.module';
 import { StylesModule } from './features/styles/styles.module';
 import { DraftBomsModule } from './features/draft-boms/draft-boms.module';
@@ -23,6 +24,7 @@ const imports = [
   TypeOrmModule.forRootAsync({ useFactory: typeOrmConfig }),
   AuthModule,
   MasterDataModule,
+  MaterialGroupsModule,
   DocumentsModule,
   StylesModule,
   DraftBomsModule,
