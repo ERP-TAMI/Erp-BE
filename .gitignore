@@ -14,3 +14,7 @@ pnpm-debug.log*
 .DS_Store
 .idea
 .vscode
+
+# Uploaded Media
+uploads/*
+!uploads/.gitkeep

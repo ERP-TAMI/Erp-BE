@@ -1,72 +1,52 @@
 import {
-  ArgumentsHost,
-  Catch,
   ExceptionFilter,
+  Catch,
+  ArgumentsHost,
   HttpException,
   HttpStatus,
+  Logger,
 } from '@nestjs/common';
-import { Response } from 'express';
-import { ErrorCode } from '../enums/error-code.enum';
-
-type ErrorResponseBody = {
-  code?: string;
-  error?: string;
-  message?: string | string[];
-  statusCode?: number;
-};
+import { Request, Response } from 'express';
 
 @Catch()
 export class HttpExceptionFilter implements ExceptionFilter {
-  catch(exception: unknown, host: ArgumentsHost): void {
+  private readonly logger = new Logger(HttpExceptionFilter.name);
+
+  catch(exception: unknown, host: ArgumentsHost) {
     const ctx = host.switchToHttp();
     const response = ctx.getResponse<Response>();
-    const statusCode =
+    const request = ctx.getRequest<Request>();
+
+    const status =
       exception instanceof HttpException
         ? exception.getStatus()
         : HttpStatus.INTERNAL_SERVER_ERROR;
 
-    const exceptionResponse =
-      exception instanceof HttpException ? exception.getResponse() : undefined;
-    const body = this.normalizeBody(exceptionResponse);
+    const res =
+      exception instanceof HttpException
+        ? exception.getResponse()
+        : (exception as Error)?.message || 'Internal Server Error';
 
-    response.status(statusCode).json({
-      code: body.code ?? this.mapStatusToCode(statusCode),
-      message: body.message ?? body.error ?? 'Internal server error',
-      statusCode,
+    this.logger.error(
+      `[${request.method}] ${request.url} - Status: ${status} - Error: ${JSON.stringify(res)}`,
+      (exception as Error)?.stack,
+    );
+
+    if (response.headersSent) {
+      return;
+    }
+
+    const errorBody =
+      typeof res === 'object' && res !== null
+        ? (res as Record<string, any>)
+        : { message: res };
+
+    response.status(status).json({
+      statusCode: status,
+      code: errorBody.code || HttpStatus[status] || 'INTERNAL_SERVER_ERROR',
       timestamp: new Date().toISOString(),
+      path: request.url,
+      ...errorBody,
     });
-  }
-
-  private normalizeBody(response: unknown): ErrorResponseBody {
-    if (!response) {
-      return {};
-    }
-
-    if (typeof response === 'string') {
-      return { message: response };
-    }
-
-    if (typeof response === 'object') {
-      return response as ErrorResponseBody;
-    }
-
-    return {};
-  }
-
-  private mapStatusToCode(statusCode: number): ErrorCode {
-    switch (statusCode) {
-      case HttpStatus.BAD_REQUEST:
-        return ErrorCode.BAD_REQUEST;
-      case HttpStatus.UNAUTHORIZED:
-        return ErrorCode.UNAUTHORIZED;
-      case HttpStatus.FORBIDDEN:
-        return ErrorCode.FORBIDDEN;
-      case HttpStatus.NOT_FOUND:
-        return ErrorCode.RESOURCE_NOT_FOUND;
-      case HttpStatus.CONFLICT:
-        return ErrorCode.CONFLICT;
-      default:
-        return ErrorCode.INTERNAL_SERVER_ERROR;
-    }
   }
 }
