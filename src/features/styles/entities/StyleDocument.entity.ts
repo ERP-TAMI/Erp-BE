@@ -1,4 +1,4 @@
-import { Entity, Column, PrimaryColumn } from 'typeorm';
+import { Entity, Column, PrimaryColumn, CreateDateColumn } from 'typeorm';
 import { DocumentPurpose } from '../../../common/enums/database.enums';
 
 @Entity('style_documents')
@@ -20,6 +20,6 @@ export class StyleDocument {
   @Column({ type: 'uuid', nullable: true, name: 'linked_by' })
   linkedBy: string | null;
 
-  @Column({ type: 'timestamptz', name: 'linked_at' })
+  @CreateDateColumn({ type: 'timestamptz', name: 'linked_at' })
   linkedAt: Date;
 }

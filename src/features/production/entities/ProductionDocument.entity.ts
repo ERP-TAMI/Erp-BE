@@ -13,7 +13,7 @@ export class ProductionDocument {
   id: string;
 
   @Column({ type: 'uuid', nullable: true, name: 'style_id' })
-  styleId: string;
+  styleId: string | null;
 
   @Column({ type: 'uuid', nullable: true, name: 'product_id' })
   productId: string | null;
