@@ -20,10 +20,10 @@ export class ProductionDocumentSizeRow {
     nullable: true,
     name: 'measurement_value',
   })
-  measurementValue: string;
+  measurementValue: string | null;
 
   @Column({ type: 'varchar', length: 100, nullable: true })
-  tolerance: string;
+  tolerance: string | null;
 
   @Column({ type: 'int', default: 0, name: 'order_index' })
   orderIndex: number;
