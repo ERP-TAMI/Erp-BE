@@ -12,6 +12,18 @@ describe('stage group entity metadata', () => {
     expect(description?.options.nullable).toBe(true);
   });
 
+  it('hydrates generated timestamps when a stage group is saved', () => {
+    const columns = getMetadataArgsStorage().columns.filter(
+      (column) => column.target === StageGroup,
+    );
+    const byProperty = new Map(
+      columns.map((column) => [column.propertyName, column]),
+    );
+
+    expect(byProperty.get('createdAt')?.mode).toBe('createDate');
+    expect(byProperty.get('updatedAt')?.mode).toBe('updateDate');
+  });
+
   it('maps stage group item keys and snapshots to snake_case columns', () => {
     const columns = getMetadataArgsStorage().columns.filter(
       (column) => column.target === StageGroupItem,
