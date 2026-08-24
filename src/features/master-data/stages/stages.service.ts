@@ -77,6 +77,20 @@ export class StagesService {
     return StageResponseDto.fromEntity(await this.saveStage(stage));
   }
 
+  async remove(id: string): Promise<void> {
+    const stage = await this.getExistingStage(id);
+    try {
+      await this.stages.remove(stage);
+    } catch (error) {
+      if (this.hasDatabaseCode(error, '23503')) {
+        throw new ConflictException(
+          'Stage cannot be deleted because it is referenced by business data',
+        );
+      }
+      throw error;
+    }
+  }
+
   async updateSsvBulk(dto: UpdateStageSsvBulkDto): Promise<StageResponseDto[]> {
     const ids = dto.items.map((item) => item.id);
     const stages = await this.stages.findBy({ id: In(ids) });

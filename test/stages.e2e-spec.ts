@@ -30,6 +30,7 @@ describe('Stages API (e2e)', () => {
     update: jest.fn(),
     updateStatus: jest.fn(),
     updateSsvBulk: jest.fn(),
+    remove: jest.fn(),
   };
   let app: INestApplication;
 
@@ -211,6 +212,16 @@ describe('Stages API (e2e)', () => {
     expect(stagesService.updateStatus).toHaveBeenCalledWith(id, {
       status: RecordStatus.INACTIVE,
     });
+  });
+
+  it('deletes a stage through the HTTP API', async () => {
+    stagesService.remove.mockResolvedValue(undefined);
+
+    await request(app.getHttpServer())
+      .delete(`/masters/stages/${id}`)
+      .expect(204);
+
+    expect(stagesService.remove).toHaveBeenCalledWith(id);
   });
 
   it('updates SSV in bulk through the static route', async () => {

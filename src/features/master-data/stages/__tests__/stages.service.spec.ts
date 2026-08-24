@@ -32,6 +32,7 @@ describe('StagesService', () => {
       createQueryBuilder: jest.fn().mockReturnValue(queryBuilder),
       create: jest.fn(),
       save: jest.fn(),
+      remove: jest.fn(),
     } as unknown as jest.Mocked<Repository<Stage>>;
     service = new StagesService(stages);
   });
@@ -232,5 +233,28 @@ describe('StagesService', () => {
     stages.findOneBy.mockResolvedValue(null);
 
     await expect(service.findOne(stage.id)).rejects.toThrow(NotFoundException);
+  });
+
+  it('deletes an existing stage', async () => {
+    stages.findOneBy.mockResolvedValue(stage);
+    stages.remove.mockResolvedValue(stage);
+
+    await expect(service.remove(stage.id)).resolves.toBeUndefined();
+
+    expect(stages.remove).toHaveBeenCalledWith(stage);
+  });
+
+  it('rejects deletion when business data references the stage', async () => {
+    stages.findOneBy.mockResolvedValue(stage);
+    stages.remove.mockRejectedValue({ code: '23503' });
+
+    await expect(service.remove(stage.id)).rejects.toThrow(ConflictException);
+  });
+
+  it('returns not found when deleting an unknown stage', async () => {
+    stages.findOneBy.mockResolvedValue(null);
+
+    await expect(service.remove(stage.id)).rejects.toThrow(NotFoundException);
+    expect(stages.remove).not.toHaveBeenCalled();
   });
 });

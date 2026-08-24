@@ -1,7 +1,10 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
+  HttpCode,
+  HttpStatus,
   Param,
   ParseUUIDPipe,
   Patch,
@@ -85,5 +88,17 @@ export class StagesController {
     @Body() dto: UpdateStageStatusDto,
   ): Promise<StageResponseDto> {
     return this.stagesService.updateStatus(id, dto);
+  }
+
+  @Delete(':id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiNotFoundResponse({ description: 'Stage was not found' })
+  @ApiConflictResponse({
+    description: 'Stage is referenced by business data',
+  })
+  remove(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+  ): Promise<void> {
+    return this.stagesService.remove(id);
   }
 }
