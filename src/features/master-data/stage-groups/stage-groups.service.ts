@@ -173,6 +173,20 @@ export class StageGroupsService {
     return this.loadResponse(this.items, this.stages, savedGroup);
   }
 
+  async remove(id: string): Promise<void> {
+    const group = await this.getExistingGroup(this.groups, id);
+    try {
+      await this.groups.remove(group);
+    } catch (error) {
+      if (this.hasDatabaseCode(error, '23503')) {
+        throw new ConflictException(
+          'Stage group cannot be deleted because it is referenced by business data',
+        );
+      }
+      throw error;
+    }
+  }
+
   private getRepositories(manager: EntityManager): {
     groups: Repository<StageGroup>;
     items: Repository<StageGroupItem>;

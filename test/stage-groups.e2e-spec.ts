@@ -8,7 +8,7 @@ import { RecordStatus } from '../src/common/enums/database.enums';
 import { StageGroupsController } from '../src/features/master-data/stage-groups/stage-groups.controller';
 import { StageGroupsService } from '../src/features/master-data/stage-groups/stage-groups.service';
 
-describe('Stage groups API (e2e)', () => {
+describe('Stage groups controller boundary (e2e)', () => {
   const id = '64bfc097-69d1-43f5-af97-cb0e7428f7df';
   const stageId = '771c0dc2-cd59-44e3-9b16-cacb200f20e5';
   const group = {
@@ -37,6 +37,7 @@ describe('Stage groups API (e2e)', () => {
     create: jest.fn(),
     update: jest.fn(),
     updateStatus: jest.fn(),
+    remove: jest.fn(),
   };
   let app: INestApplication;
 
@@ -154,6 +155,31 @@ describe('Stage groups API (e2e)', () => {
     expect(stageGroupsService.update).not.toHaveBeenCalled();
   });
 
+  it.each([{ groupName: null }, { items: null }])(
+    'rejects null update fields before the service: %p',
+    async (invalid) => {
+      await request(app.getHttpServer())
+        .patch(`/masters/stage-groups/${id}`)
+        .send(invalid)
+        .expect(400);
+
+      expect(stageGroupsService.update).not.toHaveBeenCalled();
+    },
+  );
+
+  it('allows null description to clear the optional value', async () => {
+    stageGroupsService.update.mockResolvedValue(group);
+
+    await request(app.getHttpServer())
+      .patch(`/masters/stage-groups/${id}`)
+      .send({ description: null })
+      .expect(200);
+
+    expect(stageGroupsService.update).toHaveBeenCalledWith(id, {
+      description: null,
+    });
+  });
+
   it('replaces the ordered stage list through update', async () => {
     stageGroupsService.update.mockResolvedValue(group);
 
@@ -186,5 +212,15 @@ describe('Stage groups API (e2e)', () => {
     expect(stageGroupsService.updateStatus).toHaveBeenCalledWith(id, {
       status: RecordStatus.INACTIVE,
     });
+  });
+
+  it('deletes a stage group through the dedicated endpoint', async () => {
+    stageGroupsService.remove.mockResolvedValue(undefined);
+
+    await request(app.getHttpServer())
+      .delete(`/masters/stage-groups/${id}`)
+      .expect(204);
+
+    expect(stageGroupsService.remove).toHaveBeenCalledWith(id);
   });
 });

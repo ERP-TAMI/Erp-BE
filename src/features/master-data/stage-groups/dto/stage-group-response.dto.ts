@@ -91,12 +91,19 @@ export class StageGroupResponseDto extends StageGroupSummaryResponseDto {
   ): StageGroupResponseDto {
     return {
       ...StageGroupSummaryResponseDto.fromEntity(group, items.length),
-      items: items.map((item) =>
-        StageGroupItemResponseDto.fromEntity(
-          item,
-          stagesById.get(item.stageId)!,
+      items: items
+        .slice()
+        .sort(
+          (left, right) =>
+            left.orderIndex - right.orderIndex ||
+            left.stageId.localeCompare(right.stageId),
+        )
+        .map((item) =>
+          StageGroupItemResponseDto.fromEntity(
+            item,
+            stagesById.get(item.stageId)!,
+          ),
         ),
-      ),
     };
   }
 }

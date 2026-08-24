@@ -1,7 +1,10 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
+  HttpCode,
+  HttpStatus,
   Param,
   ParseUUIDPipe,
   Patch,
@@ -14,6 +17,7 @@ import {
   ApiConflictResponse,
   ApiCreatedResponse,
   ApiNotFoundResponse,
+  ApiNoContentResponse,
   ApiOkResponse,
   ApiTags,
 } from '@nestjs/swagger';
@@ -79,5 +83,18 @@ export class StageGroupsController {
     @Body() dto: UpdateStageGroupStatusDto,
   ): Promise<StageGroupResponseDto> {
     return this.stageGroupsService.updateStatus(id, dto);
+  }
+
+  @Delete(':id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiNoContentResponse({ description: 'Stage group deleted' })
+  @ApiNotFoundResponse({ description: 'Stage group was not found' })
+  @ApiConflictResponse({
+    description: 'Stage group is referenced by business data',
+  })
+  remove(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+  ): Promise<void> {
+    return this.stageGroupsService.remove(id);
   }
 }

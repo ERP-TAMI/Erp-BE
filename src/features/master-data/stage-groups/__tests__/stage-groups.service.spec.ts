@@ -35,6 +35,14 @@ describe('StageGroupsService', () => {
     defaultSsv: '12.500',
     status: RecordStatus.ACTIVE,
   };
+  const secondStage: Stage = {
+    ...stage,
+    id: '4f71709a-aa73-44a9-9217-79a464287567',
+    stageCode: 'GD-CAT',
+    stageName: 'Cắt vải',
+    description: 'Cắt chi tiết',
+    defaultSsv: '8.000',
+  };
 
   let groups: jest.Mocked<Repository<StageGroup>>;
   let items: jest.Mocked<Repository<StageGroupItem>>;
@@ -54,6 +62,7 @@ describe('StageGroupsService', () => {
       findOneBy: jest.fn(),
       create: jest.fn(),
       save: jest.fn(),
+      remove: jest.fn(),
       createQueryBuilder: jest.fn().mockReturnValue(groupQueryBuilder),
     } as unknown as jest.Mocked<Repository<StageGroup>>;
     items = {
@@ -135,6 +144,29 @@ describe('StageGroupsService', () => {
       descriptionSnapshot: 'May ráp thân',
       ssvSnapshot: '12.500',
     });
+  });
+
+  it('returns created items sorted by order index regardless of request order', async () => {
+    stages.findBy.mockResolvedValue([stage, secondStage]);
+    groups.create.mockReturnValue({ ...group });
+    groups.save.mockResolvedValue({ ...group });
+    items.create.mockImplementation((value) => value as StageGroupItem);
+    (items.save as jest.Mock).mockImplementation(async (value) => value);
+
+    const response = await service.create({
+      groupCode: 'NC-MAY',
+      groupName: 'Nhóm may',
+      items: [
+        { stageId, orderIndex: 1 },
+        { stageId: secondStage.id, orderIndex: 0 },
+      ],
+    });
+
+    expect(response.items.map((item) => item.orderIndex)).toEqual([0, 1]);
+    expect(response.items.map((item) => item.stageId)).toEqual([
+      secondStage.id,
+      stageId,
+    ]);
   });
 
   it('generates a normalized group code when create omits it', async () => {
@@ -221,5 +253,28 @@ describe('StageGroupsService', () => {
     groups.findOneBy.mockResolvedValue(null);
 
     await expect(service.findOne(groupId)).rejects.toThrow(NotFoundException);
+  });
+
+  it('deletes an existing stage group', async () => {
+    groups.findOneBy.mockResolvedValue(group);
+    groups.remove.mockResolvedValue(group);
+
+    await expect(service.remove(groupId)).resolves.toBeUndefined();
+
+    expect(groups.remove).toHaveBeenCalledWith(group);
+  });
+
+  it('returns not found when deleting an unknown stage group', async () => {
+    groups.findOneBy.mockResolvedValue(null);
+
+    await expect(service.remove(groupId)).rejects.toThrow(NotFoundException);
+    expect(groups.remove).not.toHaveBeenCalled();
+  });
+
+  it('rejects deletion when business data references the stage group', async () => {
+    groups.findOneBy.mockResolvedValue(group);
+    groups.remove.mockRejectedValue({ code: '23503' });
+
+    await expect(service.remove(groupId)).rejects.toThrow(ConflictException);
   });
 });

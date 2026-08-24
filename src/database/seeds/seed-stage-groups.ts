@@ -116,6 +116,27 @@ function buildStageCode(stageName: string): string {
   return `GD-${slug || 'CONG-DOAN'}`.slice(0, 50).replace(/-+$/, '');
 }
 
+type ResolvedStage = {
+  id: string;
+  stage_code: string;
+  stage_name: string;
+  description: string | null;
+  default_ssv: string;
+};
+
+type ResolvedGroup = {
+  id: string;
+  group_code: string;
+};
+
+type PersistedGroupItem = {
+  stage_group_id: string;
+  stage_id: string;
+  order_index: number;
+};
+
+const normalizeSeedKey = (value: string): string => value.trim().toUpperCase();
+
 export async function seedStageGroups(manager: EntityManager): Promise<void> {
   const seedItems = STAGE_GROUP_SEEDS.flatMap((group) => group.items);
   const stagesByName = new Map<string, StageGroupSeedItem>();
@@ -148,6 +169,45 @@ export async function seedStageGroups(manager: EntityManager): Promise<void> {
     stageParameters,
   );
 
+  const expectedStageNames = prerequisiteStages.map((stage) =>
+    normalizeSeedKey(stage.stageName),
+  );
+  const expectedStageCodes = prerequisiteStages.map((stage) =>
+    normalizeSeedKey(buildStageCode(stage.stageName)),
+  );
+  const resolvedStages = (await manager.query(
+    `SELECT id, stage_code, stage_name, description, default_ssv
+     FROM stages
+     WHERE UPPER(BTRIM(stage_name)) = ANY($1::text[])
+        OR UPPER(BTRIM(stage_code)) = ANY($2::text[])`,
+    [expectedStageNames, expectedStageCodes],
+  )) as ResolvedStage[];
+  const resolvedStageByName = new Map<string, ResolvedStage>();
+
+  prerequisiteStages.forEach((stage) => {
+    const expectedName = normalizeSeedKey(stage.stageName);
+    const expectedCode = normalizeSeedKey(buildStageCode(stage.stageName));
+    const matches = resolvedStages.filter(
+      (candidate) =>
+        normalizeSeedKey(candidate.stage_name) === expectedName ||
+        normalizeSeedKey(candidate.stage_code) === expectedCode,
+    );
+    if (
+      matches.length !== 1 ||
+      normalizeSeedKey(matches[0].stage_name) !== expectedName
+    ) {
+      const matchSummary = matches
+        .map((candidate) => `${candidate.stage_code} (${candidate.stage_name})`)
+        .join(', ');
+      throw new Error(
+        `Cannot seed stage ${expectedCode} (${stage.stageName}): resolved ${
+          matchSummary || 'no matching stage'
+        }`,
+      );
+    }
+    resolvedStageByName.set(expectedName, matches[0]);
+  });
+
   const groupPlaceholders = STAGE_GROUP_SEEDS.map((_, index) => {
     const offset = index * 3;
     return `($${offset + 1}, $${offset + 2}, $${offset + 3})`;
@@ -157,38 +217,64 @@ export async function seedStageGroups(manager: EntityManager): Promise<void> {
     group.groupName,
     group.description,
   ]);
-  const itemParameterOffset = groupParameters.length;
-  const itemPlaceholders = STAGE_GROUP_SEEDS.flatMap((group) =>
-    group.items.map((_, index) => {
-      const previousItemCount = STAGE_GROUP_SEEDS.slice(
-        0,
-        STAGE_GROUP_SEEDS.indexOf(group),
-      ).reduce((count, previous) => count + previous.items.length, 0);
-      const offset = itemParameterOffset + (previousItemCount + index) * 3;
-      return `($${offset + 1}, $${offset + 2}, $${offset + 3})`;
-    }),
-  ).join(',\n');
-  const itemParameters = STAGE_GROUP_SEEDS.flatMap((group) =>
-    group.items.flatMap((seedItem) => [
-      group.groupCode,
-      seedItem.stageName,
-      seedItem.orderIndex,
-    ]),
+  await manager.query(
+    `INSERT INTO stage_groups (group_code, group_name, description, status)
+     SELECT group_code, group_name, description, 'active'::record_status
+     FROM (VALUES ${groupPlaceholders}) AS seed(group_code, group_name, description)
+     ON CONFLICT (group_code) DO NOTHING`,
+    groupParameters,
   );
 
+  const resolvedGroups = (await manager.query(
+    `SELECT id, group_code
+     FROM stage_groups
+     WHERE group_code = ANY($1::text[])`,
+    [STAGE_GROUP_SEEDS.map((group) => group.groupCode)],
+  )) as ResolvedGroup[];
+  const resolvedGroupByCode = new Map(
+    resolvedGroups.map((group) => [group.group_code, group]),
+  );
+  for (const group of STAGE_GROUP_SEEDS) {
+    if (!resolvedGroupByCode.has(group.groupCode)) {
+      throw new Error(
+        `Cannot seed stage group ${group.groupCode}: group was not resolved`,
+      );
+    }
+  }
+
+  const seedItemRows = STAGE_GROUP_SEEDS.flatMap((group) => {
+    const resolvedGroup = resolvedGroupByCode.get(group.groupCode)!;
+    return group.items.map((seedItem) => {
+      const resolvedStage = resolvedStageByName.get(
+        normalizeSeedKey(seedItem.stageName),
+      )!;
+      return {
+        stageGroupId: resolvedGroup.id,
+        stageId: resolvedStage.id,
+        orderIndex: seedItem.orderIndex,
+        nameSnapshot: resolvedStage.stage_name,
+        descriptionSnapshot: resolvedStage.description,
+        ssvSnapshot: resolvedStage.default_ssv,
+      };
+    });
+  });
+  const itemPlaceholders = seedItemRows
+    .map((_, index) => {
+      const offset = index * 6;
+      return `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6}::numeric)`;
+    })
+    .join(',\n');
+  const itemParameters = seedItemRows.flatMap((seedItem) => [
+    seedItem.stageGroupId,
+    seedItem.stageId,
+    seedItem.orderIndex,
+    seedItem.nameSnapshot,
+    seedItem.descriptionSnapshot,
+    seedItem.ssvSnapshot,
+  ]);
+
   await manager.query(
-    `WITH seed_groups(group_code, group_name, description) AS (
-       VALUES ${groupPlaceholders}
-     ), inserted_groups AS (
-       INSERT INTO stage_groups (group_code, group_name, description, status)
-       SELECT group_code, group_name, description, 'active'::record_status
-       FROM seed_groups
-       ON CONFLICT (group_code) DO NOTHING
-       RETURNING id, group_code
-     ), seed_items(group_code, stage_name, order_index) AS (
-       VALUES ${itemPlaceholders}
-     )
-     INSERT INTO stage_group_items (
+    `INSERT INTO stage_group_items (
        stage_group_id,
        stage_id,
        order_index,
@@ -196,19 +282,40 @@ export async function seedStageGroups(manager: EntityManager): Promise<void> {
        description_snapshot,
        ssv_snapshot
      )
-     SELECT
-       inserted_groups.id,
-       stages.id,
-       seed_items.order_index::integer,
-       stages.stage_name,
-       stages.description,
-       stages.default_ssv
-     FROM seed_items
-     JOIN inserted_groups USING (group_code)
-     JOIN stages
-       ON UPPER(BTRIM(stages.stage_name)) = UPPER(BTRIM(seed_items.stage_name))`,
-    [...groupParameters, ...itemParameters],
+     VALUES ${itemPlaceholders}
+     ON CONFLICT (stage_group_id, stage_id) DO NOTHING`,
+    itemParameters,
   );
+
+  const persistedItems = (await manager.query(
+    `SELECT stage_group_id, stage_id, order_index
+     FROM stage_group_items
+     WHERE stage_group_id = ANY($1::uuid[])`,
+    [resolvedGroups.map((group) => group.id)],
+  )) as PersistedGroupItem[];
+  for (const group of STAGE_GROUP_SEEDS) {
+    const resolvedGroup = resolvedGroupByCode.get(group.groupCode)!;
+    const actualItems = persistedItems.filter(
+      (persistedItem) => persistedItem.stage_group_id === resolvedGroup.id,
+    );
+    const hasExpectedItems =
+      actualItems.length === group.items.length &&
+      group.items.every((seedItem) => {
+        const expectedStage = resolvedStageByName.get(
+          normalizeSeedKey(seedItem.stageName),
+        )!;
+        return actualItems.some(
+          (persistedItem) =>
+            persistedItem.stage_id === expectedStage.id &&
+            persistedItem.order_index === seedItem.orderIndex,
+        );
+      });
+    if (!hasExpectedItems) {
+      throw new Error(
+        `Cannot seed stage group ${group.groupCode}: expected ${group.items.length} ordered items, found ${actualItems.length}`,
+      );
+    }
+  }
 }
 
 export async function seedStageGroupCatalog(
