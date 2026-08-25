@@ -20,6 +20,7 @@ import { StageGroupItemInputDto } from './stage-group-item-input.dto';
 export class UpdateStageGroupDto {
   @ApiPropertyOptional({ example: 'Nhóm may', maxLength: 255 })
   @Transform(trimStageGroupText)
+  // IsOptional also skips null, but null must still fail the string validators.
   @ValidateIf((_, value) => value !== undefined)
   @IsString()
   @IsNotEmpty()
@@ -37,6 +38,7 @@ export class UpdateStageGroupDto {
     isArray: true,
     minItems: 1,
   })
+  // IsOptional also skips null, but null must still fail the array validators.
   @ValidateIf((_, value) => value !== undefined)
   @IsArray()
   @ArrayMinSize(1)

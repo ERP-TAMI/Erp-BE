@@ -18,5 +18,9 @@ export class StageGroupItem {
   descriptionSnapshot: string | null;
 
   @Column({ type: 'numeric', precision: 12, scale: 3, name: 'ssv_snapshot' })
+  /**
+   * PostgreSQL numeric values are hydrated as strings to preserve decimal
+   * precision. Convert explicitly at the boundary of downstream calculations.
+   */
   ssvSnapshot: string;
 }
