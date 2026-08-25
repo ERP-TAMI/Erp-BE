@@ -47,10 +47,10 @@ export class StageGroupsService {
         description: g.description || undefined,
         isGroup: true,
         items: items.map((it) => ({
-          id: it.stageId,
-          name: it.nameSnapshot,
-          description: it.descriptionSnapshot || undefined,
-          ssv: Number(it.ssvSnapshot) || 0,
+          id: it.id,
+          name: it.itemName,
+          description: it.description || undefined,
+          ssv: Number(it.ssv) || 0,
           orderIndex: it.orderIndex,
         })),
       });
@@ -75,12 +75,13 @@ export class StageGroupsService {
       description: g.description || undefined,
       isGroup: true,
       items: items.map((it) => ({
-        id: it.stageId,
-        name: it.nameSnapshot,
-        description: it.descriptionSnapshot || undefined,
-        ssv: Number(it.ssvSnapshot) || 0,
+        id: it.id,
+        name: it.itemName,
+        description: it.description || undefined,
+        ssv: Number(it.ssv) || 0,
         orderIndex: it.orderIndex,
       })),
     };
+
   }
 }
