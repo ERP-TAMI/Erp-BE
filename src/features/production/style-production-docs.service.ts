@@ -1093,7 +1093,8 @@ export class StyleProductionDocsService {
       const extension: 'png' | 'jpeg' = ext === 'png' ? 'png' : 'jpeg';
 
       if (imageUrl.includes('/uploads/')) {
-        const filename = imageUrl.split('/uploads/').pop();
+        // path.basename() chặn "../" — chỉ giữ tên file cuối cùng, không cho thoát khỏi thư mục uploads.
+        const filename = path.basename(imageUrl.split('/uploads/').pop() ?? '');
         if (filename) {
           const localPath = path.join(process.cwd(), 'uploads', filename);
           if (fs.existsSync(localPath)) {
