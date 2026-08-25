@@ -6,7 +6,7 @@ import {
   ConflictException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, In, Repository } from 'typeorm';
 import * as ExcelJS from 'exceljs';
 import axios from 'axios';
 import * as fs from 'fs';
@@ -116,7 +116,7 @@ export class StyleProductionDocsService {
 
     const bomIds = boms.map((b) => b.id);
     const lines = await this.bomLineRepo.find({
-      where: bomIds.map((id) => ({ billOfMaterialId: id })),
+      where: { billOfMaterialId: In(bomIds) },
     });
 
     const codes = new Set<string>();
