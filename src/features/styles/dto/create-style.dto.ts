@@ -29,6 +29,7 @@ export class CreateStyleDto {
 
   @IsString()
   @IsOptional()
+  @MaxLength(500, { message: 'baseImageVersionId không được vượt quá 500 ký tự' })
   baseImageVersionId?: string;
 
   @IsEnum(StyleStatus)
