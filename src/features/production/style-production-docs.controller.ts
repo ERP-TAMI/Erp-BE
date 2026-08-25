@@ -102,7 +102,7 @@ export class StyleProductionDocsController {
     );
   }
 
-  @Post(':docId/attachments')
+  @Post('attachments')
   @HttpCode(HttpStatus.OK)
   linkAttachment(
     @Param('styleId', ParseUUIDPipe) styleId: string,
@@ -111,7 +111,7 @@ export class StyleProductionDocsController {
     return this.service.linkAttachment(styleId, documentId);
   }
 
-  @Delete(':docId/attachments/:documentId')
+  @Delete('attachments/:documentId')
   @HttpCode(HttpStatus.NO_CONTENT)
   unlinkAttachment(
     @Param('styleId', ParseUUIDPipe) styleId: string,
