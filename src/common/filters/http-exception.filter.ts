@@ -8,6 +8,15 @@ import {
 } from '@nestjs/common';
 import { Request, Response } from 'express';
 
+// Khớp với FE-TAMI/src/lib/apiError.ts và ErrorCode enum cũ — không đổi contract `code`.
+const STATUS_TO_ERROR_CODE: Record<number, string> = {
+  400: 'BAD_REQUEST',
+  401: 'UNAUTHORIZED',
+  403: 'FORBIDDEN',
+  404: 'RESOURCE_NOT_FOUND',
+  409: 'CONFLICT',
+};
+
 @Catch()
 export class HttpExceptionFilter implements ExceptionFilter {
   private readonly logger = new Logger(HttpExceptionFilter.name);
@@ -22,19 +31,24 @@ export class HttpExceptionFilter implements ExceptionFilter {
         ? exception.getStatus()
         : HttpStatus.INTERNAL_SERVER_ERROR;
 
-    const res =
+    // Chỉ dùng để log server-side — không lộ message lỗi JS/DB gốc ra response trả về client.
+    const logRes =
       exception instanceof HttpException
         ? exception.getResponse()
         : (exception as Error)?.message || 'Internal Server Error';
 
     this.logger.error(
-      `[${request.method}] ${request.url} - Status: ${status} - Error: ${JSON.stringify(res)}`,
+      `[${request.method}] ${request.url} - Status: ${status} - Error: ${JSON.stringify(logRes)}`,
       (exception as Error)?.stack,
     );
 
     if (response.headersSent) {
       return;
     }
+
+    const res = exception instanceof HttpException
+      ? exception.getResponse()
+      : 'Internal server error';
 
     const errorBody =
       typeof res === 'object' && res !== null
@@ -43,7 +57,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
 
     response.status(status).json({
       statusCode: status,
-      code: errorBody.code || HttpStatus[status] || 'INTERNAL_SERVER_ERROR',
+      code: errorBody.code || STATUS_TO_ERROR_CODE[status] || 'INTERNAL_SERVER_ERROR',
       timestamp: new Date().toISOString(),
       path: request.url,
       ...errorBody,
