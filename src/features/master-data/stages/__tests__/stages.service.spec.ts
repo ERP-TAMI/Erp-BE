@@ -163,22 +163,37 @@ describe('StagesService', () => {
     );
   });
 
-  it('updates mutable stage fields without changing the stage code', async () => {
+  it('normalizes and updates the stage code with other mutable fields', async () => {
     stages.findOneBy.mockResolvedValue({ ...stage });
     stages.save.mockImplementation(async (value) => value as Stage);
 
     await expect(
       service.update(stage.id, {
+        stageCode: ' gd-cat-laser ',
         stageName: ' Cắt laser ',
         description: '',
         ssv: '15.250',
       }),
     ).resolves.toMatchObject({
-      stageCode: 'GD-CAT',
+      stageCode: 'GD-CAT-LASER',
       stageName: 'Cắt laser',
       description: null,
       ssv: '15.250',
     });
+  });
+
+  it('rejects an updated stage code already used by another stage', async () => {
+    stages.findOneBy.mockResolvedValue({ ...stage });
+    normalizedCodeResult.mockResolvedValue({
+      ...stage,
+      id: '771c0dc2-cd59-44e3-9b16-cacb200f20e5',
+      stageCode: 'GD-MAY',
+    });
+
+    await expect(
+      service.update(stage.id, { stageCode: ' gd-may ' }),
+    ).rejects.toThrow(ConflictException);
+    expect(stages.save).not.toHaveBeenCalled();
   });
 
   it('changes status through the dedicated operation', async () => {
