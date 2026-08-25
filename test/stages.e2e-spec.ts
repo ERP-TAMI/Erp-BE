@@ -163,10 +163,25 @@ describe('Stages API (e2e)', () => {
     },
   );
 
-  it('keeps the stage code immutable on update', async () => {
+  it('normalizes and updates the stage code through the HTTP API', async () => {
+    const updatedStage = { ...stage, stageCode: 'GD-MAY' };
+    stagesService.update.mockResolvedValue(updatedStage);
+
     await request(app.getHttpServer())
       .patch(`/masters/stages/${id}`)
-      .send({ stageCode: 'GD-MAY' })
+      .send({ stageCode: ' gd-may ' })
+      .expect(200)
+      .expect(updatedStage);
+
+    expect(stagesService.update).toHaveBeenCalledWith(id, {
+      stageCode: 'GD-MAY',
+    });
+  });
+
+  it('rejects an empty stage code on update', async () => {
+    await request(app.getHttpServer())
+      .patch(`/masters/stages/${id}`)
+      .send({ stageCode: '   ' })
       .expect(400);
 
     expect(stagesService.update).not.toHaveBeenCalled();
