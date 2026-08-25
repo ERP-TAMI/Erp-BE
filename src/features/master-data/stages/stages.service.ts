@@ -60,6 +60,13 @@ export class StagesService {
 
   async update(id: string, dto: UpdateStageDto): Promise<StageResponseDto> {
     const stage = await this.getExistingStage(id);
+    if (dto.stageCode !== undefined) {
+      const stageCode = this.normalizeCode(dto.stageCode);
+      if (stageCode !== this.normalizeCode(stage.stageCode)) {
+        await this.ensureCodeUnique(stageCode, stage.id);
+        stage.stageCode = stageCode;
+      }
+    }
     if (dto.stageName !== undefined) stage.stageName = dto.stageName.trim();
     if (dto.description !== undefined) {
       stage.description = this.normalizeDescription(dto.description);
@@ -113,8 +120,12 @@ export class StagesService {
     return stage;
   }
 
-  private async ensureCodeUnique(stageCode: string): Promise<void> {
-    if (await this.findByNormalizedCode(stageCode)) {
+  private async ensureCodeUnique(
+    stageCode: string,
+    excludedStageId?: string,
+  ): Promise<void> {
+    const existing = await this.findByNormalizedCode(stageCode);
+    if (existing && existing.id !== excludedStageId) {
       throw new ConflictException('Stage code already exists');
     }
   }
