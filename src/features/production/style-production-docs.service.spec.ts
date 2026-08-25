@@ -1,5 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
+import { DataSource } from 'typeorm';
 import { StyleProductionDocsService } from './style-production-docs.service';
 import { ProductionDocument } from './entities/ProductionDocument.entity';
 import { ProductionDocumentSection } from './entities/ProductionDocumentSection.entity';
@@ -93,6 +94,20 @@ describe('StyleProductionDocsService', () => {
       find: jest.fn().mockResolvedValue([]),
     };
 
+    const dataSourceMock = {
+      transaction: jest.fn().mockImplementation((cb: any) => {
+        const manager = {
+          getRepository: (entity: any) => {
+            if (entity === ProductionDocument) return prodDocRepoMock;
+            if (entity === ProductionDocumentSection) return sectionRepoMock;
+            if (entity === ProductionDocumentSizeRow) return sizeRowRepoMock;
+            throw new Error(`No mock repository for entity ${entity?.name}`);
+          },
+        };
+        return cb(manager);
+      }),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         StyleProductionDocsService,
@@ -122,6 +137,7 @@ describe('StyleProductionDocsService', () => {
           provide: getRepositoryToken(BillOfMaterialLine),
           useValue: bomLineRepoMock,
         },
+        { provide: DataSource, useValue: dataSourceMock },
       ],
     }).compile();
 
@@ -145,6 +161,24 @@ describe('StyleProductionDocsService', () => {
       expect(res.name).toBe('Tài liệu sản xuất mới');
       expect(sectionRepoMock.save).toHaveBeenCalled();
     });
+
+    it('should save sizeData from dto.sizeData, not from dto.sizeRows', async () => {
+      prodDocRepoMock.findOne.mockResolvedValueOnce(null);
+      const sizeData = [{ imageUrl: '/uploads/img-1.png' }];
+      const sizeRows = [
+        { sizeLabel: 'M', measurementName: 'Chest', imageUrl: '/uploads/img-2.png' },
+      ];
+
+      await service.createWithAutoFill('style-uuid-1', {
+        name: 'Tài liệu có ảnh Section 05',
+        sizeData,
+        sizeRows,
+      } as any);
+
+      expect(prodDocRepoMock.save).toHaveBeenCalledWith(
+        expect.objectContaining({ sizeData }),
+      );
+    });
   });
 
   describe('updateStatus', () => {
@@ -158,6 +192,27 @@ describe('StyleProductionDocsService', () => {
 
       expect(res.status).toBe(ProductionDocStatus.COMPLETED);
       expect(prodDocRepoMock.save).toHaveBeenCalled();
+    });
+  });
+
+  describe('update', () => {
+    it('should not crash when a text field is explicitly set to null', async () => {
+      prodDocRepoMock.findOne.mockResolvedValueOnce({ ...mockDoc });
+
+      await expect(
+        service.update('doc-uuid-1', { section1Description: null } as any),
+      ).resolves.not.toThrow();
+    });
+
+    it('should persist sizeData from the input, not derive it from sizeRows', async () => {
+      prodDocRepoMock.findOne.mockResolvedValueOnce({ ...mockDoc });
+      const sizeData = [{ imageUrl: '/uploads/img-1.png' }];
+
+      await service.update('doc-uuid-1', { sizeData } as any);
+
+      expect(prodDocRepoMock.save).toHaveBeenCalledWith(
+        expect.objectContaining({ sizeData }),
+      );
     });
   });
 

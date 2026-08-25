@@ -7,9 +7,25 @@ import {
   ValidateNested,
   IsNumber,
   IsBoolean,
+  IsUUID,
+  MaxLength,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ProductionDocStatus } from '../../../common/enums/database.enums';
+
+export class ProductionDocSizeImageDto {
+  @IsString()
+  @IsOptional()
+  id?: string;
+
+  @IsString()
+  @IsOptional()
+  imageUrl?: string;
+
+  @IsNumber()
+  @IsOptional()
+  orderIndex?: number;
+}
 
 export class CreateProductionDocSectionDto {
   @IsString()
@@ -78,6 +94,7 @@ export class CreateProductionDocSizeRowDto {
 export class CreateStyleProductionDocDto {
   @IsString()
   @IsNotEmpty()
+  @MaxLength(255)
   name: string;
 
   @IsString()
@@ -117,11 +134,17 @@ export class CreateStyleProductionDocDto {
   @IsArray()
   @IsOptional()
   @ValidateNested({ each: true })
+  @Type(() => ProductionDocSizeImageDto)
+  sizeData?: ProductionDocSizeImageDto[];
+
+  @IsArray()
+  @IsOptional()
+  @ValidateNested({ each: true })
   @Type(() => CreateProductionDocSectionDto)
   sections?: CreateProductionDocSectionDto[];
 
   @IsArray()
-  @IsString({ each: true })
+  @IsUUID(4, { each: true })
   @IsOptional()
   attachmentIds?: string[];
 }

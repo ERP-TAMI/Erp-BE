@@ -6,7 +6,7 @@ import {
   ConflictException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 import * as ExcelJS from 'exceljs';
 import axios from 'axios';
 import * as fs from 'fs';
@@ -96,6 +96,7 @@ export class StyleProductionDocsService {
     private readonly bomRepo: Repository<BillOfMaterials>,
     @InjectRepository(BillOfMaterialLine)
     private readonly bomLineRepo: Repository<BillOfMaterialLine>,
+    private readonly dataSource: DataSource,
   ) {}
 
   /**
@@ -195,7 +196,7 @@ export class StyleProductionDocsService {
       section2Accessories,
       section3Notes,
       section4CustomerFeedback,
-      sizeData: dto.sizeRows ? dto.sizeRows : null,
+      sizeData: dto.sizeData ?? null,
       createdBy: userId ?? null,
       updatedBy: userId ?? null,
     });
@@ -484,110 +485,124 @@ export class StyleProductionDocsService {
     dto: UpdateStyleProductionDocDto,
     userId?: string,
   ): Promise<StyleProductionDocDetailResponse> {
-    const doc = await this.prodDocRepo.findOne({ where: { id: docId } });
-    if (!doc) {
-      throw new NotFoundException(
-        `Không tìm thấy tài liệu sản xuất với ID: ${docId}`,
-      );
-    }
+    const doc = await this.dataSource.transaction(async (manager) => {
+      const prodDocRepo = manager.getRepository(ProductionDocument);
+      const sectionRepo = manager.getRepository(ProductionDocumentSection);
+      const sizeRowRepo = manager.getRepository(ProductionDocumentSizeRow);
 
-    if (dto.name !== undefined) doc.name = dto.name.trim();
-    if (dto.description !== undefined)
-      doc.description = dto.description?.trim() ?? null;
-    if (dto.status !== undefined) doc.status = dto.status;
-    if (dto.section1Description !== undefined)
-      doc.section1Description = dto.section1Description.trim();
-    if (dto.section1ImageUrl !== undefined)
-      doc.section1ImageUrl = dto.section1ImageUrl
-        ? dto.section1ImageUrl.trim()
-        : null;
-    if (dto.section2Accessories !== undefined)
-      doc.section2Accessories = dto.section2Accessories.trim();
-    if (dto.section3Notes !== undefined)
-      doc.section3Notes = dto.section3Notes.trim();
-    if (dto.section4CustomerFeedback !== undefined)
-      doc.section4CustomerFeedback = dto.section4CustomerFeedback.trim();
-    if (dto.sizeRows !== undefined) doc.sizeData = dto.sizeRows;
-
-    doc.updatedBy = userId ?? null;
-    doc.rowVersion = Number(doc.rowVersion) + 1;
-    await this.prodDocRepo.save(doc);
-
-    const existingSections = await this.sectionRepo.find({
-      where: { productionDocumentId: docId },
-    });
-
-    const sec1 = existingSections.find((s) => s.sectionCode === 'SEC1');
-    if (sec1 && dto.section1Description !== undefined) {
-      sec1.content = dto.section1Description.trim();
-      await this.sectionRepo.save(sec1);
-    }
-
-    const sec2 = existingSections.find((s) => s.sectionCode === 'SEC2');
-    if (sec2 && dto.section2Accessories !== undefined) {
-      sec2.content = dto.section2Accessories.trim();
-      await this.sectionRepo.save(sec2);
-    }
-
-    const sec3 = existingSections.find((s) => s.sectionCode === 'SEC3');
-    if (sec3 && dto.section3Notes !== undefined) {
-      sec3.content = dto.section3Notes.trim();
-      await this.sectionRepo.save(sec3);
-    }
-
-    const sec4 = existingSections.find((s) => s.sectionCode === 'SEC4');
-    if (sec4 && dto.section4CustomerFeedback !== undefined) {
-      sec4.content = dto.section4CustomerFeedback.trim();
-      await this.sectionRepo.save(sec4);
-    }
-
-    if (dto.sections !== undefined) {
-      const nonFixed = existingSections.filter((s) => !s.isFixed);
-      if (nonFixed.length > 0) {
-        await this.sectionRepo.remove(nonFixed);
-      }
-
-      let dynamicOrder = 5;
-      const newSections: ProductionDocumentSection[] = dto.sections
-        .filter((s) => !s.isFixed)
-        .map((s) =>
-          this.sectionRepo.create({
-            productionDocumentId: docId,
-            sectionCode: s.sectionCode || `SEC_DYN_${dynamicOrder++}`,
-            title: s.title.trim(),
-            content: s.content?.trim() ?? null,
-            orderIndex: s.orderIndex ?? dynamicOrder,
-            isFixed: false,
-          }),
+      const doc = await prodDocRepo.findOne({ where: { id: docId } });
+      if (!doc) {
+        throw new NotFoundException(
+          `Không tìm thấy tài liệu sản xuất với ID: ${docId}`,
         );
-      if (newSections.length > 0) {
-        await this.sectionRepo.save(newSections);
       }
-    }
 
-    if (dto.sizeRows !== undefined) {
-      const existingSizeRows = await this.sizeRowRepo.find({
+      if (dto.name !== undefined) doc.name = dto.name.trim();
+      if (dto.description !== undefined)
+        doc.description = dto.description ? dto.description.trim() : null;
+      if (dto.status !== undefined) doc.status = dto.status;
+      if (dto.section1Description !== undefined)
+        doc.section1Description = dto.section1Description
+          ? dto.section1Description.trim()
+          : null;
+      if (dto.section1ImageUrl !== undefined)
+        doc.section1ImageUrl = dto.section1ImageUrl
+          ? dto.section1ImageUrl.trim()
+          : null;
+      if (dto.section2Accessories !== undefined)
+        doc.section2Accessories = dto.section2Accessories
+          ? dto.section2Accessories.trim()
+          : null;
+      if (dto.section3Notes !== undefined)
+        doc.section3Notes = dto.section3Notes ? dto.section3Notes.trim() : null;
+      if (dto.section4CustomerFeedback !== undefined)
+        doc.section4CustomerFeedback = dto.section4CustomerFeedback
+          ? dto.section4CustomerFeedback.trim()
+          : null;
+      if (dto.sizeData !== undefined) doc.sizeData = dto.sizeData;
+
+      doc.updatedBy = userId ?? null;
+      doc.rowVersion = Number(doc.rowVersion) + 1;
+      await prodDocRepo.save(doc);
+
+      const existingSections = await sectionRepo.find({
         where: { productionDocumentId: docId },
       });
-      if (existingSizeRows.length > 0) {
-        await this.sizeRowRepo.remove(existingSizeRows);
+
+      const sec1 = existingSections.find((s) => s.sectionCode === 'SEC1');
+      if (sec1 && dto.section1Description !== undefined) {
+        sec1.content = doc.section1Description;
+        await sectionRepo.save(sec1);
       }
 
-      const newSizeRows: ProductionDocumentSizeRow[] = dto.sizeRows.map(
-        (sr, index) =>
-          this.sizeRowRepo.create({
-            productionDocumentId: docId,
-            sizeLabel: sr.sizeLabel.trim(),
-            measurementName: sr.measurementName.trim(),
-            measurementValue: sr.measurementValue?.trim() ?? null,
-            tolerance: sr.tolerance?.trim() ?? null,
-            orderIndex: sr.orderIndex ?? index + 1,
-          }),
-      );
-      if (newSizeRows.length > 0) {
-        await this.sizeRowRepo.save(newSizeRows);
+      const sec2 = existingSections.find((s) => s.sectionCode === 'SEC2');
+      if (sec2 && dto.section2Accessories !== undefined) {
+        sec2.content = doc.section2Accessories;
+        await sectionRepo.save(sec2);
       }
-    }
+
+      const sec3 = existingSections.find((s) => s.sectionCode === 'SEC3');
+      if (sec3 && dto.section3Notes !== undefined) {
+        sec3.content = doc.section3Notes;
+        await sectionRepo.save(sec3);
+      }
+
+      const sec4 = existingSections.find((s) => s.sectionCode === 'SEC4');
+      if (sec4 && dto.section4CustomerFeedback !== undefined) {
+        sec4.content = doc.section4CustomerFeedback;
+        await sectionRepo.save(sec4);
+      }
+
+      if (dto.sections !== undefined) {
+        const nonFixed = existingSections.filter((s) => !s.isFixed);
+        if (nonFixed.length > 0) {
+          await sectionRepo.remove(nonFixed);
+        }
+
+        let dynamicOrder = 5;
+        const newSections: ProductionDocumentSection[] = dto.sections
+          .filter((s) => !s.isFixed)
+          .map((s) =>
+            sectionRepo.create({
+              productionDocumentId: docId,
+              sectionCode: s.sectionCode || `SEC_DYN_${dynamicOrder++}`,
+              title: s.title.trim(),
+              content: s.content?.trim() ?? null,
+              orderIndex: s.orderIndex ?? dynamicOrder,
+              isFixed: false,
+            }),
+          );
+        if (newSections.length > 0) {
+          await sectionRepo.save(newSections);
+        }
+      }
+
+      if (dto.sizeRows !== undefined) {
+        const existingSizeRows = await sizeRowRepo.find({
+          where: { productionDocumentId: docId },
+        });
+        if (existingSizeRows.length > 0) {
+          await sizeRowRepo.remove(existingSizeRows);
+        }
+
+        const newSizeRows: ProductionDocumentSizeRow[] = dto.sizeRows.map(
+          (sr, index) =>
+            sizeRowRepo.create({
+              productionDocumentId: docId,
+              sizeLabel: sr.sizeLabel.trim(),
+              measurementName: sr.measurementName.trim(),
+              measurementValue: sr.measurementValue?.trim() ?? null,
+              tolerance: sr.tolerance?.trim() ?? null,
+              orderIndex: sr.orderIndex ?? index + 1,
+            }),
+        );
+        if (newSizeRows.length > 0) {
+          await sizeRowRepo.save(newSizeRows);
+        }
+      }
+
+      return doc;
+    });
 
     return this.buildDetailResponse(doc);
   }
