@@ -352,7 +352,7 @@ export class StageGroupsService {
         orderIndex: item.orderIndex,
         nameSnapshot: stage.stageName,
         descriptionSnapshot: stage.description,
-        ssvSnapshot: stage.defaultSsv,
+        ssvSnapshot: item.ssv ?? stage.defaultSsv,
       });
     });
   }

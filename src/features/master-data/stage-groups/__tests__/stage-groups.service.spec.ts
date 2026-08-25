@@ -146,6 +146,29 @@ describe('StageGroupsService', () => {
     });
   });
 
+  it('uses a group-specific SSV instead of changing the master Stage default', async () => {
+    stages.findBy.mockResolvedValue([stage]);
+    groups.create.mockReturnValue({ ...group });
+    groups.save.mockResolvedValue({ ...group });
+    items.create.mockImplementation((value) => value as StageGroupItem);
+    (items.save as jest.Mock).mockImplementation(async (value) => value);
+
+    const response = await service.create({
+      groupCode: 'NC-MAY',
+      groupName: 'Nhóm may',
+      items: [{ stageId, orderIndex: 0, ssv: '15.250' }],
+    });
+
+    expect(response.items[0].ssv).toBe('15.250');
+    expect(items.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stageId,
+        ssvSnapshot: '15.250',
+      }),
+    );
+    expect(stage.defaultSsv).toBe('12.500');
+  });
+
   it('returns created items sorted by order index regardless of request order', async () => {
     stages.findBy.mockResolvedValue([stage, secondStage]);
     groups.create.mockReturnValue({ ...group });
@@ -230,10 +253,18 @@ describe('StageGroupsService', () => {
 
     await service.update(groupId, {
       groupName: 'Nhóm may mới',
-      items: [{ stageId, orderIndex: 0 }],
+      items: [{ stageId, orderIndex: 0, ssv: '18.750' }],
     });
 
     expect(items.delete).toHaveBeenCalledWith({ stageGroupId: groupId });
+    expect(items.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stageGroupId: groupId,
+        stageId,
+        orderIndex: 0,
+        ssvSnapshot: '18.750',
+      }),
+    );
     expect(dataSource.transaction).toHaveBeenCalledTimes(1);
   });
 

@@ -93,6 +93,26 @@ describe('Stage groups controller boundary (e2e)', () => {
     });
   });
 
+  it('accepts a validated group-specific SSV for each selected Stage', async () => {
+    stageGroupsService.create.mockResolvedValue({
+      ...group,
+      items: [{ ...group.items[0], ssv: '15.250' }],
+    });
+
+    await request(app.getHttpServer())
+      .post('/masters/stage-groups')
+      .send({
+        groupName: 'Nhóm may',
+        items: [{ stageId, orderIndex: 0, ssv: ' 15.250 ' }],
+      })
+      .expect(201);
+
+    expect(stageGroupsService.create).toHaveBeenCalledWith({
+      groupName: 'Nhóm may',
+      items: [{ stageId, orderIndex: 0, ssv: '15.250' }],
+    });
+  });
+
   it('allows the service to generate a group code when the field is blank', async () => {
     stageGroupsService.create.mockResolvedValue({
       ...group,
@@ -137,6 +157,10 @@ describe('Stage groups controller boundary (e2e)', () => {
     },
     { items: [{ stageId: 'not-a-uuid', orderIndex: 0 }] },
     { items: [{ stageId, orderIndex: -1 }] },
+    { items: [{ stageId, orderIndex: 0, ssv: -1 }] },
+    { items: [{ stageId, orderIndex: 0, ssv: '-1.000' }] },
+    { items: [{ stageId, orderIndex: 0, ssv: '1.0000' }] },
+    { items: [{ stageId, orderIndex: 0, ssv: '1000000000.000' }] },
   ])('rejects invalid item input before the service', async (invalid) => {
     await request(app.getHttpServer())
       .post('/masters/stage-groups')
