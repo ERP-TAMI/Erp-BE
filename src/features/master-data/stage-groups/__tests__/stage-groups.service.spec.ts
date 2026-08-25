@@ -155,6 +155,22 @@ describe('StageGroupsService', () => {
     expect(groups.save).not.toHaveBeenCalled();
   });
 
+  it('rejects creating a group without child operations at the service boundary', async () => {
+    await expect(
+      service.create({ groupName: 'Nhóm may', items: [] }),
+    ).rejects.toThrow('must contain at least one child operation');
+    expect(groups.save).not.toHaveBeenCalled();
+  });
+
+  it('rejects removing every child operation at the service boundary', async () => {
+    groups.findOneBy.mockResolvedValue({ ...group });
+
+    await expect(service.update(groupId, { items: [] })).rejects.toThrow(
+      'must contain at least one child operation',
+    );
+    expect(items.find).not.toHaveBeenCalled();
+  });
+
   it('keeps retained IDs, inserts new children, and removes omitted children', async () => {
     const removed: StageGroupItem = {
       ...item,

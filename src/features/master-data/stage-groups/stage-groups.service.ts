@@ -376,6 +376,11 @@ export class StageGroupsService {
   private ensureOrderIndices(
     items: Array<Pick<CreateStageGroupItemDto, 'orderIndex'>>,
   ): void {
+    if (items.length === 0) {
+      throw new BadRequestException(
+        'Stage group must contain at least one child operation',
+      );
+    }
     const orderIndices = items
       .map((item) => item.orderIndex)
       .sort((left, right) => left - right);
