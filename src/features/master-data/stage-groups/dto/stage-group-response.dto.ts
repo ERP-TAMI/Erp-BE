@@ -1,18 +1,14 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { RecordStatus } from '../../../../common/enums/database.enums';
-import { Stage } from '../../entities/Stage.entity';
 import { StageGroup } from '../../entities/StageGroup.entity';
 import { StageGroupItem } from '../../entities/StageGroupItem.entity';
 
 export class StageGroupItemResponseDto {
   @ApiProperty({ format: 'uuid' })
-  stageId: string;
+  id: string;
 
   @ApiProperty()
-  stageCode: string;
-
-  @ApiProperty()
-  stageName: string;
+  itemName: string;
 
   @ApiProperty({ nullable: true })
   description: string | null;
@@ -20,19 +16,19 @@ export class StageGroupItemResponseDto {
   @ApiProperty({ type: String, example: '12.500' })
   ssv: string;
 
+  @ApiProperty({ enum: RecordStatus })
+  status: RecordStatus;
+
   @ApiProperty({ minimum: 0 })
   orderIndex: number;
 
-  static fromEntity(
-    item: StageGroupItem,
-    stage: Stage,
-  ): StageGroupItemResponseDto {
+  static fromEntity(item: StageGroupItem): StageGroupItemResponseDto {
     return {
-      stageId: item.stageId,
-      stageCode: stage.stageCode,
-      stageName: item.nameSnapshot,
-      description: item.descriptionSnapshot ?? null,
-      ssv: item.ssvSnapshot,
+      id: item.id,
+      itemName: item.itemName,
+      description: item.description ?? null,
+      ssv: item.ssv,
+      status: item.status,
       orderIndex: item.orderIndex,
     };
   }
@@ -87,7 +83,6 @@ export class StageGroupResponseDto extends StageGroupSummaryResponseDto {
   static fromEntities(
     group: StageGroup,
     items: StageGroupItem[],
-    stagesById: Map<string, Stage>,
   ): StageGroupResponseDto {
     return {
       ...StageGroupSummaryResponseDto.fromEntity(group, items.length),
@@ -96,14 +91,9 @@ export class StageGroupResponseDto extends StageGroupSummaryResponseDto {
         .sort(
           (left, right) =>
             left.orderIndex - right.orderIndex ||
-            left.stageId.localeCompare(right.stageId),
+            left.id.localeCompare(right.id),
         )
-        .map((item) =>
-          StageGroupItemResponseDto.fromEntity(
-            item,
-            stagesById.get(item.stageId)!,
-          ),
-        ),
+        .map(StageGroupItemResponseDto.fromEntity),
     };
   }
 }

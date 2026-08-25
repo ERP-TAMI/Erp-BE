@@ -1,16 +1,16 @@
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import * as request from 'supertest';
+import { RecordStatus } from '../src/common/enums/database.enums';
 import { HttpExceptionFilter } from '../src/common/filters/http-exception.filter';
 import { JwtAuthGuard } from '../src/common/guards/jwt-auth.guard';
 import { PermissionGuard } from '../src/common/guards/permission.guard';
-import { RecordStatus } from '../src/common/enums/database.enums';
 import { StageGroupsController } from '../src/features/master-data/stage-groups/stage-groups.controller';
 import { StageGroupsService } from '../src/features/master-data/stage-groups/stage-groups.service';
 
 describe('Stage groups controller boundary (e2e)', () => {
   const id = '64bfc097-69d1-43f5-af97-cb0e7428f7df';
-  const stageId = '771c0dc2-cd59-44e3-9b16-cacb200f20e5';
+  const itemId = '771c0dc2-cd59-44e3-9b16-cacb200f20e5';
   const group = {
     id,
     groupCode: 'NC-MAY',
@@ -22,11 +22,11 @@ describe('Stage groups controller boundary (e2e)', () => {
     updatedAt: '2026-08-24T01:00:00.000Z',
     items: [
       {
-        stageId,
-        stageCode: 'GD-MAY',
-        stageName: 'May thân',
+        id: itemId,
+        itemName: 'May thân',
         description: null,
         ssv: '12.500',
+        status: RecordStatus.ACTIVE,
         orderIndex: 0,
       },
     ],
@@ -67,11 +67,9 @@ describe('Stage groups controller boundary (e2e)', () => {
     await app.init();
   });
 
-  afterEach(async () => {
-    await app.close();
-  });
+  afterEach(async () => app.close());
 
-  it('normalizes and creates a stage group through the HTTP API', async () => {
+  it('normalizes and creates a group with independent child operations', async () => {
     stageGroupsService.create.mockResolvedValue(group);
 
     await request(app.getHttpServer())
@@ -80,7 +78,15 @@ describe('Stage groups controller boundary (e2e)', () => {
         groupCode: ' nc-may ',
         groupName: ' Nhóm may ',
         description: ' ',
-        items: [{ stageId, orderIndex: 0 }],
+        items: [
+          {
+            itemName: ' May thân ',
+            description: ' ',
+            ssv: ' 12.500 ',
+            status: RecordStatus.ACTIVE,
+            orderIndex: 0,
+          },
+        ],
       })
       .expect(201)
       .expect(group);
@@ -89,94 +95,101 @@ describe('Stage groups controller boundary (e2e)', () => {
       groupCode: 'NC-MAY',
       groupName: 'Nhóm may',
       description: null,
-      items: [{ stageId, orderIndex: 0 }],
+      items: [
+        {
+          itemName: 'May thân',
+          description: null,
+          ssv: '12.500',
+          status: RecordStatus.ACTIVE,
+          orderIndex: 0,
+        },
+      ],
     });
   });
 
-  it('accepts a validated group-specific SSV for each selected Stage', async () => {
-    stageGroupsService.create.mockResolvedValue({
-      ...group,
-      items: [{ ...group.items[0], ssv: '15.250' }],
-    });
+  it('allows item status to be omitted so the service can default it', async () => {
+    stageGroupsService.create.mockResolvedValue(group);
 
     await request(app.getHttpServer())
       .post('/masters/stage-groups')
       .send({
         groupName: 'Nhóm may',
-        items: [{ stageId, orderIndex: 0, ssv: ' 15.250 ' }],
+        items: [{ itemName: 'May thân', ssv: '12.500', orderIndex: 0 }],
       })
       .expect(201);
 
     expect(stageGroupsService.create).toHaveBeenCalledWith({
       groupName: 'Nhóm may',
-      items: [{ stageId, orderIndex: 0, ssv: '15.250' }],
-    });
-  });
-
-  it('allows the service to generate a group code when the field is blank', async () => {
-    stageGroupsService.create.mockResolvedValue({
-      ...group,
-      groupCode: 'NS-NHOM-MAY',
-    });
-
-    await request(app.getHttpServer())
-      .post('/masters/stage-groups')
-      .send({
-        groupCode: '   ',
-        groupName: ' Nhóm may ',
-        items: [{ stageId, orderIndex: 0 }],
-      })
-      .expect(201);
-
-    expect(stageGroupsService.create).toHaveBeenCalledWith({
-      groupName: 'Nhóm may',
-      items: [{ stageId, orderIndex: 0 }],
-    });
-  });
-
-  it('passes search and status filters to the service', async () => {
-    stageGroupsService.findAll.mockResolvedValue([group]);
-
-    await request(app.getHttpServer())
-      .get('/masters/stage-groups?search=%20may%20&status=active')
-      .expect(200);
-
-    expect(stageGroupsService.findAll).toHaveBeenCalledWith({
-      search: 'may',
-      status: RecordStatus.ACTIVE,
+      items: [{ itemName: 'May thân', ssv: '12.500', orderIndex: 0 }],
     });
   });
 
   it.each([
     { items: [] },
+    { items: [{ itemName: '', ssv: '1.000', orderIndex: 0 }] },
+    { items: [{ itemName: 'May', ssv: '-1.000', orderIndex: 0 }] },
+    { items: [{ itemName: 'May', ssv: '1.0000', orderIndex: 0 }] },
+    { items: [{ itemName: 'May', ssv: '1.000', orderIndex: -1 }] },
     {
       items: [
-        { stageId, orderIndex: 0 },
-        { stageId, orderIndex: 1 },
+        {
+          itemName: 'May',
+          ssv: '1.000',
+          status: 'unknown',
+          orderIndex: 0,
+        },
       ],
     },
-    { items: [{ stageId: 'not-a-uuid', orderIndex: 0 }] },
-    { items: [{ stageId, orderIndex: -1 }] },
-    { items: [{ stageId, orderIndex: 0, ssv: -1 }] },
-    { items: [{ stageId, orderIndex: 0, ssv: '-1.000' }] },
-    { items: [{ stageId, orderIndex: 0, ssv: '1.0000' }] },
-    { items: [{ stageId, orderIndex: 0, ssv: '1000000000.000' }] },
-  ])('rejects invalid item input before the service', async (invalid) => {
+    {
+      items: [
+        {
+          stageId: itemId,
+          itemName: 'May',
+          ssv: '1.000',
+          orderIndex: 0,
+        },
+      ],
+    },
+  ])('rejects invalid or Stage-linked child input: %p', async (invalid) => {
     await request(app.getHttpServer())
       .post('/masters/stage-groups')
-      .send({ groupCode: 'NC-MAY', groupName: 'Nhóm may', ...invalid })
+      .send({ groupName: 'Nhóm may', ...invalid })
       .expect(400);
 
     expect(stageGroupsService.create).not.toHaveBeenCalled();
   });
 
-  it('keeps the group code immutable on update', async () => {
+  it('accepts stable child IDs when replacing the ordered list on update', async () => {
+    stageGroupsService.update.mockResolvedValue(group);
+
     await request(app.getHttpServer())
       .patch(`/masters/stage-groups/${id}`)
-      .send({ groupCode: 'NC-CAT' })
-      .expect(400);
+      .send({
+        items: [
+          {
+            id: itemId,
+            itemName: ' May thân ',
+            description: null,
+            ssv: '15.000',
+            status: RecordStatus.INACTIVE,
+            orderIndex: 0,
+          },
+        ],
+      })
+      .expect(200);
 
-    expect(stageGroupsService.update).not.toHaveBeenCalled();
+    expect(stageGroupsService.update).toHaveBeenCalledWith(id, {
+      items: [
+        {
+          id: itemId,
+          itemName: 'May thân',
+          description: null,
+          ssv: '15.000',
+          status: RecordStatus.INACTIVE,
+          orderIndex: 0,
+        },
+      ],
+    });
   });
 
   it.each([{ groupName: null }, { items: null }])(
@@ -186,53 +199,30 @@ describe('Stage groups controller boundary (e2e)', () => {
         .patch(`/masters/stage-groups/${id}`)
         .send(invalid)
         .expect(400);
-
       expect(stageGroupsService.update).not.toHaveBeenCalled();
     },
   );
 
-  it('allows null description to clear the optional value', async () => {
-    stageGroupsService.update.mockResolvedValue(group);
-
+  it('passes search and status filters to the service', async () => {
+    stageGroupsService.findAll.mockResolvedValue([group]);
     await request(app.getHttpServer())
-      .patch(`/masters/stage-groups/${id}`)
-      .send({ description: null })
+      .get('/masters/stage-groups?search=%20may%20&status=active')
       .expect(200);
-
-    expect(stageGroupsService.update).toHaveBeenCalledWith(id, {
-      description: null,
+    expect(stageGroupsService.findAll).toHaveBeenCalledWith({
+      search: 'may',
+      status: RecordStatus.ACTIVE,
     });
   });
 
-  it('replaces the ordered stage list through update', async () => {
-    stageGroupsService.update.mockResolvedValue(group);
-
-    await request(app.getHttpServer())
-      .patch(`/masters/stage-groups/${id}`)
-      .send({
-        groupName: ' Nhóm may ',
-        items: [{ stageId, orderIndex: 0 }],
-      })
-      .expect(200)
-      .expect(group);
-
-    expect(stageGroupsService.update).toHaveBeenCalledWith(id, {
-      groupName: 'Nhóm may',
-      items: [{ stageId, orderIndex: 0 }],
-    });
-  });
-
-  it('changes status through the dedicated endpoint', async () => {
+  it('changes group status through the dedicated endpoint', async () => {
     stageGroupsService.updateStatus.mockResolvedValue({
       ...group,
       status: RecordStatus.INACTIVE,
     });
-
     await request(app.getHttpServer())
       .patch(`/masters/stage-groups/${id}/status`)
       .send({ status: RecordStatus.INACTIVE })
       .expect(200);
-
     expect(stageGroupsService.updateStatus).toHaveBeenCalledWith(id, {
       status: RecordStatus.INACTIVE,
     });
@@ -240,11 +230,9 @@ describe('Stage groups controller boundary (e2e)', () => {
 
   it('deletes a stage group through the dedicated endpoint', async () => {
     stageGroupsService.remove.mockResolvedValue(undefined);
-
     await request(app.getHttpServer())
       .delete(`/masters/stage-groups/${id}`)
       .expect(204);
-
     expect(stageGroupsService.remove).toHaveBeenCalledWith(id);
   });
 });

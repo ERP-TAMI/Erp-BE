@@ -2,7 +2,6 @@ import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
 import {
   ArrayMinSize,
-  ArrayUnique,
   IsArray,
   IsNotEmpty,
   IsOptional,
@@ -15,7 +14,7 @@ import {
   trimNullableStageGroupText,
   trimStageGroupText,
 } from './stage-group-dto.transforms';
-import { StageGroupItemInputDto } from './stage-group-item-input.dto';
+import { UpdateStageGroupItemDto } from './stage-group-item-input.dto';
 
 export class UpdateStageGroupDto {
   @ApiPropertyOptional({ example: 'Nhóm may', maxLength: 255 })
@@ -34,7 +33,7 @@ export class UpdateStageGroupDto {
   description?: string | null;
 
   @ApiPropertyOptional({
-    type: StageGroupItemInputDto,
+    type: UpdateStageGroupItemDto,
     isArray: true,
     minItems: 1,
   })
@@ -42,8 +41,7 @@ export class UpdateStageGroupDto {
   @ValidateIf((_, value) => value !== undefined)
   @IsArray()
   @ArrayMinSize(1)
-  @ArrayUnique((item: StageGroupItemInputDto) => item.stageId)
   @ValidateNested({ each: true })
-  @Type(() => StageGroupItemInputDto)
-  items?: StageGroupItemInputDto[];
+  @Type(() => UpdateStageGroupItemDto)
+  items?: UpdateStageGroupItemDto[];
 }

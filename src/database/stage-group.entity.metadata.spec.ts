@@ -24,7 +24,7 @@ describe('stage group entity metadata', () => {
     expect(byProperty.get('updatedAt')?.mode).toBe('updateDate');
   });
 
-  it('maps stage group item keys and snapshots to snake_case columns', () => {
+  it('maps independent stage group child fields to the new schema', () => {
     const columns = getMetadataArgsStorage().columns.filter(
       (column) => column.target === StageGroupItem,
     );
@@ -32,12 +32,13 @@ describe('stage group entity metadata', () => {
       columns.map((column) => [column.propertyName, column.options]),
     );
 
+    expect(byProperty.get('id')?.type).toBe('uuid');
     expect(byProperty.get('stageGroupId')?.name).toBe('stage_group_id');
-    expect(byProperty.get('stageId')?.name).toBe('stage_id');
-    expect(byProperty.get('descriptionSnapshot')?.nullable).toBe(true);
-    expect(byProperty.get('ssvSnapshot')).toEqual(
+    expect(byProperty.get('itemName')?.name).toBe('item_name');
+    expect(byProperty.get('description')?.nullable).toBe(true);
+    expect(byProperty.has('stageId')).toBe(false);
+    expect(byProperty.get('ssv')).toEqual(
       expect.objectContaining({
-        name: 'ssv_snapshot',
         type: 'numeric',
         precision: 12,
         scale: 3,

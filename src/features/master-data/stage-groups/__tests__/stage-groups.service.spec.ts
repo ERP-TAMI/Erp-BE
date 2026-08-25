@@ -10,14 +10,14 @@ import {
   SelectQueryBuilder,
 } from 'typeorm';
 import { RecordStatus } from '../../../../common/enums/database.enums';
-import { Stage } from '../../entities/Stage.entity';
 import { StageGroup } from '../../entities/StageGroup.entity';
 import { StageGroupItem } from '../../entities/StageGroupItem.entity';
 import { StageGroupsService } from '../stage-groups.service';
 
 describe('StageGroupsService', () => {
   const groupId = '64bfc097-69d1-43f5-af97-cb0e7428f7df';
-  const stageId = '771c0dc2-cd59-44e3-9b16-cacb200f20e5';
+  const itemId = '771c0dc2-cd59-44e3-9b16-cacb200f20e5';
+  const secondItemId = '4f71709a-aa73-44a9-9217-79a464287567';
   const group: StageGroup = {
     id: groupId,
     groupCode: 'NC-MAY',
@@ -27,26 +27,18 @@ describe('StageGroupsService', () => {
     createdAt: new Date('2026-08-24T01:00:00.000Z'),
     updatedAt: new Date('2026-08-24T01:00:00.000Z'),
   };
-  const stage: Stage = {
-    id: stageId,
-    stageCode: 'GD-MAY',
-    stageName: 'May thân',
+  const item: StageGroupItem = {
+    id: itemId,
+    stageGroupId: groupId,
+    itemName: 'May thân',
     description: 'May ráp thân',
-    defaultSsv: '12.500',
+    ssv: '12.500',
     status: RecordStatus.ACTIVE,
-  };
-  const secondStage: Stage = {
-    ...stage,
-    id: '4f71709a-aa73-44a9-9217-79a464287567',
-    stageCode: 'GD-CAT',
-    stageName: 'Cắt vải',
-    description: 'Cắt chi tiết',
-    defaultSsv: '8.000',
+    orderIndex: 0,
   };
 
   let groups: jest.Mocked<Repository<StageGroup>>;
   let items: jest.Mocked<Repository<StageGroupItem>>;
-  let stages: jest.Mocked<Repository<Stage>>;
   let dataSource: jest.Mocked<DataSource>;
   let groupQueryBuilder: SelectQueryBuilder<StageGroup>;
   let itemQueryBuilder: SelectQueryBuilder<StageGroupItem>;
@@ -68,279 +60,195 @@ describe('StageGroupsService', () => {
     groups = {
       find: jest.fn(),
       findOneBy: jest.fn(),
-      create: jest.fn(),
-      save: jest.fn(),
+      create: jest.fn((value) => ({ ...group, ...value }) as StageGroup),
+      save: jest.fn(async (value) => value as StageGroup),
       remove: jest.fn(),
       createQueryBuilder: jest.fn().mockReturnValue(groupQueryBuilder),
     } as unknown as jest.Mocked<Repository<StageGroup>>;
     items = {
-      find: jest.fn(),
-      create: jest.fn(),
-      save: jest.fn(),
+      find: jest.fn().mockResolvedValue([]),
+      create: jest.fn((value) => value as StageGroupItem),
+      save: jest.fn(async (value) => {
+        const rows = value as StageGroupItem[];
+        return rows.map((row, index) => ({
+          ...row,
+          id: row.id ?? (index === 0 ? itemId : secondItemId),
+        }));
+      }),
       delete: jest.fn(),
       createQueryBuilder: jest.fn().mockReturnValue(itemQueryBuilder),
     } as unknown as jest.Mocked<Repository<StageGroupItem>>;
-    stages = {
-      findBy: jest.fn(),
-    } as unknown as jest.Mocked<Repository<Stage>>;
 
     const manager = {
-      getRepository: jest.fn((entity) => {
-        if (entity === StageGroup) return groups;
-        if (entity === StageGroupItem) return items;
-        return stages;
-      }),
+      getRepository: jest.fn((entity) =>
+        entity === StageGroup ? groups : items,
+      ),
     } as unknown as EntityManager;
     dataSource = {
       transaction: jest.fn(async (callback) => callback(manager)),
     } as unknown as jest.Mocked<DataSource>;
-    service = new StageGroupsService(groups, items, stages, dataSource);
+    service = new StageGroupsService(groups, items, dataSource);
   });
 
-  it('lists groups with their child stage counts', async () => {
+  it('lists groups using database-side child counts', async () => {
     groups.find.mockResolvedValue([group]);
     (itemQueryBuilder.getRawMany as jest.Mock).mockResolvedValue([
-      { stageGroupId: groupId, itemCount: '1' },
+      { stageGroupId: groupId, itemCount: '2' },
     ]);
 
     await expect(service.findAll({})).resolves.toEqual([
-      expect.objectContaining({ id: groupId, itemCount: 1 }),
+      expect.objectContaining({ id: groupId, itemCount: 2 }),
     ]);
+    expect(itemQueryBuilder.addSelect).toHaveBeenCalledWith(
+      'COUNT(item.id)',
+      'itemCount',
+    );
     expect(items.find).not.toHaveBeenCalled();
-    expect(itemQueryBuilder.groupBy).toHaveBeenCalledWith('item.stageGroupId');
   });
 
-  it('rejects duplicate stages in create at the service boundary', async () => {
-    await expect(
-      service.create({
-        groupCode: 'NC-MAY',
-        groupName: 'Nhóm may',
-        items: [
-          { stageId, orderIndex: 0 },
-          { stageId, orderIndex: 1 },
-        ],
-      }),
-    ).rejects.toThrow('Stage group items cannot contain duplicate stages');
+  it('creates owned child operations without consulting Stage Master', async () => {
+    const response = await service.create({
+      groupCode: ' nc-may ',
+      groupName: ' Nhóm may ',
+      description: ' ',
+      items: [
+        {
+          itemName: ' May thân ',
+          description: ' May ráp thân ',
+          ssv: '12.500',
+          orderIndex: 0,
+        },
+      ],
+    });
 
-    expect(stages.findBy).not.toHaveBeenCalled();
-  });
-
-  it('rejects duplicate stages in update at the service boundary', async () => {
-    groups.findOneBy.mockResolvedValue({ ...group });
-    groups.save.mockImplementation(async (value) => value as StageGroup);
-
-    await expect(
-      service.update(groupId, {
-        items: [
-          { stageId, orderIndex: 0 },
-          { stageId, orderIndex: 1 },
-        ],
-      }),
-    ).rejects.toThrow('Stage group items cannot contain duplicate stages');
-
-    expect(stages.findBy).not.toHaveBeenCalled();
-  });
-
-  it('creates an active group and snapshots the selected stages', async () => {
-    stages.findBy.mockResolvedValue([stage]);
-    groups.create.mockReturnValue({ ...group });
-    groups.save.mockResolvedValue({ ...group });
-    items.create.mockImplementation((value) => value as StageGroupItem);
-    (items.save as jest.Mock).mockImplementation(async (value) => value);
-
-    await expect(
-      service.create({
-        groupCode: ' nc-may ',
-        groupName: ' Nhóm may ',
-        description: ' ',
-        items: [{ stageId, orderIndex: 0 }],
-      }),
-    ).resolves.toEqual(
+    expect(response).toEqual(
       expect.objectContaining({
         groupCode: 'NC-MAY',
-        groupName: 'Nhóm may',
-        status: RecordStatus.ACTIVE,
         items: [
           expect.objectContaining({
-            stageId,
-            stageCode: 'GD-MAY',
-            stageName: 'May thân',
+            id: itemId,
+            itemName: 'May thân',
+            description: 'May ráp thân',
             ssv: '12.500',
-            orderIndex: 0,
+            status: RecordStatus.ACTIVE,
           }),
         ],
       }),
     );
     expect(items.create).toHaveBeenCalledWith({
       stageGroupId: groupId,
-      stageId,
+      itemName: 'May thân',
+      description: 'May ráp thân',
+      ssv: '12.500',
+      status: RecordStatus.ACTIVE,
       orderIndex: 0,
-      nameSnapshot: 'May thân',
-      descriptionSnapshot: 'May ráp thân',
-      ssvSnapshot: '12.500',
     });
   });
 
-  it('uses a group-specific SSV instead of changing the master Stage default', async () => {
-    stages.findBy.mockResolvedValue([stage]);
-    groups.create.mockReturnValue({ ...group });
-    groups.save.mockResolvedValue({ ...group });
-    items.create.mockImplementation((value) => value as StageGroupItem);
-    (items.save as jest.Mock).mockImplementation(async (value) => value);
-
-    const response = await service.create({
-      groupCode: 'NC-MAY',
-      groupName: 'Nhóm may',
-      items: [{ stageId, orderIndex: 0, ssv: '15.250' }],
-    });
-
-    expect(response.items[0].ssv).toBe('15.250');
-    expect(items.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        stageId,
-        ssvSnapshot: '15.250',
-      }),
-    );
-    expect(stage.defaultSsv).toBe('12.500');
-  });
-
-  it('returns created items sorted by order index regardless of request order', async () => {
-    stages.findBy.mockResolvedValue([stage, secondStage]);
-    groups.create.mockReturnValue({ ...group });
-    groups.save.mockResolvedValue({ ...group });
-    items.create.mockImplementation((value) => value as StageGroupItem);
-    (items.save as jest.Mock).mockImplementation(async (value) => value);
-
-    const response = await service.create({
-      groupCode: 'NC-MAY',
-      groupName: 'Nhóm may',
-      items: [
-        { stageId, orderIndex: 1 },
-        { stageId: secondStage.id, orderIndex: 0 },
-      ],
-    });
-
-    expect(response.items.map((item) => item.orderIndex)).toEqual([0, 1]);
-    expect(response.items.map((item) => item.stageId)).toEqual([
-      secondStage.id,
-      stageId,
-    ]);
-  });
-
-  it('generates a normalized group code when create omits it', async () => {
-    stages.findBy.mockResolvedValue([stage]);
-    groups.create.mockImplementation(
-      (value) => ({ ...group, ...value }) as StageGroup,
-    );
-    groups.save.mockImplementation(async (value) => value as StageGroup);
-    items.create.mockImplementation((value) => value as StageGroupItem);
-    (items.save as jest.Mock).mockImplementation(async (value) => value);
-
-    await expect(
-      service.create({
-        groupName: ' Nhóm may chính ',
-        items: [{ stageId, orderIndex: 0 }],
-      }),
-    ).resolves.toEqual(
-      expect.objectContaining({ groupCode: 'NS-NHOM-MAY-CHINH' }),
-    );
-  });
-
-  it('adds a numeric suffix when an automatically generated code exists', async () => {
-    (groupQueryBuilder.getOne as jest.Mock)
-      .mockResolvedValueOnce(group)
-      .mockResolvedValueOnce(null);
-    stages.findBy.mockResolvedValue([stage]);
-    groups.create.mockImplementation(
-      (value) => ({ ...group, ...value }) as StageGroup,
-    );
-    groups.save.mockImplementation(async (value) => value as StageGroup);
-    items.create.mockImplementation((value) => value as StageGroupItem);
-    (items.save as jest.Mock).mockImplementation(async (value) => value);
-
+  it('rejects non-contiguous child order at the service boundary', async () => {
     await expect(
       service.create({
         groupName: 'Nhóm may',
-        items: [{ stageId, orderIndex: 0 }],
-      }),
-    ).resolves.toEqual(expect.objectContaining({ groupCode: 'NS-NHOM-MAY-2' }));
-  });
-
-  it('rejects create when a referenced stage does not exist', async () => {
-    stages.findBy.mockResolvedValue([]);
-
-    await expect(
-      service.create({
-        groupCode: 'NC-MAY',
-        groupName: 'Nhóm may',
-        items: [{ stageId, orderIndex: 0 }],
+        items: [{ itemName: 'May thân', ssv: '1.000', orderIndex: 1 }],
       }),
     ).rejects.toThrow(BadRequestException);
     expect(groups.save).not.toHaveBeenCalled();
   });
 
-  it('replaces all items atomically when a group is updated', async () => {
+  it('keeps retained IDs, inserts new children, and removes omitted children', async () => {
+    const removed: StageGroupItem = {
+      ...item,
+      id: secondItemId,
+      itemName: 'Cắt vải',
+      orderIndex: 1,
+    };
     groups.findOneBy.mockResolvedValue({ ...group });
-    groups.save.mockImplementation(async (value) => value as StageGroup);
-    stages.findBy.mockResolvedValue([stage]);
-    items.create.mockImplementation((value) => value as StageGroupItem);
-    (items.save as jest.Mock).mockImplementation(async (value) => value);
+    items.find.mockResolvedValue([item, removed]);
 
-    await service.update(groupId, {
-      groupName: 'Nhóm may mới',
-      items: [{ stageId, orderIndex: 0, ssv: '18.750' }],
+    const response = await service.update(groupId, {
+      items: [
+        {
+          id: itemId,
+          itemName: 'May thân mới',
+          description: null,
+          ssv: '15.000',
+          status: RecordStatus.INACTIVE,
+          orderIndex: 0,
+        },
+        {
+          itemName: 'Ủi thân',
+          description: null,
+          ssv: '8.000',
+          status: RecordStatus.ACTIVE,
+          orderIndex: 1,
+        },
+      ],
     });
 
-    expect(items.delete).toHaveBeenCalledWith({ stageGroupId: groupId });
-    expect(items.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        stageGroupId: groupId,
-        stageId,
-        orderIndex: 0,
-        ssvSnapshot: '18.750',
-      }),
+    expect(response.items[0]).toEqual(
+      expect.objectContaining({ id: itemId, itemName: 'May thân mới' }),
     );
+    expect(items.delete).toHaveBeenCalledWith({
+      id: expect.objectContaining({ _value: [secondItemId] }),
+    });
     expect(dataSource.transaction).toHaveBeenCalledTimes(1);
   });
 
-  it('rejects duplicate normalized group codes', async () => {
-    (groupQueryBuilder.getOne as jest.Mock).mockResolvedValue(group);
+  it('rejects an item ID that belongs to another group', async () => {
+    groups.findOneBy.mockResolvedValue({ ...group });
+    items.find.mockResolvedValue([item]);
 
     await expect(
-      service.create({
-        groupCode: ' nc-may ',
-        groupName: 'Nhóm may',
-        items: [{ stageId, orderIndex: 0 }],
+      service.update(groupId, {
+        items: [
+          {
+            id: secondItemId,
+            itemName: 'Cắt vải',
+            ssv: '8.000',
+            orderIndex: 0,
+          },
+        ],
       }),
-    ).rejects.toThrow(ConflictException);
+    ).rejects.toThrow('do not belong to this group');
+  });
+
+  it('rejects duplicate retained child IDs', async () => {
+    groups.findOneBy.mockResolvedValue({ ...group });
+
+    await expect(
+      service.update(groupId, {
+        items: [
+          { id: itemId, itemName: 'May 1', ssv: '1.000', orderIndex: 0 },
+          { id: itemId, itemName: 'May 2', ssv: '2.000', orderIndex: 1 },
+        ],
+      }),
+    ).rejects.toThrow('duplicate IDs');
+    expect(items.find).not.toHaveBeenCalled();
+  });
+
+  it('loads independent children in order', async () => {
+    groups.findOneBy.mockResolvedValue(group);
+    items.find.mockResolvedValue([item]);
+
+    await expect(service.findOne(groupId)).resolves.toEqual(
+      expect.objectContaining({
+        items: [expect.objectContaining({ id: itemId, itemName: 'May thân' })],
+      }),
+    );
+    expect(items.find).toHaveBeenCalledWith({
+      where: { stageGroupId: groupId },
+      order: { orderIndex: 'ASC', id: 'ASC' },
+    });
   });
 
   it('returns not found for an unknown group', async () => {
     groups.findOneBy.mockResolvedValue(null);
-
     await expect(service.findOne(groupId)).rejects.toThrow(NotFoundException);
-  });
-
-  it('deletes an existing stage group', async () => {
-    groups.findOneBy.mockResolvedValue(group);
-    groups.remove.mockResolvedValue(group);
-
-    await expect(service.remove(groupId)).resolves.toBeUndefined();
-
-    expect(groups.remove).toHaveBeenCalledWith(group);
-  });
-
-  it('returns not found when deleting an unknown stage group', async () => {
-    groups.findOneBy.mockResolvedValue(null);
-
-    await expect(service.remove(groupId)).rejects.toThrow(NotFoundException);
-    expect(groups.remove).not.toHaveBeenCalled();
   });
 
   it('rejects deletion when business data references the stage group', async () => {
     groups.findOneBy.mockResolvedValue(group);
     groups.remove.mockRejectedValue({ code: '23503' });
-
     await expect(service.remove(groupId)).rejects.toThrow(ConflictException);
   });
 });

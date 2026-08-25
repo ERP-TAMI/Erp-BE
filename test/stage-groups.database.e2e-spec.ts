@@ -1,6 +1,6 @@
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import { DataSource, In, Like, Repository } from 'typeorm';
+import { DataSource, Like, Repository } from 'typeorm';
 import * as request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { HttpExceptionFilter } from '../src/common/filters/http-exception.filter';
@@ -15,17 +15,22 @@ import { Stage } from '../src/features/master-data/entities/Stage.entity';
 import { StageGroup } from '../src/features/master-data/entities/StageGroup.entity';
 import { StageGroupItem } from '../src/features/master-data/entities/StageGroupItem.entity';
 
+type ChildResponse = {
+  id: string;
+  itemName: string;
+  description: string | null;
+  ssv: string;
+  status: RecordStatus;
+  orderIndex: number;
+};
+
 describe('Stage groups API with PostgreSQL (e2e)', () => {
   const runKey = `TST-SG-${process.pid}`;
   const groupCodePrefix = `${runKey}-G`;
-  const stageCodePrefix = `${runKey}-S`;
   let app: INestApplication;
   let dataSource: DataSource;
   let groups: Repository<StageGroup>;
   let items: Repository<StageGroupItem>;
-  let stages: Repository<Stage>;
-  let firstStage: Stage;
-  let secondStage: Stage;
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
@@ -49,24 +54,7 @@ describe('Stage groups API with PostgreSQL (e2e)', () => {
     dataSource = app.get(DataSource);
     groups = dataSource.getRepository(StageGroup);
     items = dataSource.getRepository(StageGroupItem);
-    stages = dataSource.getRepository(Stage);
     await cleanupTestRows();
-    [firstStage, secondStage] = await stages.save([
-      stages.create({
-        stageCode: `${stageCodePrefix}-1`,
-        stageName: `${runKey} May thân`,
-        description: 'May ráp thân',
-        defaultSsv: '12.500',
-        status: RecordStatus.ACTIVE,
-      }),
-      stages.create({
-        stageCode: `${stageCodePrefix}-2`,
-        stageName: `${runKey} Cắt vải`,
-        description: 'Cắt chi tiết',
-        defaultSsv: '8.000',
-        status: RecordStatus.ACTIVE,
-      }),
-    ]);
   });
 
   afterAll(async () => {
@@ -82,112 +70,155 @@ describe('Stage groups API with PostgreSQL (e2e)', () => {
         { groupName: Like(`${runKey}%`) },
       ],
     });
-    const testStages = await stages.find({
-      select: { id: true },
-      where: { stageCode: Like(`${stageCodePrefix}%`) },
-    });
-    if (testStages.length > 0) {
-      await items.delete({ stageId: In(testStages.map((stage) => stage.id)) });
-    }
-    if (testGroups.length > 0) {
-      await items.delete(
-        testGroups.map((group) => ({ stageGroupId: group.id })),
-      );
-      await groups.delete(testGroups.map((group) => group.id));
-    }
-    await stages.delete({ stageCode: Like(`${stageCodePrefix}%`) });
+    if (testGroups.length === 0) return;
+    await items.delete(testGroups.map((group) => ({ stageGroupId: group.id })));
+    await groups.delete(testGroups.map((group) => group.id));
   }
 
-  it('persists timestamps and returns the same ordered items before and after reload', async () => {
-    const createResponse = await request(app.getHttpServer())
+  it('persists independent children with stable IDs and ordered reloads', async () => {
+    const created = await request(app.getHttpServer())
       .post('/masters/stage-groups')
       .send({
         groupCode: `${groupCodePrefix}-ORDER`,
         groupName: `${runKey} Nhóm thứ tự`,
         items: [
-          { stageId: firstStage.id, orderIndex: 1 },
-          { stageId: secondStage.id, orderIndex: 0 },
+          {
+            itemName: 'May thân',
+            description: 'May ráp thân',
+            ssv: '12.500',
+            orderIndex: 1,
+          },
+          {
+            itemName: 'Cắt vải',
+            description: null,
+            ssv: '8.000',
+            orderIndex: 0,
+          },
         ],
       })
       .expect(201);
 
-    expect(Date.parse(createResponse.body.createdAt)).not.toBeNaN();
-    expect(Date.parse(createResponse.body.updatedAt)).not.toBeNaN();
-    expect(
-      createResponse.body.items.map(
-        (item: { orderIndex: number }) => item.orderIndex,
-      ),
-    ).toEqual([0, 1]);
+    expect(Date.parse(created.body.createdAt)).not.toBeNaN();
+    expect(created.body.items).toEqual([
+      expect.objectContaining({
+        id: expect.any(String),
+        itemName: 'Cắt vải',
+        ssv: '8.000',
+        status: RecordStatus.ACTIVE,
+        orderIndex: 0,
+      }),
+      expect.objectContaining({
+        id: expect.any(String),
+        itemName: 'May thân',
+        ssv: '12.500',
+        status: RecordStatus.ACTIVE,
+        orderIndex: 1,
+      }),
+    ]);
 
-    const detailResponse = await request(app.getHttpServer())
-      .get(`/masters/stage-groups/${createResponse.body.id}`)
-      .expect(200);
-    expect(
-      detailResponse.body.items.map(
-        (item: { orderIndex: number }) => item.orderIndex,
-      ),
-    ).toEqual([0, 1]);
-  });
-
-  it('rejects null required update fields and allows clearing description', async () => {
-    const created = await request(app.getHttpServer())
-      .post('/masters/stage-groups')
-      .send({
-        groupCode: `${groupCodePrefix}-NULL`,
-        groupName: `${runKey} Nhóm null`,
-        description: 'Có mô tả',
-        items: [{ stageId: firstStage.id, orderIndex: 0 }],
-      })
-      .expect(201);
-
-    await request(app.getHttpServer())
-      .patch(`/masters/stage-groups/${created.body.id}`)
-      .send({ groupName: null })
-      .expect(400);
-    await request(app.getHttpServer())
-      .patch(`/masters/stage-groups/${created.body.id}`)
-      .send({ items: null })
-      .expect(400);
-    await request(app.getHttpServer())
-      .patch(`/masters/stage-groups/${created.body.id}`)
-      .send({ description: null })
-      .expect(200)
-      .expect((response) => expect(response.body.description).toBeNull());
-  });
-
-  it('keeps item snapshots stable when the source stage changes', async () => {
-    const created = await request(app.getHttpServer())
-      .post('/masters/stage-groups')
-      .send({
-        groupCode: `${groupCodePrefix}-SNAPSHOT`,
-        groupName: `${runKey} Nhóm snapshot`,
-        items: [{ stageId: firstStage.id, orderIndex: 0 }],
-      })
-      .expect(201);
-
-    const originalName = firstStage.stageName;
-    const originalDescription = firstStage.description;
-    const originalSsv = firstStage.defaultSsv;
-    await stages.update(firstStage.id, {
-      stageName: `${runKey} Tên đã đổi`,
-      description: 'Mô tả đã đổi',
-      defaultSsv: '99.000',
-    });
-
+    const originalIds = created.body.items.map(
+      (item: ChildResponse) => item.id,
+    );
     const detail = await request(app.getHttpServer())
       .get(`/masters/stage-groups/${created.body.id}`)
       .expect(200);
-    expect(detail.body.items[0]).toMatchObject({
-      stageName: originalName,
-      description: originalDescription,
-      ssv: originalSsv,
-    });
+    expect(detail.body.items.map((item: ChildResponse) => item.id)).toEqual(
+      originalIds,
+    );
+  });
 
-    await stages.update(firstStage.id, {
-      stageName: originalName,
-      description: originalDescription,
-      defaultSsv: originalSsv,
-    });
+  it('updates, reorders, removes, and creates children atomically by child ID', async () => {
+    const created = await request(app.getHttpServer())
+      .post('/masters/stage-groups')
+      .send({
+        groupCode: `${groupCodePrefix}-RECONCILE`,
+        groupName: `${runKey} Nhóm cập nhật`,
+        items: [
+          { itemName: 'Giữ lại', ssv: '10.000', orderIndex: 0 },
+          { itemName: 'Loại bỏ', ssv: '11.000', orderIndex: 1 },
+        ],
+      })
+      .expect(201);
+    const retainedId = created.body.items[0].id as string;
+    const removedId = created.body.items[1].id as string;
+
+    const updated = await request(app.getHttpServer())
+      .patch(`/masters/stage-groups/${created.body.id}`)
+      .send({
+        items: [
+          {
+            itemName: 'Công đoạn mới',
+            description: 'Tạo trực tiếp trong nhóm',
+            ssv: '7.250',
+            status: RecordStatus.ACTIVE,
+            orderIndex: 0,
+          },
+          {
+            id: retainedId,
+            itemName: 'Giữ lại đã sửa',
+            description: null,
+            ssv: '15.500',
+            status: RecordStatus.INACTIVE,
+            orderIndex: 1,
+          },
+        ],
+      })
+      .expect(200);
+
+    expect(updated.body.items).toEqual([
+      expect.objectContaining({
+        id: expect.any(String),
+        itemName: 'Công đoạn mới',
+        orderIndex: 0,
+      }),
+      expect.objectContaining({
+        id: retainedId,
+        itemName: 'Giữ lại đã sửa',
+        ssv: '15.500',
+        status: RecordStatus.INACTIVE,
+        orderIndex: 1,
+      }),
+    ]);
+    expect(updated.body.items[0].id).not.toBe(retainedId);
+    await expect(items.findOneBy({ id: removedId })).resolves.toBeNull();
+  });
+
+  it('rejects a child ID owned by another group without changing either group', async () => {
+    const first = await request(app.getHttpServer())
+      .post('/masters/stage-groups')
+      .send({
+        groupCode: `${groupCodePrefix}-OWNER-A`,
+        groupName: `${runKey} Nhóm A`,
+        items: [{ itemName: 'Con A', ssv: '1.000', orderIndex: 0 }],
+      })
+      .expect(201);
+    const second = await request(app.getHttpServer())
+      .post('/masters/stage-groups')
+      .send({
+        groupCode: `${groupCodePrefix}-OWNER-B`,
+        groupName: `${runKey} Nhóm B`,
+        items: [{ itemName: 'Con B', ssv: '2.000', orderIndex: 0 }],
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .patch(`/masters/stage-groups/${first.body.id}`)
+      .send({
+        items: [
+          {
+            id: second.body.items[0].id,
+            itemName: 'Không thuộc nhóm A',
+            ssv: '3.000',
+            orderIndex: 0,
+          },
+        ],
+      })
+      .expect(400);
+
+    const reloaded = await request(app.getHttpServer())
+      .get(`/masters/stage-groups/${first.body.id}`)
+      .expect(200);
+    expect(reloaded.body.items).toEqual(first.body.items);
   });
 
   it('deletes an unreferenced group and cascades its child items', async () => {
@@ -196,14 +227,13 @@ describe('Stage groups API with PostgreSQL (e2e)', () => {
       .send({
         groupCode: `${groupCodePrefix}-DELETE`,
         groupName: `${runKey} Nhóm cần xóa`,
-        items: [{ stageId: firstStage.id, orderIndex: 0 }],
+        items: [{ itemName: 'Con sẽ xóa', ssv: '5.000', orderIndex: 0 }],
       })
       .expect(201);
 
     await request(app.getHttpServer())
       .delete(`/masters/stage-groups/${created.body.id}`)
       .expect(204);
-
     await request(app.getHttpServer())
       .get(`/masters/stage-groups/${created.body.id}`)
       .expect(404);
@@ -215,7 +245,7 @@ describe('Stage groups API with PostgreSQL (e2e)', () => {
   it('creates distinct generated codes under concurrent requests', async () => {
     const payload = {
       groupName: `${runKey} Nhóm đồng thời`,
-      items: [{ stageId: firstStage.id, orderIndex: 0 }],
+      items: [{ itemName: 'Con độc lập', ssv: '1.000', orderIndex: 0 }],
     };
     const responses = await Promise.all([
       request(app.getHttpServer()).post('/masters/stage-groups').send(payload),
@@ -228,15 +258,17 @@ describe('Stage groups API with PostgreSQL (e2e)', () => {
     ).toBe(2);
   });
 
-  it('seeds the complete catalog idempotently against PostgreSQL', async () => {
+  it('seeds 3 groups and 54 children idempotently without touching Stage Master', async () => {
     const runner = dataSource.createQueryRunner();
     await runner.connect();
     await runner.startTransaction();
     try {
+      const stageCountBefore = await runner.manager.count(Stage);
       await seedStageGroups(runner.manager);
       await seedStageGroups(runner.manager);
+      const stageCountAfter = await runner.manager.count(Stage);
       const counts = (await runner.manager.query(
-        `SELECT groups.group_code, COUNT(items.stage_id)::integer AS item_count
+        `SELECT groups.group_code, COUNT(items.id)::integer AS item_count
          FROM stage_groups groups
          LEFT JOIN stage_group_items items ON items.stage_group_id = groups.id
          WHERE groups.group_code = ANY($1::text[])
@@ -244,7 +276,21 @@ describe('Stage groups API with PostgreSQL (e2e)', () => {
          ORDER BY groups.group_code`,
         [STAGE_GROUP_SEEDS.map((group) => group.groupCode)],
       )) as Array<{ group_code: string; item_count: number }>;
+      const specialRow = (await runner.manager.query(
+        `SELECT items.item_name, items.description, items.ssv::text,
+                items.status::text, items.order_index
+         FROM stage_group_items items
+         JOIN stage_groups groups ON groups.id = items.stage_group_id
+         WHERE groups.group_code = 'NS-VAT-SO' AND items.order_index = 16`,
+      )) as Array<{
+        item_name: string;
+        description: string;
+        ssv: string;
+        status: string;
+        order_index: number;
+      }>;
 
+      expect(stageCountAfter).toBe(stageCountBefore);
       expect(
         new Map(counts.map((row) => [row.group_code, row.item_count])),
       ).toEqual(
@@ -255,27 +301,15 @@ describe('Stage groups API with PostgreSQL (e2e)', () => {
           ]),
         ),
       );
-    } finally {
-      await runner.rollbackTransaction();
-      await runner.release();
-    }
-  });
-
-  it('rolls back the seed when a generated stage code belongs to another stage name', async () => {
-    const runner = dataSource.createQueryRunner();
-    await runner.connect();
-    await runner.startTransaction();
-    try {
-      await runner.manager.query(
-        `INSERT INTO stages (stage_code, stage_name, description, default_ssv, status)
-         VALUES ($1, $2, NULL, 10, 'active'::record_status)
-         ON CONFLICT (stage_code) DO UPDATE SET stage_name = EXCLUDED.stage_name`,
-        ['GD-MAY-LUNG-HC', `${runKey} Công đoạn xung đột`],
-      );
-
-      await expect(seedStageGroups(runner.manager)).rejects.toThrow(
-        /GD-MAY-LUNG-HC/,
-      );
+      expect(specialRow).toEqual([
+        {
+          item_name: 'VS3C DTS (định hình/đáp túi sau)',
+          description: 'VS3C DTS',
+          ssv: '10.000',
+          status: RecordStatus.ACTIVE,
+          order_index: 16,
+        },
+      ]);
     } finally {
       await runner.rollbackTransaction();
       await runner.release();

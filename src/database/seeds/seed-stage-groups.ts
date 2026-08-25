@@ -3,7 +3,7 @@ import { DataSource, EntityManager } from 'typeorm';
 import { AppDataSource } from '../data-source';
 
 export type StageGroupSeedItem = {
-  stageName: string;
+  itemName: string;
   description: string;
   ssv: string;
   orderIndex: number;
@@ -17,11 +17,11 @@ export type StageGroupSeed = {
 };
 
 const item = (
-  stageName: string,
+  itemName: string,
   orderIndex: number,
-  description = stageName,
+  description = itemName,
 ): StageGroupSeedItem => ({
-  stageName,
+  itemName,
   description,
   ssv: '10',
   orderIndex,
@@ -105,109 +105,14 @@ export const STAGE_GROUP_SEEDS: readonly StageGroupSeed[] = [
   },
 ];
 
-function buildStageCode(stageName: string): string {
-  const slug = stageName
-    .replace(/[Đđ]/g, 'D')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toUpperCase()
-    .replace(/[^A-Z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-  return `GD-${slug || 'CONG-DOAN'}`.slice(0, 50).replace(/-+$/, '');
-}
-
-type ResolvedStage = {
-  id: string;
-  stage_code: string;
-  stage_name: string;
-  description: string | null;
-  default_ssv: string;
-};
-
-type ResolvedGroup = {
-  id: string;
-  group_code: string;
-};
-
+type ResolvedGroup = { id: string; group_code: string };
 type PersistedGroupItem = {
   stage_group_id: string;
-  stage_id: string;
+  item_name: string;
   order_index: number;
 };
 
-const normalizeSeedKey = (value: string): string => value.trim().toUpperCase();
-
 export async function seedStageGroups(manager: EntityManager): Promise<void> {
-  const seedItems = STAGE_GROUP_SEEDS.flatMap((group) => group.items);
-  const stagesByName = new Map<string, StageGroupSeedItem>();
-  for (const seedItem of seedItems) {
-    stagesByName.set(seedItem.stageName.trim().toUpperCase(), seedItem);
-  }
-  const prerequisiteStages = [...stagesByName.values()];
-  const stagePlaceholders = prerequisiteStages
-    .map((_, index) => {
-      const offset = index * 4;
-      return `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4})`;
-    })
-    .join(',\n');
-  const stageParameters = prerequisiteStages.flatMap((stage) => [
-    buildStageCode(stage.stageName),
-    stage.stageName,
-    stage.description,
-    stage.ssv,
-  ]);
-
-  await manager.query(
-    `INSERT INTO stages (stage_code, stage_name, description, default_ssv, status)
-     SELECT seed.stage_code, seed.stage_name, seed.description, seed.default_ssv::numeric, 'active'::record_status
-     FROM (VALUES ${stagePlaceholders}) AS seed(stage_code, stage_name, description, default_ssv)
-     WHERE NOT EXISTS (
-       SELECT 1 FROM stages existing
-       WHERE UPPER(BTRIM(existing.stage_name)) = UPPER(BTRIM(seed.stage_name))
-     )
-     ON CONFLICT (stage_code) DO NOTHING`,
-    stageParameters,
-  );
-
-  const expectedStageNames = prerequisiteStages.map((stage) =>
-    normalizeSeedKey(stage.stageName),
-  );
-  const expectedStageCodes = prerequisiteStages.map((stage) =>
-    normalizeSeedKey(buildStageCode(stage.stageName)),
-  );
-  const resolvedStages = (await manager.query(
-    `SELECT id, stage_code, stage_name, description, default_ssv
-     FROM stages
-     WHERE UPPER(BTRIM(stage_name)) = ANY($1::text[])
-        OR UPPER(BTRIM(stage_code)) = ANY($2::text[])`,
-    [expectedStageNames, expectedStageCodes],
-  )) as ResolvedStage[];
-  const resolvedStageByName = new Map<string, ResolvedStage>();
-
-  prerequisiteStages.forEach((stage) => {
-    const expectedName = normalizeSeedKey(stage.stageName);
-    const expectedCode = normalizeSeedKey(buildStageCode(stage.stageName));
-    const matches = resolvedStages.filter(
-      (candidate) =>
-        normalizeSeedKey(candidate.stage_name) === expectedName ||
-        normalizeSeedKey(candidate.stage_code) === expectedCode,
-    );
-    if (
-      matches.length !== 1 ||
-      normalizeSeedKey(matches[0].stage_name) !== expectedName
-    ) {
-      const matchSummary = matches
-        .map((candidate) => `${candidate.stage_code} (${candidate.stage_name})`)
-        .join(', ');
-      throw new Error(
-        `Cannot seed stage ${expectedCode} (${stage.stageName}): resolved ${
-          matchSummary || 'no matching stage'
-        }`,
-      );
-    }
-    resolvedStageByName.set(expectedName, matches[0]);
-  });
-
   const groupPlaceholders = STAGE_GROUP_SEEDS.map((_, index) => {
     const offset = index * 3;
     return `($${offset + 1}, $${offset + 2}, $${offset + 3})`;
@@ -244,51 +149,43 @@ export async function seedStageGroups(manager: EntityManager): Promise<void> {
 
   const seedItemRows = STAGE_GROUP_SEEDS.flatMap((group) => {
     const resolvedGroup = resolvedGroupByCode.get(group.groupCode)!;
-    return group.items.map((seedItem) => {
-      const resolvedStage = resolvedStageByName.get(
-        normalizeSeedKey(seedItem.stageName),
-      )!;
-      return {
-        stageGroupId: resolvedGroup.id,
-        stageId: resolvedStage.id,
-        orderIndex: seedItem.orderIndex,
-        nameSnapshot: resolvedStage.stage_name,
-        descriptionSnapshot: resolvedStage.description,
-        ssvSnapshot: resolvedStage.default_ssv,
-      };
-    });
+    return group.items.map((seedItem) => ({
+      stageGroupId: resolvedGroup.id,
+      itemName: seedItem.itemName,
+      description: seedItem.description,
+      ssv: seedItem.ssv,
+      orderIndex: seedItem.orderIndex,
+    }));
   });
   const itemPlaceholders = seedItemRows
     .map((_, index) => {
-      const offset = index * 6;
-      return `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6}::numeric)`;
+      const offset = index * 5;
+      return `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}::numeric, $${offset + 5})`;
     })
     .join(',\n');
   const itemParameters = seedItemRows.flatMap((seedItem) => [
     seedItem.stageGroupId,
-    seedItem.stageId,
+    seedItem.itemName,
+    seedItem.description,
+    seedItem.ssv,
     seedItem.orderIndex,
-    seedItem.nameSnapshot,
-    seedItem.descriptionSnapshot,
-    seedItem.ssvSnapshot,
   ]);
 
   await manager.query(
     `INSERT INTO stage_group_items (
-       stage_group_id,
-       stage_id,
-       order_index,
-       name_snapshot,
-       description_snapshot,
-       ssv_snapshot
+       stage_group_id, item_name, description, ssv, order_index, status
      )
-     VALUES ${itemPlaceholders}
-     ON CONFLICT (stage_group_id, stage_id) DO NOTHING`,
+     SELECT stage_group_id::uuid, item_name, description, ssv,
+            order_index::integer, 'active'::record_status
+     FROM (VALUES ${itemPlaceholders}) AS seed(
+       stage_group_id, item_name, description, ssv, order_index
+     )
+     ON CONFLICT (stage_group_id, order_index) DO NOTHING`,
     itemParameters,
   );
 
   const persistedItems = (await manager.query(
-    `SELECT stage_group_id, stage_id, order_index
+    `SELECT stage_group_id, item_name, order_index
      FROM stage_group_items
      WHERE stage_group_id = ANY($1::uuid[])`,
     [resolvedGroups.map((group) => group.id)],
@@ -300,16 +197,13 @@ export async function seedStageGroups(manager: EntityManager): Promise<void> {
     );
     const hasExpectedItems =
       actualItems.length === group.items.length &&
-      group.items.every((seedItem) => {
-        const expectedStage = resolvedStageByName.get(
-          normalizeSeedKey(seedItem.stageName),
-        )!;
-        return actualItems.some(
+      group.items.every((seedItem) =>
+        actualItems.some(
           (persistedItem) =>
-            persistedItem.stage_id === expectedStage.id &&
+            persistedItem.item_name === seedItem.itemName &&
             persistedItem.order_index === seedItem.orderIndex,
-        );
-      });
+        ),
+      );
     if (!hasExpectedItems) {
       throw new Error(
         `Cannot seed stage group ${group.groupCode}: expected ${group.items.length} ordered items, found ${actualItems.length}`,
@@ -328,21 +222,15 @@ async function main(): Promise<void> {
   await AppDataSource.initialize();
   try {
     await seedStageGroupCatalog(AppDataSource);
-    const itemCount = STAGE_GROUP_SEEDS.reduce(
-      (count, group) => count + group.items.length,
-      0,
-    );
-    console.log(
-      `Ensured ${STAGE_GROUP_SEEDS.length} stage groups with ${itemCount} ordered items.`,
-    );
+    console.log('Stage group catalog seed completed');
   } finally {
     await AppDataSource.destroy();
   }
 }
 
 if (require.main === module) {
-  main().catch((error) => {
-    console.error('Seed stage groups failed:', error);
+  void main().catch((error: unknown) => {
+    console.error(error);
     process.exitCode = 1;
   });
 }

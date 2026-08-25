@@ -14,7 +14,6 @@ import {
   Repository,
 } from 'typeorm';
 import { RecordStatus } from '../../../common/enums/database.enums';
-import { Stage } from '../entities/Stage.entity';
 import { StageGroup } from '../entities/StageGroup.entity';
 import { StageGroupItem } from '../entities/StageGroupItem.entity';
 import { CreateStageGroupDto } from './dto/create-stage-group.dto';
@@ -23,11 +22,19 @@ import {
   StageGroupResponseDto,
   StageGroupSummaryResponseDto,
 } from './dto/stage-group-response.dto';
-import { StageGroupItemInputDto } from './dto/stage-group-item-input.dto';
+import {
+  CreateStageGroupItemDto,
+  UpdateStageGroupItemDto,
+} from './dto/stage-group-item-input.dto';
 import { UpdateStageGroupStatusDto } from './dto/update-stage-group-status.dto';
 import { UpdateStageGroupDto } from './dto/update-stage-group.dto';
 
 const GENERATED_CODE_SAVE_ATTEMPTS = 5;
+
+type StageGroupRepositories = {
+  groups: Repository<StageGroup>;
+  items: Repository<StageGroupItem>;
+};
 
 @Injectable()
 export class StageGroupsService {
@@ -36,8 +43,6 @@ export class StageGroupsService {
     private readonly groups: Repository<StageGroup>,
     @InjectRepository(StageGroupItem)
     private readonly items: Repository<StageGroupItem>,
-    @InjectRepository(Stage)
-    private readonly stages: Repository<Stage>,
     private readonly dataSource: DataSource,
   ) {}
 
@@ -65,7 +70,7 @@ export class StageGroupsService {
     const itemCounts = await this.items
       .createQueryBuilder('item')
       .select('item.stageGroupId', 'stageGroupId')
-      .addSelect('COUNT(item.stageId)', 'itemCount')
+      .addSelect('COUNT(item.id)', 'itemCount')
       .where('item.stageGroupId IN (:...groupIds)', { groupIds })
       .groupBy('item.stageGroupId')
       .getRawMany<{ stageGroupId: string; itemCount: string }>();
@@ -86,7 +91,7 @@ export class StageGroupsService {
 
   async findOne(id: string): Promise<StageGroupResponseDto> {
     const group = await this.getExistingGroup(this.groups, id);
-    return this.loadResponse(this.items, this.stages, group);
+    return this.loadResponse(this.items, group);
   }
 
   async create(dto: CreateStageGroupDto): Promise<StageGroupResponseDto> {
@@ -140,29 +145,17 @@ export class StageGroupsService {
       const savedGroup = await repositories.groups.save(group);
 
       if (dto.items === undefined) {
-        return this.loadResponse(
-          repositories.items,
-          repositories.stages,
-          savedGroup,
-        );
+        return this.loadResponse(repositories.items, savedGroup);
       }
 
-      this.ensureUniqueStageIds(dto.items);
       this.ensureOrderIndices(dto.items);
-      const stagesById = await this.loadStages(repositories.stages, dto.items);
-      await repositories.items.delete({ stageGroupId: id });
-      const replacementItems = this.createSnapshotItems(
+      this.ensureUniqueItemIds(dto.items);
+      const savedItems = await this.reconcileItems(
         repositories.items,
         id,
         dto.items,
-        stagesById,
       );
-      const savedItems = await repositories.items.save(replacementItems);
-      return StageGroupResponseDto.fromEntities(
-        savedGroup,
-        savedItems,
-        stagesById,
-      );
+      return StageGroupResponseDto.fromEntities(savedGroup, savedItems);
     });
   }
 
@@ -173,7 +166,7 @@ export class StageGroupsService {
     const group = await this.getExistingGroup(this.groups, id);
     group.status = dto.status;
     const savedGroup = await this.groups.save(group);
-    return this.loadResponse(this.items, this.stages, savedGroup);
+    return this.loadResponse(this.items, savedGroup);
   }
 
   async remove(id: string): Promise<void> {
@@ -190,15 +183,10 @@ export class StageGroupsService {
     }
   }
 
-  private getRepositories(manager: EntityManager): {
-    groups: Repository<StageGroup>;
-    items: Repository<StageGroupItem>;
-    stages: Repository<Stage>;
-  } {
+  private getRepositories(manager: EntityManager): StageGroupRepositories {
     return {
       groups: manager.getRepository(StageGroup),
       items: manager.getRepository(StageGroupItem),
-      stages: manager.getRepository(Stage),
     };
   }
 
@@ -216,11 +204,9 @@ export class StageGroupsService {
   private async createWithRepositories(
     dto: CreateStageGroupDto,
     groupCode: string,
-    repositories: ReturnType<StageGroupsService['getRepositories']>,
+    repositories: StageGroupRepositories,
   ): Promise<StageGroupResponseDto> {
-    this.ensureUniqueStageIds(dto.items);
     this.ensureOrderIndices(dto.items);
-    const stagesById = await this.loadStages(repositories.stages, dto.items);
     const group = repositories.groups.create({
       groupCode,
       groupName: dto.groupName.trim(),
@@ -228,34 +214,99 @@ export class StageGroupsService {
       status: RecordStatus.ACTIVE,
     });
     const savedGroup = await repositories.groups.save(group);
-    const items = this.createSnapshotItems(
-      repositories.items,
-      savedGroup.id,
-      dto.items,
-      stagesById,
+    const items = dto.items.map((item) =>
+      this.createOwnedItem(repositories.items, savedGroup.id, item),
     );
     const savedItems = await repositories.items.save(items);
-    return StageGroupResponseDto.fromEntities(
-      savedGroup,
-      savedItems,
-      stagesById,
+    return StageGroupResponseDto.fromEntities(savedGroup, savedItems);
+  }
+
+  private async reconcileItems(
+    repository: Repository<StageGroupItem>,
+    stageGroupId: string,
+    inputItems: UpdateStageGroupItemDto[],
+  ): Promise<StageGroupItem[]> {
+    const existingItems = await repository.find({
+      where: { stageGroupId },
+      order: { orderIndex: 'ASC', id: 'ASC' },
+    });
+    const existingById = new Map(existingItems.map((item) => [item.id, item]));
+    const requestedIds = inputItems.flatMap((item) =>
+      item.id ? [item.id] : [],
     );
+    const foreignId = requestedIds.find((id) => !existingById.has(id));
+    if (foreignId) {
+      throw new BadRequestException(
+        'One or more stage group item IDs do not belong to this group',
+      );
+    }
+
+    if (existingItems.length > 0) {
+      const temporaryOffset = existingItems.length + inputItems.length + 1;
+      await repository.save(
+        existingItems.map((item) => ({
+          ...item,
+          orderIndex: item.orderIndex + temporaryOffset,
+        })),
+      );
+    }
+
+    const retainedIds = new Set(requestedIds);
+    const removedIds = existingItems
+      .filter((item) => !retainedIds.has(item.id))
+      .map((item) => item.id);
+    if (removedIds.length > 0) {
+      try {
+        await repository.delete({ id: In(removedIds) });
+      } catch (error) {
+        if (this.hasDatabaseCode(error, '23503')) {
+          throw new ConflictException(
+            'Stage group item cannot be removed because it is referenced by business data',
+          );
+        }
+        throw error;
+      }
+    }
+
+    const replacements = inputItems.map((input) =>
+      repository.create({
+        ...(input.id ? existingById.get(input.id) : undefined),
+        ...(input.id ? { id: input.id } : {}),
+        stageGroupId,
+        itemName: input.itemName.trim(),
+        description: this.normalizeDescription(input.description),
+        ssv: input.ssv,
+        status: input.status ?? RecordStatus.ACTIVE,
+        orderIndex: input.orderIndex,
+      }),
+    );
+    return repository.save(replacements);
+  }
+
+  private createOwnedItem(
+    repository: Repository<StageGroupItem>,
+    stageGroupId: string,
+    input: CreateStageGroupItemDto,
+  ): StageGroupItem {
+    return repository.create({
+      stageGroupId,
+      itemName: input.itemName.trim(),
+      description: this.normalizeDescription(input.description),
+      ssv: input.ssv,
+      status: input.status ?? RecordStatus.ACTIVE,
+      orderIndex: input.orderIndex,
+    });
   }
 
   private async loadResponse(
     itemsRepository: Repository<StageGroupItem>,
-    stagesRepository: Repository<Stage>,
     group: StageGroup,
   ): Promise<StageGroupResponseDto> {
     const items = await itemsRepository.find({
       where: { stageGroupId: group.id },
-      order: { orderIndex: 'ASC', stageId: 'ASC' },
+      order: { orderIndex: 'ASC', id: 'ASC' },
     });
-    const stagesById = await this.loadStagesByIds(
-      stagesRepository,
-      items.map((item) => item.stageId),
-    );
-    return StageGroupResponseDto.fromEntities(group, items, stagesById);
+    return StageGroupResponseDto.fromEntities(group, items);
   }
 
   private async getExistingGroup(
@@ -275,8 +326,9 @@ export class StageGroupsService {
       .createQueryBuilder('stageGroup')
       .where('UPPER(BTRIM(stageGroup.groupCode)) = :groupCode', { groupCode })
       .getOne();
-    if (duplicate)
+    if (duplicate) {
       throw new ConflictException('Stage group code already exists');
+    }
   }
 
   private async findByNormalizedCode(
@@ -321,47 +373,9 @@ export class StageGroupsService {
     return prefixed.slice(0, 50).replace(/-+$/, '');
   }
 
-  private async loadStages(
-    repository: Repository<Stage>,
-    items: StageGroupItemInputDto[],
-  ): Promise<Map<string, Stage>> {
-    const ids = items.map((item) => item.stageId);
-    const stagesById = await this.loadStagesByIds(repository, ids);
-    if (stagesById.size !== ids.length) {
-      throw new BadRequestException('One or more stages were not found');
-    }
-    return stagesById;
-  }
-
-  private async loadStagesByIds(
-    repository: Repository<Stage>,
-    ids: string[],
-  ): Promise<Map<string, Stage>> {
-    if (ids.length === 0) return new Map();
-    const stages = await repository.findBy({ id: In(ids) });
-    return new Map(stages.map((stage) => [stage.id, stage]));
-  }
-
-  private createSnapshotItems(
-    repository: Repository<StageGroupItem>,
-    stageGroupId: string,
-    inputItems: StageGroupItemInputDto[],
-    stagesById: Map<string, Stage>,
-  ): StageGroupItem[] {
-    return inputItems.map((item) => {
-      const stage = stagesById.get(item.stageId)!;
-      return repository.create({
-        stageGroupId,
-        stageId: item.stageId,
-        orderIndex: item.orderIndex,
-        nameSnapshot: stage.stageName,
-        descriptionSnapshot: stage.description,
-        ssvSnapshot: item.ssv ?? stage.defaultSsv,
-      });
-    });
-  }
-
-  private ensureOrderIndices(items: StageGroupItemInputDto[]): void {
+  private ensureOrderIndices(
+    items: Array<Pick<CreateStageGroupItemDto, 'orderIndex'>>,
+  ): void {
     const orderIndices = items
       .map((item) => item.orderIndex)
       .sort((left, right) => left - right);
@@ -373,11 +387,11 @@ export class StageGroupsService {
     }
   }
 
-  private ensureUniqueStageIds(items: StageGroupItemInputDto[]): void {
-    const stageIds = new Set(items.map((item) => item.stageId));
-    if (stageIds.size !== items.length) {
+  private ensureUniqueItemIds(items: UpdateStageGroupItemDto[]): void {
+    const itemIds = items.flatMap((item) => (item.id ? [item.id] : []));
+    if (new Set(itemIds).size !== itemIds.length) {
       throw new BadRequestException(
-        'Stage group items cannot contain duplicate stages',
+        'Stage group items cannot contain duplicate IDs',
       );
     }
   }
