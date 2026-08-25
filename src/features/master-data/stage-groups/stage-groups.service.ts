@@ -62,17 +62,19 @@ export class StageGroupsService {
     if (groups.length === 0) return [];
 
     const groupIds = groups.map((group) => group.id);
-    const items = await this.items.find({
-      select: { stageGroupId: true },
-      where: { stageGroupId: In(groupIds) },
-    });
-    const itemCountByGroupId = new Map<string, number>();
-    for (const item of items) {
-      itemCountByGroupId.set(
-        item.stageGroupId,
-        (itemCountByGroupId.get(item.stageGroupId) ?? 0) + 1,
-      );
-    }
+    const itemCounts = await this.items
+      .createQueryBuilder('item')
+      .select('item.stageGroupId', 'stageGroupId')
+      .addSelect('COUNT(item.stageId)', 'itemCount')
+      .where('item.stageGroupId IN (:...groupIds)', { groupIds })
+      .groupBy('item.stageGroupId')
+      .getRawMany<{ stageGroupId: string; itemCount: string }>();
+    const itemCountByGroupId = new Map(
+      itemCounts.map(({ stageGroupId, itemCount }) => [
+        stageGroupId,
+        Number.parseInt(itemCount, 10),
+      ]),
+    );
 
     return groups.map((group) =>
       StageGroupSummaryResponseDto.fromEntity(
@@ -145,6 +147,7 @@ export class StageGroupsService {
         );
       }
 
+      this.ensureUniqueStageIds(dto.items);
       this.ensureOrderIndices(dto.items);
       const stagesById = await this.loadStages(repositories.stages, dto.items);
       await repositories.items.delete({ stageGroupId: id });
@@ -215,6 +218,7 @@ export class StageGroupsService {
     groupCode: string,
     repositories: ReturnType<StageGroupsService['getRepositories']>,
   ): Promise<StageGroupResponseDto> {
+    this.ensureUniqueStageIds(dto.items);
     this.ensureOrderIndices(dto.items);
     const stagesById = await this.loadStages(repositories.stages, dto.items);
     const group = repositories.groups.create({
@@ -365,6 +369,15 @@ export class StageGroupsService {
     if (!isContiguous) {
       throw new BadRequestException(
         'Stage group item order indices must be contiguous from zero',
+      );
+    }
+  }
+
+  private ensureUniqueStageIds(items: StageGroupItemInputDto[]): void {
+    const stageIds = new Set(items.map((item) => item.stageId));
+    if (stageIds.size !== items.length) {
+      throw new BadRequestException(
+        'Stage group items cannot contain duplicate stages',
       );
     }
   }

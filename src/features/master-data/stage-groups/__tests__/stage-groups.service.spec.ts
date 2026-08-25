@@ -49,6 +49,7 @@ describe('StageGroupsService', () => {
   let stages: jest.Mocked<Repository<Stage>>;
   let dataSource: jest.Mocked<DataSource>;
   let groupQueryBuilder: SelectQueryBuilder<StageGroup>;
+  let itemQueryBuilder: SelectQueryBuilder<StageGroupItem>;
   let service: StageGroupsService;
 
   beforeEach(() => {
@@ -56,6 +57,13 @@ describe('StageGroupsService', () => {
       where: jest.fn().mockReturnThis(),
       getOne: jest.fn().mockResolvedValue(null),
     } as unknown as SelectQueryBuilder<StageGroup>;
+    itemQueryBuilder = {
+      select: jest.fn().mockReturnThis(),
+      addSelect: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      groupBy: jest.fn().mockReturnThis(),
+      getRawMany: jest.fn().mockResolvedValue([]),
+    } as unknown as SelectQueryBuilder<StageGroupItem>;
 
     groups = {
       find: jest.fn(),
@@ -70,6 +78,7 @@ describe('StageGroupsService', () => {
       create: jest.fn(),
       save: jest.fn(),
       delete: jest.fn(),
+      createQueryBuilder: jest.fn().mockReturnValue(itemQueryBuilder),
     } as unknown as jest.Mocked<Repository<StageGroupItem>>;
     stages = {
       findBy: jest.fn(),
@@ -90,20 +99,46 @@ describe('StageGroupsService', () => {
 
   it('lists groups with their child stage counts', async () => {
     groups.find.mockResolvedValue([group]);
-    items.find.mockResolvedValue([
-      {
-        stageGroupId: groupId,
-        stageId,
-        orderIndex: 0,
-        nameSnapshot: stage.stageName,
-        descriptionSnapshot: stage.description,
-        ssvSnapshot: stage.defaultSsv,
-      },
+    (itemQueryBuilder.getRawMany as jest.Mock).mockResolvedValue([
+      { stageGroupId: groupId, itemCount: '1' },
     ]);
 
     await expect(service.findAll({})).resolves.toEqual([
       expect.objectContaining({ id: groupId, itemCount: 1 }),
     ]);
+    expect(items.find).not.toHaveBeenCalled();
+    expect(itemQueryBuilder.groupBy).toHaveBeenCalledWith('item.stageGroupId');
+  });
+
+  it('rejects duplicate stages in create at the service boundary', async () => {
+    await expect(
+      service.create({
+        groupCode: 'NC-MAY',
+        groupName: 'Nhóm may',
+        items: [
+          { stageId, orderIndex: 0 },
+          { stageId, orderIndex: 1 },
+        ],
+      }),
+    ).rejects.toThrow('Stage group items cannot contain duplicate stages');
+
+    expect(stages.findBy).not.toHaveBeenCalled();
+  });
+
+  it('rejects duplicate stages in update at the service boundary', async () => {
+    groups.findOneBy.mockResolvedValue({ ...group });
+    groups.save.mockImplementation(async (value) => value as StageGroup);
+
+    await expect(
+      service.update(groupId, {
+        items: [
+          { stageId, orderIndex: 0 },
+          { stageId, orderIndex: 1 },
+        ],
+      }),
+    ).rejects.toThrow('Stage group items cannot contain duplicate stages');
+
+    expect(stages.findBy).not.toHaveBeenCalled();
   });
 
   it('creates an active group and snapshots the selected stages', async () => {
