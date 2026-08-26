@@ -1,7 +1,10 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
+  HttpCode,
+  HttpStatus,
   Param,
   ParseUUIDPipe,
   Patch,
@@ -58,6 +61,7 @@ export class WorkshopsController {
   @Patch(':id')
   @ApiOkResponse({ type: WorkshopResponseDto })
   @ApiBadRequestResponse({ description: 'Workshop data is invalid' })
+  @ApiConflictResponse({ description: 'Workshop code already exists' })
   @ApiNotFoundResponse({ description: 'Workshop was not found' })
   update(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
@@ -74,5 +78,17 @@ export class WorkshopsController {
     @Body() dto: UpdateWorkshopStatusDto,
   ): Promise<WorkshopResponseDto> {
     return this.workshopsService.updateStatus(id, dto);
+  }
+
+  @Delete(':id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiNotFoundResponse({ description: 'Workshop was not found' })
+  @ApiConflictResponse({
+    description: 'Workshop is referenced by business data',
+  })
+  remove(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+  ): Promise<void> {
+    return this.workshopsService.remove(id);
   }
 }

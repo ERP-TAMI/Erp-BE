@@ -33,6 +33,7 @@ describe('Workshops API (e2e)', () => {
     create: jest.fn(),
     update: jest.fn(),
     updateStatus: jest.fn(),
+    remove: jest.fn(),
   };
   let app: INestApplication;
 
@@ -181,8 +182,23 @@ describe('Workshops API (e2e)', () => {
     });
   });
 
-  it.each([{ workshopCode: 'X-02' }, { status: RecordStatus.INACTIVE }])(
-    'rejects immutable fields on the generic update endpoint',
+  it('normalizes and updates the workshop code through the HTTP API', async () => {
+    const updated = { ...workshop, workshopCode: 'X-02' };
+    workshopsService.update.mockResolvedValue(updated);
+
+    await request(app.getHttpServer())
+      .patch(`/masters/workshops/${id}`)
+      .send({ workshopCode: ' x-02 ' })
+      .expect(200)
+      .expect(updated);
+
+    expect(workshopsService.update).toHaveBeenCalledWith(id, {
+      workshopCode: 'X-02',
+    });
+  });
+
+  it.each([{ workshopCode: '   ' }, { status: RecordStatus.INACTIVE }])(
+    'rejects invalid generic update fields',
     async (body) => {
       await request(app.getHttpServer())
         .patch(`/masters/workshops/${id}`)
@@ -230,7 +246,33 @@ describe('Workshops API (e2e)', () => {
     });
   });
 
-  it('does not expose a hard-delete endpoint', async () => {
+  it('deletes an unreferenced workshop', async () => {
+    workshopsService.remove.mockResolvedValue(undefined);
+
+    await request(app.getHttpServer())
+      .delete(`/masters/workshops/${id}`)
+      .expect(204);
+
+    expect(workshopsService.remove).toHaveBeenCalledWith(id);
+  });
+
+  it('returns conflict when deleting a workshop referenced by business data', async () => {
+    workshopsService.remove.mockRejectedValue(
+      new ConflictException(
+        'Workshop cannot be deleted because it is referenced by business data',
+      ),
+    );
+
+    await request(app.getHttpServer())
+      .delete(`/masters/workshops/${id}`)
+      .expect(409);
+  });
+
+  it('returns not found when deleting a non-existent workshop', async () => {
+    workshopsService.remove.mockRejectedValue(
+      new NotFoundException('Workshop not found'),
+    );
+
     await request(app.getHttpServer())
       .delete(`/masters/workshops/${id}`)
       .expect(404);

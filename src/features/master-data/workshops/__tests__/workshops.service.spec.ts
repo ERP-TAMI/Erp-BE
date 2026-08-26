@@ -34,7 +34,9 @@ describe('WorkshopsService', () => {
       createQueryBuilder: jest.fn().mockReturnValue(queryBuilder),
       create: jest.fn(),
       save: jest.fn(),
+      remove: jest.fn(),
     } as unknown as jest.Mocked<Repository<Workshop>>;
+    workshops.findOneBy.mockResolvedValue({ ...workshop });
     service = new WorkshopsService(workshops);
   });
 
@@ -90,6 +92,28 @@ describe('WorkshopsService', () => {
     );
   });
 
+  it('reloads a newly created workshop so database timestamps are returned', async () => {
+    normalizedCodeResult.mockResolvedValue(null);
+    const savedWithoutDatabaseDefaults = {
+      ...workshop,
+      createdAt: undefined,
+      updatedAt: undefined,
+    } as unknown as Workshop;
+    workshops.create.mockReturnValue(savedWithoutDatabaseDefaults);
+    workshops.save.mockResolvedValue(savedWithoutDatabaseDefaults);
+    workshops.findOneBy.mockResolvedValue({ ...workshop });
+
+    await expect(
+      service.create({ workshopCode: 'X-01', name: 'Xưởng May 1' }),
+    ).resolves.toMatchObject({
+      id: workshop.id,
+      createdAt: workshop.createdAt,
+      updatedAt: workshop.updatedAt,
+    });
+
+    expect(workshops.findOneBy).toHaveBeenCalledWith({ id: workshop.id });
+  });
+
   it('rejects duplicate workshop codes after case and whitespace normalization', async () => {
     normalizedCodeResult.mockResolvedValue(workshop);
 
@@ -139,24 +163,39 @@ describe('WorkshopsService', () => {
     });
   });
 
-  it('updates mutable fields without accepting a workshop code', async () => {
+  it('normalizes and updates the workshop code with other mutable fields', async () => {
+    normalizedCodeResult.mockResolvedValue(null);
     workshops.findOneBy.mockResolvedValue({ ...workshop });
     workshops.save.mockImplementation(async (value) => value as Workshop);
 
     await expect(
       service.update(workshop.id, {
+        workshopCode: ' x-09 ',
         name: 'Xưởng May Chính',
         manager: '',
         location: 'Khu B',
         capacity: 700,
       }),
     ).resolves.toMatchObject({
-      workshopCode: 'X-01',
+      workshopCode: 'X-09',
       name: 'Xưởng May Chính',
       manager: null,
       location: 'Khu B',
       capacity: 700,
     });
+  });
+
+  it('rejects a duplicate workshop code when updating', async () => {
+    normalizedCodeResult.mockResolvedValue({
+      ...workshop,
+      id: 'another-workshop',
+    });
+    workshops.findOneBy.mockResolvedValue({ ...workshop });
+
+    await expect(
+      service.update(workshop.id, { workshopCode: ' x-02 ' }),
+    ).rejects.toThrow(ConflictException);
+    expect(workshops.save).not.toHaveBeenCalled();
   });
 
   it('changes status without deleting the workshop', async () => {
@@ -166,6 +205,25 @@ describe('WorkshopsService', () => {
     await expect(
       service.updateStatus(workshop.id, { status: RecordStatus.INACTIVE }),
     ).resolves.toMatchObject({ status: RecordStatus.INACTIVE });
+  });
+
+  it('removes an existing workshop', async () => {
+    workshops.findOneBy.mockResolvedValue({ ...workshop });
+    workshops.remove.mockResolvedValue({ ...workshop });
+
+    await expect(service.remove(workshop.id)).resolves.toBeUndefined();
+    expect(workshops.remove).toHaveBeenCalledWith(
+      expect.objectContaining({ id: workshop.id }),
+    );
+  });
+
+  it('maps foreign key constraint violation to conflict when deleting', async () => {
+    workshops.findOneBy.mockResolvedValue({ ...workshop });
+    workshops.remove.mockRejectedValue({ code: '23503' });
+
+    await expect(service.remove(workshop.id)).rejects.toThrow(
+      ConflictException,
+    );
   });
 
   it('returns not found when the requested workshop does not exist', async () => {

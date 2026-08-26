@@ -8,14 +8,24 @@ import {
   Max,
   MaxLength,
   Min,
+  ValidateIf,
 } from 'class-validator';
 import {
+  normalizeWorkshopCode,
   POSTGRES_INTEGER_MAX,
   rejectNullNumber,
   trimWorkshopText,
 } from './workshop-dto.transforms';
 
 export class UpdateWorkshopDto {
+  @ApiPropertyOptional({ example: 'X-01', maxLength: 50 })
+  @Transform(normalizeWorkshopCode)
+  @ValidateIf((_, value) => value !== undefined)
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(50)
+  workshopCode?: string;
+
   @ApiPropertyOptional({ example: 'Xưởng May Chính', maxLength: 255 })
   @Transform(trimWorkshopText)
   @IsOptional()

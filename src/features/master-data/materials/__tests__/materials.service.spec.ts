@@ -221,6 +221,24 @@ describe('MaterialsService', () => {
     expect(materials.save).toHaveBeenCalled();
   });
 
+  it('normalizes and updates the material code', async () => {
+    materials.findOneBy.mockResolvedValue({ ...material });
+    materials.save.mockImplementation(async (value) => value as Material);
+
+    await expect(
+      service.update(material.id, { materialCode: ' fab-002 ' }),
+    ).resolves.toMatchObject({ materialCode: 'FAB-002' });
+  });
+
+  it('maps a duplicate material code update to conflict', async () => {
+    materials.findOneBy.mockResolvedValue({ ...material });
+    materials.save.mockRejectedValue({ code: '23505' });
+
+    await expect(
+      service.update(material.id, { materialCode: 'FAB-002' }),
+    ).rejects.toThrow(ConflictException);
+  });
+
   it('rejects switching to a different inactive group', async () => {
     const inactiveGroupId = '64d916a5-c12f-4224-a1fe-b221c6e9b253';
     materials.findOneBy.mockResolvedValue({ ...material });

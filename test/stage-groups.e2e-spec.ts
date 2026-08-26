@@ -192,16 +192,33 @@ describe('Stage groups controller boundary (e2e)', () => {
     });
   });
 
-  it.each([{ groupName: null }, { items: null }])(
-    'rejects null update fields before the service: %p',
-    async (invalid) => {
-      await request(app.getHttpServer())
-        .patch(`/masters/stage-groups/${id}`)
-        .send(invalid)
-        .expect(400);
-      expect(stageGroupsService.update).not.toHaveBeenCalled();
-    },
-  );
+  it('normalizes and updates the stage group code through the HTTP API', async () => {
+    const updated = { ...group, groupCode: 'NC-MAY-2' };
+    stageGroupsService.update.mockResolvedValue(updated);
+
+    await request(app.getHttpServer())
+      .patch(`/masters/stage-groups/${id}`)
+      .send({ groupCode: ' nc-may-2 ' })
+      .expect(200)
+      .expect(updated);
+
+    expect(stageGroupsService.update).toHaveBeenCalledWith(id, {
+      groupCode: 'NC-MAY-2',
+    });
+  });
+
+  it.each([
+    { groupCode: '   ' },
+    { groupCode: null },
+    { groupName: null },
+    { items: null },
+  ])('rejects null update fields before the service: %p', async (invalid) => {
+    await request(app.getHttpServer())
+      .patch(`/masters/stage-groups/${id}`)
+      .send(invalid)
+      .expect(400);
+    expect(stageGroupsService.update).not.toHaveBeenCalled();
+  });
 
   it('passes search and status filters to the service', async () => {
     stageGroupsService.findAll.mockResolvedValue([group]);

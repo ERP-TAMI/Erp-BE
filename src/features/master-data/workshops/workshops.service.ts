@@ -55,7 +55,10 @@ export class WorkshopsService {
       dailyCapacity: dto.capacity ?? 0,
       status: RecordStatus.ACTIVE,
     });
-    return WorkshopResponseDto.fromEntity(await this.saveWorkshop(workshop));
+    const savedWorkshop = await this.saveWorkshop(workshop);
+    return WorkshopResponseDto.fromEntity(
+      await this.getExistingWorkshop(savedWorkshop.id),
+    );
   }
 
   async update(
@@ -63,6 +66,13 @@ export class WorkshopsService {
     dto: UpdateWorkshopDto,
   ): Promise<WorkshopResponseDto> {
     const workshop = await this.getExistingWorkshop(id);
+    if (dto.workshopCode !== undefined) {
+      const workshopCode = this.normalizeCode(dto.workshopCode);
+      if (workshopCode !== this.normalizeCode(workshop.workshopCode)) {
+        await this.ensureCodeUnique(workshopCode, workshop.id);
+        workshop.workshopCode = workshopCode;
+      }
+    }
     if (dto.name !== undefined) workshop.name = dto.name.trim();
     if (dto.manager !== undefined) {
       workshop.manager = this.normalizeNullableText(dto.manager);
@@ -83,20 +93,39 @@ export class WorkshopsService {
     return WorkshopResponseDto.fromEntity(await this.saveWorkshop(workshop));
   }
 
+  async remove(id: string): Promise<void> {
+    const workshop = await this.getExistingWorkshop(id);
+    try {
+      await this.workshops.remove(workshop);
+    } catch (error) {
+      if (this.hasDatabaseCode(error, '23503')) {
+        throw new ConflictException(
+          'Workshop cannot be deleted because it is referenced by business data',
+        );
+      }
+      throw error;
+    }
+  }
+
   private async getExistingWorkshop(id: string): Promise<Workshop> {
     const workshop = await this.workshops.findOneBy({ id });
     if (!workshop) throw new NotFoundException('Workshop not found');
     return workshop;
   }
 
-  private async ensureCodeUnique(workshopCode: string): Promise<void> {
+  private async ensureCodeUnique(
+    workshopCode: string,
+    excludedWorkshopId?: string,
+  ): Promise<void> {
     const existing = await this.workshops
       .createQueryBuilder('workshop')
       .where('UPPER(BTRIM(workshop.workshopCode)) = :workshopCode', {
         workshopCode,
       })
       .getOne();
-    if (existing) throw new ConflictException('Workshop code already exists');
+    if (existing && existing.id !== excludedWorkshopId) {
+      throw new ConflictException('Workshop code already exists');
+    }
   }
 
   private async saveWorkshop(workshop: Workshop): Promise<Workshop> {
