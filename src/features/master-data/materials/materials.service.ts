@@ -94,6 +94,9 @@ export class MaterialsService {
   ): Promise<MaterialResponseDto> {
     const material = await this.getExistingMaterial(id);
 
+    if (dto.materialCode !== undefined) {
+      material.materialCode = this.normalizeCode(dto.materialCode);
+    }
     if (dto.materialName !== undefined) {
       material.materialName = dto.materialName.trim();
     }
@@ -245,6 +248,10 @@ export class MaterialsService {
     // existing Entity property is typed as number, so keep the runtime string
     // and isolate the type mismatch here instead of losing decimal precision.
     return value as unknown as number;
+  }
+
+  private normalizeCode(value: string): string {
+    return value.trim().toUpperCase();
   }
 
   private hasDatabaseCode(error: unknown, code: string): boolean {

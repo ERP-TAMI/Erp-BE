@@ -27,6 +27,7 @@
     "seed:auth": "ts-node -r tsconfig-paths/register src/database/seeds/seed-auth-test-accounts.ts",
     "seed:stages": "ts-node -r tsconfig-paths/register src/database/seeds/seed-stages.ts",
     "seed:stage-groups": "ts-node -r tsconfig-paths/register src/database/seeds/seed-stage-groups.ts",
+    "seed:workshops": "ts-node -r tsconfig-paths/register src/database/seeds/seed-workshops.ts",
     "verify:start-dev": "node scripts/verify-start-dev.js"
   },
   "dependencies": {

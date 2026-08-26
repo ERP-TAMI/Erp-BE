@@ -67,6 +67,7 @@ export class StageGroupsController {
   @Patch(':id')
   @ApiOkResponse({ type: StageGroupResponseDto })
   @ApiBadRequestResponse({ description: 'Stage group data is invalid' })
+  @ApiConflictResponse({ description: 'Stage group code already exists' })
   @ApiNotFoundResponse({ description: 'Stage group was not found' })
   update(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,

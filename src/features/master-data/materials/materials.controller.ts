@@ -62,6 +62,7 @@ export class MaterialsController {
   @Patch(':id')
   @ApiOkResponse({ type: MaterialResponseDto })
   @ApiBadRequestResponse({ description: 'Material data is invalid' })
+  @ApiConflictResponse({ description: 'Material code already exists' })
   @ApiNotFoundResponse({ description: 'Material was not found' })
   update(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
