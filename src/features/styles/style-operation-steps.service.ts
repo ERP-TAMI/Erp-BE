@@ -1,7 +1,4 @@
-import {
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { StyleOperationStep } from './entities/StyleOperationStep.entity';
@@ -70,7 +67,9 @@ export class StyleOperationStepsService {
 
     const isUuid = (val?: string | null): boolean => {
       if (!val) return false;
-      return /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(val);
+      return /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(
+        val,
+      );
     };
 
     const tempIdToRealIdMap = new Map<string, string>();
@@ -126,7 +125,7 @@ export class StyleOperationStepsService {
       const validId = isUuid(rawId) ? rawId : undefined;
 
       const parentStepId = step.parentStepId
-        ? tempIdToRealIdMap.get(step.parentStepId) ?? null
+        ? (tempIdToRealIdMap.get(step.parentStepId) ?? null)
         : null;
 
       const entity = this.stepRepo.create({
@@ -168,7 +167,8 @@ export class StyleOperationStepsService {
     }
 
     if (dto.stepName !== undefined) step.stepName = dto.stepName;
-    if (dto.description !== undefined) step.description = dto.description ?? null;
+    if (dto.description !== undefined)
+      step.description = dto.description ?? null;
     if (dto.timePerPiece !== undefined) step.timePerPiece = dto.timePerPiece;
     if (dto.ssv !== undefined) step.ssv = dto.ssv;
     if (dto.targetTotal !== undefined) step.targetTotal = dto.targetTotal;
@@ -177,7 +177,8 @@ export class StyleOperationStepsService {
     if (dto.isGroup !== undefined) step.isGroup = dto.isGroup;
     if (dto.groupId !== undefined) step.groupId = dto.groupId ?? null;
     if (dto.groupItems !== undefined) step.groupItems = dto.groupItems ?? null;
-    if (dto.parentStepId !== undefined) step.parentStepId = dto.parentStepId ?? null;
+    if (dto.parentStepId !== undefined)
+      step.parentStepId = dto.parentStepId ?? null;
     if (dto.stageId !== undefined) step.stageId = dto.stageId ?? null;
 
     return this.stepRepo.save(step);

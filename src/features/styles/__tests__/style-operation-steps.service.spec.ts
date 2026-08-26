@@ -135,20 +135,35 @@ describe('StyleOperationStepsService', () => {
       expect(styleRepoMock.update).toHaveBeenCalledWith(mockStyleId, {
         as3bCmBaseDays: 45,
       });
-      expect(stepRepoMock.delete).toHaveBeenCalledWith({ styleId: mockStyleId });
+      expect(stepRepoMock.delete).toHaveBeenCalledWith({
+        styleId: mockStyleId,
+      });
       expect(stepRepoMock.save).toHaveBeenCalled();
       expect(result).toHaveLength(2);
     });
 
     it('should map temporary FE group/child IDs to valid database entities', async () => {
       const steps = [
-        { id: 'group-1787700099', isGroup: true, stepName: 'Nhóm vắt sổ', orderIndex: 0 },
-        { id: 'child-1787700099', isGroup: false, parentStepId: 'group-1787700099', stepName: 'VS3C', orderIndex: 1 },
+        {
+          id: 'group-1787700099',
+          isGroup: true,
+          stepName: 'Nhóm vắt sổ',
+          orderIndex: 0,
+        },
+        {
+          id: 'child-1787700099',
+          isGroup: false,
+          parentStepId: 'group-1787700099',
+          stepName: 'VS3C',
+          orderIndex: 1,
+        },
       ];
 
       const result = await service.createMany(mockStyleId, steps as any);
 
-      expect(stepRepoMock.delete).toHaveBeenCalledWith({ styleId: mockStyleId });
+      expect(stepRepoMock.delete).toHaveBeenCalledWith({
+        styleId: mockStyleId,
+      });
       expect(result).toHaveLength(2);
       expect(result[0].id).not.toBe('group-1787700099');
       expect(result[1].id).not.toBe('child-1787700099');

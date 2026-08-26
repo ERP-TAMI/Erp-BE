@@ -42,8 +42,13 @@ export class StyleOperationStepsController {
   ) {}
 
   @Get(['export', 'export-template'])
-  @ApiOperation({ summary: 'Xuất file Excel quy trình công đoạn theo mẫu Template' })
-  @ApiResponse({ status: 200, description: 'File Excel (.xlsx) chứa dữ liệu quy trình công đoạn' })
+  @ApiOperation({
+    summary: 'Xuất file Excel quy trình công đoạn theo mẫu Template',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'File Excel (.xlsx) chứa dữ liệu quy trình công đoạn',
+  })
   async exportExcel(
     @Param('styleId', ParseUUIDPipe) styleId: string,
     @Res() res: Response,
@@ -83,7 +88,10 @@ export class StyleOperationStepsController {
 
   @Get()
   @ApiOperation({ summary: 'Lấy danh sách công đoạn quy trình của mẫu Fit' })
-  @ApiResponse({ status: 200, description: 'Danh sách các công đoạn quy trình' })
+  @ApiResponse({
+    status: 200,
+    description: 'Danh sách các công đoạn quy trình',
+  })
   @ApiResponse({ status: 404, description: 'Không tìm thấy mẫu Fit' })
   async findAll(
     @Param('styleId', ParseUUIDPipe) styleId: string,
@@ -104,15 +112,22 @@ export class StyleOperationStepsController {
   }
 
   @Put()
-  @ApiOperation({ summary: 'Lưu / Thay thế toàn bộ danh sách công đoạn quy trình' })
-  @ApiResponse({ status: 200, description: 'Danh sách công đoạn sau khi cập nhật' })
+  @ApiOperation({
+    summary: 'Lưu / Thay thế toàn bộ danh sách công đoạn quy trình',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Danh sách công đoạn sau khi cập nhật',
+  })
   @ApiResponse({ status: 404, description: 'Không tìm thấy mẫu Fit' })
   async replaceAll(
     @Param('styleId', ParseUUIDPipe) styleId: string,
     @Body() body: BulkSaveStyleOperationStepsDto | any,
   ): Promise<StyleOperationStep[]> {
     const steps = Array.isArray(body) ? body : body?.steps || [];
-    const as3bCmBaseDays = Array.isArray(body) ? undefined : body?.as3bCmBaseDays;
+    const as3bCmBaseDays = Array.isArray(body)
+      ? undefined
+      : body?.as3bCmBaseDays;
     return this.service.createMany(styleId, steps, as3bCmBaseDays);
   }
 
@@ -142,7 +157,10 @@ export class StyleOperationStepsController {
 
   @Put('reorder')
   @ApiOperation({ summary: 'Sắp xếp lại thứ tự các công đoạn quy trình' })
-  @ApiResponse({ status: 200, description: 'Danh sách công đoạn đã được sắp xếp' })
+  @ApiResponse({
+    status: 200,
+    description: 'Danh sách công đoạn đã được sắp xếp',
+  })
   @ApiResponse({ status: 404, description: 'Không tìm thấy mẫu Fit' })
   async reorder(
     @Param('styleId', ParseUUIDPipe) styleId: string,

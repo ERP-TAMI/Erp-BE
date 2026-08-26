@@ -47,7 +47,6 @@ const imports = [
   PlatformModule,
 ];
 
-
 @Module({
   imports,
   controllers: [AppController],

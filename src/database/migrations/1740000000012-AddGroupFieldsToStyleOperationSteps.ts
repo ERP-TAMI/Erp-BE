@@ -1,8 +1,6 @@
 import { MigrationInterface, QueryRunner } from 'typeorm';
 
-export class AddGroupFieldsToStyleOperationSteps1740000000012
-  implements MigrationInterface
-{
+export class AddGroupFieldsToStyleOperationSteps1740000000012 implements MigrationInterface {
   name = 'AddGroupFieldsToStyleOperationSteps1740000000012';
 
   public async up(queryRunner: QueryRunner): Promise<void> {

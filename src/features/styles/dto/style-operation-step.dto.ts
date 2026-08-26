@@ -31,7 +31,10 @@ export class CreateStyleOperationStepDto {
   @IsString()
   description?: string;
 
-  @ApiPropertyOptional({ description: 'Thời gian per piece (giây/SP)', default: 0 })
+  @ApiPropertyOptional({
+    description: 'Thời gian per piece (giây/SP)',
+    default: 0,
+  })
   @IsOptional()
   @IsNumber()
   @Min(0)
@@ -60,7 +63,10 @@ export class CreateStyleOperationStepDto {
   @Min(0)
   orderIndex?: number;
 
-  @ApiPropertyOptional({ description: 'Có phải nhóm công đoạn hay không', default: false })
+  @ApiPropertyOptional({
+    description: 'Có phải nhóm công đoạn hay không',
+    default: false,
+  })
   @IsOptional()
   @IsBoolean()
   isGroup?: boolean;
@@ -70,7 +76,9 @@ export class CreateStyleOperationStepDto {
   @IsUUID()
   groupId?: string;
 
-  @ApiPropertyOptional({ description: 'Danh sách items công đoạn con trong nhóm (snapshot)' })
+  @ApiPropertyOptional({
+    description: 'Danh sách items công đoạn con trong nhóm (snapshot)',
+  })
   @IsOptional()
   groupItems?: any;
 }
@@ -135,7 +143,9 @@ export class UpdateStyleOperationStepDto {
   @IsUUID()
   groupId?: string;
 
-  @ApiPropertyOptional({ description: 'Danh sách items công đoạn con trong nhóm (snapshot)' })
+  @ApiPropertyOptional({
+    description: 'Danh sách items công đoạn con trong nhóm (snapshot)',
+  })
   @IsOptional()
   groupItems?: any;
 }
@@ -148,13 +158,19 @@ export class StyleOperationStepItemDto extends CreateStyleOperationStepDto {
 }
 
 export class BulkSaveStyleOperationStepsDto {
-  @ApiProperty({ description: 'Danh sách các dòng công đoạn', type: [StyleOperationStepItemDto] })
+  @ApiProperty({
+    description: 'Danh sách các dòng công đoạn',
+    type: [StyleOperationStepItemDto],
+  })
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => StyleOperationStepItemDto)
   steps: StyleOperationStepItemDto[];
 
-  @ApiPropertyOptional({ description: 'Số ngày cơ sở tính CM công nghệ (mặc định 30)', default: 30 })
+  @ApiPropertyOptional({
+    description: 'Số ngày cơ sở tính CM công nghệ (mặc định 30)',
+    default: 30,
+  })
   @IsOptional()
   @IsNumber()
   @Min(1)
@@ -162,7 +178,10 @@ export class BulkSaveStyleOperationStepsDto {
 }
 
 export class ReorderStyleOperationStepsDto {
-  @ApiProperty({ description: 'Mảng chứa ID các công đoạn theo thứ tự mới', type: [String] })
+  @ApiProperty({
+    description: 'Mảng chứa ID các công đoạn theo thứ tự mới',
+    type: [String],
+  })
   @IsArray()
   @IsString({ each: true })
   orderedIds: string[];

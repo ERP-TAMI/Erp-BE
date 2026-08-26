@@ -19,7 +19,8 @@ export type OperationStepExportInput = {
 export class StyleOperationStepsExportService {
   async buildExcelBuffer(input: OperationStepExportInput): Promise<Buffer> {
     const templatePath = this.resolveTemplatePath();
-    const WorkbookClass = ExcelJS.Workbook || (ExcelJS as any).default?.Workbook;
+    const WorkbookClass =
+      ExcelJS.Workbook || (ExcelJS as any).default?.Workbook;
     const workbook = new WorkbookClass();
     await workbook.xlsx.readFile(templatePath);
 
@@ -38,13 +39,26 @@ export class StyleOperationStepsExportService {
     const totalRow = lastDataRow + 1;
 
     this.prepareSheetForRows(sheet, Math.max(rowCount, baseDataRows));
-    this.fillMergedIdentityColumns(sheet, input, mainSteps, lastDataRow, totalRow);
+    this.fillMergedIdentityColumns(
+      sheet,
+      input,
+      mainSteps,
+      lastDataRow,
+      totalRow,
+    );
     this.fillMainSteps(sheet, mainSteps, input, lastDataRow, totalRow);
     this.fillGroupSteps(sheet, sortedSteps, mainSteps, '1k', 12, lastDataRow);
-    this.fillGroupSteps(sheet, sortedSteps, mainSteps, 'vat-so', 15, lastDataRow);
+    this.fillGroupSteps(
+      sheet,
+      sortedSteps,
+      mainSteps,
+      'vat-so',
+      15,
+      lastDataRow,
+    );
 
     if (input.imageUrl) {
-      await this.addStructureImage(workbook, sheet, input.imageUrl, lastDataRow);
+      await this.addStructureImage(workbook, sheet, input.imageUrl);
     }
 
     const output = await workbook.xlsx.writeBuffer();
@@ -53,19 +67,42 @@ export class StyleOperationStepsExportService {
 
   private resolveTemplatePath(): string {
     const candidates = [
-      path.join(process.cwd(), 'src', 'TemplateMau', 'TemplateBangCongDoan.xlsx'),
-      path.join(process.cwd(), 'dist', 'TemplateMau', 'TemplateBangCongDoan.xlsx'),
+      path.join(
+        process.cwd(),
+        'src',
+        'TemplateMau',
+        'TemplateBangCongDoan.xlsx',
+      ),
+      path.join(
+        process.cwd(),
+        'dist',
+        'TemplateMau',
+        'TemplateBangCongDoan.xlsx',
+      ),
       path.join(process.cwd(), 'TemplateMau', 'TemplateBangCongDoan.xlsx'),
-      path.join(__dirname, '..', '..', 'TemplateMau', 'TemplateBangCongDoan.xlsx'),
+      path.join(
+        __dirname,
+        '..',
+        '..',
+        'TemplateMau',
+        'TemplateBangCongDoan.xlsx',
+      ),
     ];
-    const templatePath = candidates.find((candidate) => fs.existsSync(candidate));
+    const templatePath = candidates.find((candidate) =>
+      fs.existsSync(candidate),
+    );
     if (!templatePath) {
-      throw new NotFoundException('Không tìm thấy file TemplateMau/TemplateBangCongDoan.xlsx');
+      throw new NotFoundException(
+        'Không tìm thấy file TemplateMau/TemplateBangCongDoan.xlsx',
+      );
     }
     return templatePath;
   }
 
-  private prepareSheetForRows(sheet: ExcelJS.Worksheet, dataRows: number): void {
+  private prepareSheetForRows(
+    sheet: ExcelJS.Worksheet,
+    dataRows: number,
+  ): void {
     this.unmergeIfExists(sheet, 'A2:A13');
     this.unmergeIfExists(sheet, 'B2:B12');
     this.unmergeIfExists(sheet, 'C2:C12');
@@ -104,7 +141,9 @@ export class StyleOperationStepsExportService {
     totalRow: number,
   ): void {
     sheet.getCell('A2').value = input.styleCode || '';
-    sheet.getCell('C2').value = [input.category, input.material].filter(Boolean).join(' - ');
+    sheet.getCell('C2').value = [input.category, input.material]
+      .filter(Boolean)
+      .join(' - ');
 
     sheet.getCell('A2').alignment = {
       ...(sheet.getCell('A2').alignment || {}),
@@ -124,14 +163,18 @@ export class StyleOperationStepsExportService {
       wrapText: true,
     };
 
-    const totalTime = mainSteps.reduce((sum, row) => sum + Number(row.timePerPiece || 0), 0);
+    const totalTime = mainSteps.reduce(
+      (sum, row) => sum + Number(row.timePerPiece || 0),
+      0,
+    );
     const productPerPersonDay = totalTime > 0 ? (3600 / totalTime) * 8 : 0;
     const cmValue =
       productPerPersonDay > 0
         ? Number(input.as3bCmBaseDays || 30) / productPerPersonDay
         : 0;
 
-    sheet.getCell('I2').value = cmValue > 0 ? `$ ${this.formatViNumber(cmValue, 2)}` : '';
+    sheet.getCell('I2').value =
+      cmValue > 0 ? `$ ${this.formatViNumber(cmValue, 2)}` : '';
     sheet.getCell('I2').font = {
       ...(sheet.getCell('I2').font || {}),
       bold: true,
@@ -158,7 +201,10 @@ export class StyleOperationStepsExportService {
     lastDataRow: number,
     totalRow: number,
   ): void {
-    const totalTime = steps.reduce((sum, step) => sum + Number(step.timePerPiece || 0), 0);
+    const totalTime = steps.reduce(
+      (sum, step) => sum + Number(step.timePerPiece || 0),
+      0,
+    );
     const productPerPersonDay = totalTime > 0 ? (3600 / totalTime) * 8 : 0;
     const cmValue =
       productPerPersonDay > 0
@@ -177,15 +223,24 @@ export class StyleOperationStepsExportService {
       sheet.getCell(rowNumber, 4).value = step.stepName || '';
       sheet.getCell(rowNumber, 5).value = time || null;
       sheet.getCell(rowNumber, 6).value =
-        time > 0 && totalTime > 0 ? `${Math.round((time / totalTime) * 100)}%` : '';
-      sheet.getCell(rowNumber, 7).value = spPerHour > 0 ? this.round(spPerHour, 2) : null;
+        time > 0 && totalTime > 0
+          ? `${Math.round((time / totalTime) * 100)}%`
+          : '';
+      sheet.getCell(rowNumber, 7).value =
+        spPerHour > 0 ? this.round(spPerHour, 2) : null;
       sheet.getCell(rowNumber, 8).value = step.note || '';
-      sheet.getCell(rowNumber, 9).value = cmValue > 0 ? `$ ${this.formatViNumber(cmValue, 2)}` : '';
-      sheet.getCell(rowNumber, 10).value = people > 0 ? this.round(people, 2) : null;
+      sheet.getCell(rowNumber, 9).value =
+        cmValue > 0 ? `$ ${this.formatViNumber(cmValue, 2)}` : '';
+      sheet.getCell(rowNumber, 10).value =
+        people > 0 ? this.round(people, 2) : null;
       sheet.getCell(rowNumber, 11).value = targetTotal > 0 ? targetTotal : null;
     }
 
-    for (let rowNumber = 2 + steps.length; rowNumber <= lastDataRow; rowNumber += 1) {
+    for (
+      let rowNumber = 2 + steps.length;
+      rowNumber <= lastDataRow;
+      rowNumber += 1
+    ) {
       for (const col of [4, 5, 6, 7, 8, 10, 11]) {
         sheet.getCell(rowNumber, col).value = null;
       }
@@ -198,7 +253,9 @@ export class StyleOperationStepsExportService {
       productPerPersonDay > 0 ? Math.round(productPerPersonDay) : null;
   }
 
-  private buildMainExportRows(allSteps: StyleOperationStep[]): StyleOperationStep[] {
+  private buildMainExportRows(
+    allSteps: StyleOperationStep[],
+  ): StyleOperationStep[] {
     return allSteps
       .filter((step) => !step.parentStepId)
       .map((step) => {
@@ -209,11 +266,15 @@ export class StyleOperationStepsExportService {
         );
         const totalTime =
           children.length > 0
-            ? children.reduce((sum, child) => sum + Number(child.timePerPiece || 0), 0)
+            ? children.reduce(
+                (sum, child) => sum + Number(child.timePerPiece || 0),
+                0,
+              )
             : Number(step.timePerPiece || 0);
         const groupTarget = Number(step.targetTotal || 0);
         const childrenTarget = Number(
-          children.find((child) => Number(child.targetTotal || 0) > 0)?.targetTotal || 0,
+          children.find((child) => Number(child.targetTotal || 0) > 0)
+            ?.targetTotal || 0,
         );
 
         return {
@@ -234,7 +295,10 @@ export class StyleOperationStepsExportService {
     lastDataRow: number,
   ): void {
     const groupRows = this.findGroupRows(allSteps, groupKind);
-    const totalTime = mainSteps.reduce((sum, step) => sum + Number(step.timePerPiece || 0), 0);
+    const totalTime = mainSteps.reduce(
+      (sum, step) => sum + Number(step.timePerPiece || 0),
+      0,
+    );
 
     for (let rowNumber = 2; rowNumber <= lastDataRow; rowNumber += 1) {
       sheet.getCell(rowNumber, startCol).value = null;
@@ -249,7 +313,9 @@ export class StyleOperationStepsExportService {
       sheet.getCell(rowNumber, startCol).value = step.stepName || '';
       sheet.getCell(rowNumber, startCol + 1).value = time || null;
       sheet.getCell(rowNumber, startCol + 2).value =
-        time > 0 && totalTime > 0 ? `${Math.round((time / totalTime) * 100)}%` : '';
+        time > 0 && totalTime > 0
+          ? `${Math.round((time / totalTime) * 100)}%`
+          : '';
     });
   }
 
@@ -263,20 +329,26 @@ export class StyleOperationStepsExportService {
       return normalized.includes('vat so') || normalized.includes('vat-so');
     };
 
-    const groups = allSteps.filter((step) => step.isGroup && matchesGroup(step.stepName || ''));
+    const groups = allSteps.filter(
+      (step) => step.isGroup && matchesGroup(step.stepName || ''),
+    );
     const children = groups.flatMap((group) =>
-      allSteps.filter((step) => step.parentStepId && step.parentStepId === group.id && !step.isGroup),
+      allSteps.filter(
+        (step) =>
+          step.parentStepId && step.parentStepId === group.id && !step.isGroup,
+      ),
     );
 
     if (children.length > 0) return children;
-    return allSteps.filter((step) => !step.isGroup && matchesGroup(step.stepName || ''));
+    return allSteps.filter(
+      (step) => !step.isGroup && matchesGroup(step.stepName || ''),
+    );
   }
 
   private async addStructureImage(
     workbook: ExcelJS.Workbook,
     sheet: ExcelJS.Worksheet,
     imageUrl: string,
-    lastDataRow: number,
   ): Promise<void> {
     if (!imageUrl || imageUrl.startsWith('blob:')) return;
 
@@ -285,19 +357,27 @@ export class StyleOperationStepsExportService {
 
     try {
       if (imageUrl.startsWith('/uploads/') || imageUrl.startsWith('uploads/')) {
-        const relativePath = imageUrl.startsWith('/') ? imageUrl.slice(1) : imageUrl;
+        const relativePath = imageUrl.startsWith('/')
+          ? imageUrl.slice(1)
+          : imageUrl;
         const localPath = path.join(process.cwd(), relativePath);
         if (fs.existsSync(localPath)) {
           imageBuffer = fs.readFileSync(localPath);
           const ext = path.extname(localPath).toLowerCase();
-          extension = ext.includes('jpg') || ext.includes('jpeg') ? 'jpeg' : 'png';
+          extension =
+            ext.includes('jpg') || ext.includes('jpeg') ? 'jpeg' : 'png';
         }
-      } else if (imageUrl.startsWith('http://') || imageUrl.startsWith('https://')) {
+      } else if (
+        imageUrl.startsWith('http://') ||
+        imageUrl.startsWith('https://')
+      ) {
         const response = await axios.get<ArrayBuffer>(imageUrl, {
           responseType: 'arraybuffer',
           timeout: 10000,
         });
-        const contentType = String(response.headers['content-type'] || '').toLowerCase();
+        const contentType = String(
+          response.headers['content-type'] || '',
+        ).toLowerCase();
         extension = contentType.includes('png') ? 'png' : 'jpeg';
         imageBuffer = Buffer.from(response.data);
       }
@@ -318,7 +398,11 @@ export class StyleOperationStepsExportService {
     }
   }
 
-  private copyRowStyle(sheet: ExcelJS.Worksheet, sourceRowNumber: number, targetRowNumber: number): void {
+  private copyRowStyle(
+    sheet: ExcelJS.Worksheet,
+    sourceRowNumber: number,
+    targetRowNumber: number,
+  ): void {
     const sourceRow = sheet.getRow(sourceRowNumber);
     const targetRow = sheet.getRow(targetRowNumber);
     targetRow.height = sourceRow.height;

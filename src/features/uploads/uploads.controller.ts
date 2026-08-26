@@ -27,7 +27,10 @@ export class UploadsController {
       throw new BadRequestException('Vui lòng chọn file ảnh để tải lên');
     }
 
-    const cleanFolder = (folder || 'style-images').replace(/[^a-zA-Z0-9_-]/g, '');
+    const cleanFolder = (folder || 'style-images').replace(
+      /[^a-zA-Z0-9_-]/g,
+      '',
+    );
     const uploadDir = path.join(process.cwd(), 'uploads', cleanFolder);
     if (!fs.existsSync(uploadDir)) {
       fs.mkdirSync(uploadDir, { recursive: true });
@@ -56,7 +59,12 @@ export class UploadsController {
   ) {
     const cleanFolder = (folder || '').replace(/[^a-zA-Z0-9_-]/g, '');
     const cleanFilename = path.basename(filename || '');
-    const filePath = path.join(process.cwd(), 'uploads', cleanFolder, cleanFilename);
+    const filePath = path.join(
+      process.cwd(),
+      'uploads',
+      cleanFolder,
+      cleanFilename,
+    );
 
     if (!fs.existsSync(filePath)) {
       return res.status(404).send('File không tồn tại');

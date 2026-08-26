@@ -38,7 +38,6 @@ export class StyleOperationStep {
   @Column({ type: 'text', nullable: true })
   note: string | null;
 
-
   @Column({ type: 'int', name: 'order_index' })
   orderIndex: number;
 
@@ -51,4 +50,3 @@ export class StyleOperationStep {
   @Column({ type: 'jsonb', nullable: true, name: 'group_items' })
   groupItems: any;
 }
-
