@@ -66,28 +66,96 @@ export class StyleOperationStepsService {
     // Xoá toàn bộ công đoạn cũ của style
     await this.stepRepo.delete({ styleId });
 
-    // Tạo mới công đoạn theo thứ tự
-    const newSteps = (steps || []).map((step, index) =>
-      this.stepRepo.create({
-        id: step.id && !step.id.startsWith('copy-') && !step.id.startsWith('new-') ? step.id : undefined,
+    if (!steps || steps.length === 0) return [];
+
+    const isUuid = (val?: string | null): boolean => {
+      if (!val) return false;
+      return /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(val);
+    };
+
+    const tempIdToRealIdMap = new Map<string, string>();
+    const savedStepsMap = new Map<number, StyleOperationStep>();
+
+    const parentIndices: number[] = [];
+    const childIndices: number[] = [];
+
+    steps.forEach((step, index) => {
+      if (step.isGroup || !step.parentStepId) {
+        parentIndices.push(index);
+      } else {
+        childIndices.push(index);
+      }
+    });
+
+    // Pass 1: Lưu các nhóm cha / công đoạn độc lập trước để sinh real UUID
+    for (const index of parentIndices) {
+      const step = steps[index];
+      const rawId = step.id;
+      const validId = isUuid(rawId) ? rawId : undefined;
+
+      const entity = this.stepRepo.create({
+        ...(validId ? { id: validId } : {}),
         styleId,
-        parentStepId: step.parentStepId ?? null,
-        stageId: step.stageId ?? null,
-        stepName: step.stepName,
+        parentStepId: null,
+        stageId: isUuid(step.stageId) ? step.stageId : null,
+        stepName: step.stepName || '',
         description: step.description ?? null,
-        timePerPiece: step.timePerPiece ?? 0,
-        ssv: step.ssv ?? 0,
-        targetTotal: step.targetTotal ?? 0,
+        timePerPiece: Number(step.timePerPiece) || 0,
+        ssv: Number(step.ssv) || 0,
+        targetTotal: Number(step.targetTotal) || 0,
         note: step.note ?? null,
         orderIndex: step.orderIndex ?? index,
-        isGroup: step.isGroup ?? false,
-        groupId: step.groupId ?? null,
+        isGroup: Boolean(step.isGroup),
+        groupId: isUuid(step.groupId) ? step.groupId : null,
         groupItems: step.groupItems ?? null,
-      }),
-    );
+      });
 
-    if (newSteps.length === 0) return [];
-    return this.stepRepo.save(newSteps);
+      const saved = await this.stepRepo.save(entity);
+      savedStepsMap.set(index, saved);
+
+      if (rawId) {
+        tempIdToRealIdMap.set(rawId, saved.id);
+      }
+      tempIdToRealIdMap.set(saved.id, saved.id);
+    }
+
+    // Pass 2: Lưu các công đoạn con, gán parentStepId theo real UUID từ Map
+    for (const index of childIndices) {
+      const step = steps[index];
+      const rawId = step.id;
+      const validId = isUuid(rawId) ? rawId : undefined;
+
+      const parentStepId = step.parentStepId
+        ? tempIdToRealIdMap.get(step.parentStepId) ?? null
+        : null;
+
+      const entity = this.stepRepo.create({
+        ...(validId ? { id: validId } : {}),
+        styleId,
+        parentStepId,
+        stageId: isUuid(step.stageId) ? step.stageId : null,
+        stepName: step.stepName || '',
+        description: step.description ?? null,
+        timePerPiece: Number(step.timePerPiece) || 0,
+        ssv: Number(step.ssv) || 0,
+        targetTotal: Number(step.targetTotal) || 0,
+        note: step.note ?? null,
+        orderIndex: step.orderIndex ?? index,
+        isGroup: Boolean(step.isGroup),
+        groupId: isUuid(step.groupId) ? step.groupId : null,
+        groupItems: step.groupItems ?? null,
+      });
+
+      const saved = await this.stepRepo.save(entity);
+      savedStepsMap.set(index, saved);
+
+      if (rawId) {
+        tempIdToRealIdMap.set(rawId, saved.id);
+      }
+      tempIdToRealIdMap.set(saved.id, saved.id);
+    }
+
+    return steps.map((_, index) => savedStepsMap.get(index)!);
   }
 
   async update(

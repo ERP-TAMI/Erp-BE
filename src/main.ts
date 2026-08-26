@@ -6,9 +6,13 @@ import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { Logger } from 'nestjs-pino';
 
+import * as express from 'express';
+import * as path from 'path';
+
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   app.use(cookieParser());
+  app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
   app.enableCors({
     origin: true,
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',

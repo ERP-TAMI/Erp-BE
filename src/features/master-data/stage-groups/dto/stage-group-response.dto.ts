@@ -91,7 +91,7 @@ export class StageGroupResponseDto extends StageGroupSummaryResponseDto {
         .sort(
           (left, right) =>
             left.orderIndex - right.orderIndex ||
-            left.id.localeCompare(right.id),
+            (left.id || '').localeCompare(right.id || ''),
         )
         .map(StageGroupItemResponseDto.fromEntity),
     };

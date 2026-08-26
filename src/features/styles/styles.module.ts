@@ -6,11 +6,13 @@ import { StylesController } from './styles.controller';
 import { StyleOperationStepsService } from './style-operation-steps.service';
 import { StyleOperationStepsController } from './style-operation-steps.controller';
 
+import { StyleOperationStepsExportService } from './style-operation-steps-export.service';
+
 @Module({
   imports: [TypeOrmModule.forFeature(STYLES_ENTITIES)],
   controllers: [StylesController, StyleOperationStepsController],
-  providers: [StylesService, StyleOperationStepsService],
-  exports: [StylesService, StyleOperationStepsService],
+  providers: [StylesService, StyleOperationStepsService, StyleOperationStepsExportService],
+  exports: [StylesService, StyleOperationStepsService, StyleOperationStepsExportService],
 })
 export class StylesModule {}
 

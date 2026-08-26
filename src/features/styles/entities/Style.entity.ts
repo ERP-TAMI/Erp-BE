@@ -35,7 +35,7 @@ export class Style {
   })
   status: StyleStatus;
 
-  @Column({ type: 'uuid', nullable: true, name: 'base_image_version_id' })
+  @Column({ type: 'text', nullable: true, name: 'base_image_version_id' })
   baseImageVersionId: string | null;
 
   @Column({ type: 'int', default: 30, name: 'as3b_cm_base_days' })

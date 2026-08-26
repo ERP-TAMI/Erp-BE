@@ -22,6 +22,8 @@ import { AuditModule } from './features/audit/audit.module';
 import { PlatformModule } from './features/platform/platform.module';
 import { AppLoggerModule } from './common/logger/logger.module';
 
+import { UploadsModule } from './features/uploads/uploads.module';
+
 const imports = [
   ConfigModule.forRoot({ isGlobal: true }),
   AppLoggerModule,
@@ -35,6 +37,7 @@ const imports = [
   UnitsModule,
   DocumentsModule,
   StylesModule,
+  UploadsModule,
   DraftBomsModule,
   PurchaseOrdersModule,
   BomsModule,

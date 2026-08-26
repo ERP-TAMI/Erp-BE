@@ -10,9 +10,13 @@ import {
   ParseUUIDPipe,
   HttpCode,
   HttpStatus,
+  Res,
 } from '@nestjs/common';
+import { Response } from 'express';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { StyleOperationStepsService } from './style-operation-steps.service';
+import { StyleOperationStepsExportService } from './style-operation-steps-export.service';
+import { StylesService } from './styles.service';
 import {
   CreateStyleOperationStepDto,
   UpdateStyleOperationStepDto,
@@ -31,7 +35,51 @@ import { StyleOperationStep } from './entities/StyleOperationStep.entity';
   'api/v1/styles/:styleId/as3b',
 ])
 export class StyleOperationStepsController {
-  constructor(private readonly service: StyleOperationStepsService) {}
+  constructor(
+    private readonly service: StyleOperationStepsService,
+    private readonly exportService: StyleOperationStepsExportService,
+    private readonly stylesService: StylesService,
+  ) {}
+
+  @Get(['export', 'export-template'])
+  @ApiOperation({ summary: 'Xuất file Excel quy trình công đoạn theo mẫu Template' })
+  @ApiResponse({ status: 200, description: 'File Excel (.xlsx) chứa dữ liệu quy trình công đoạn' })
+  async exportExcel(
+    @Param('styleId', ParseUUIDPipe) styleId: string,
+    @Res() res: Response,
+  ): Promise<void> {
+    try {
+      const style = await this.stylesService.findOne(styleId);
+      const steps = await this.service.findByStyleId(styleId);
+
+      const buffer = await this.exportService.buildExcelBuffer({
+        styleCode: style.styleCode,
+        styleName: style.styleName,
+        category: style.category,
+        material: null,
+        imageUrl: style.baseImageVersionId,
+        as3bCmBaseDays: style.as3bCmBaseDays ?? 30,
+        steps,
+      });
+
+      const filename = `BangCongDoan_Style_${style.styleCode || styleId}.xlsx`;
+      res.setHeader(
+        'Content-Type',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      );
+      res.setHeader(
+        'Content-Disposition',
+        `attachment; filename="${encodeURIComponent(filename)}"; filename*=UTF-8''${encodeURIComponent(filename)}`,
+      );
+      res.send(buffer);
+    } catch (err: any) {
+      console.error('Lỗi xuất Excel quy trình công đoạn:', err);
+      res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({
+        statusCode: 500,
+        message: `Xuất Excel thất bại: ${err?.message || err}`,
+      });
+    }
+  }
 
   @Get()
   @ApiOperation({ summary: 'Lấy danh sách công đoạn quy trình của mẫu Fit' })
