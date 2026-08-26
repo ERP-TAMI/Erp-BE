@@ -164,6 +164,20 @@ export class SizeChartsService {
     }
   }
 
+  async remove(id: string): Promise<void> {
+    const chart = await this.getExistingChart(this.charts, id);
+    try {
+      await this.charts.remove(chart);
+    } catch (error) {
+      if (this.getDatabaseErrorValue(error, 'code') === '23503') {
+        throw new ConflictException(
+          'Size chart cannot be deleted because it is referenced by business data',
+        );
+      }
+      throw error;
+    }
+  }
+
   private getRepositories(manager: EntityManager): SizeChartRepositories {
     return {
       charts: manager.getRepository(SizeChart),

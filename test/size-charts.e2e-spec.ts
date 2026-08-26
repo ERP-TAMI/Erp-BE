@@ -31,6 +31,7 @@ describe('Size Charts API (e2e)', () => {
     create: jest.fn(),
     update: jest.fn(),
     updateStatus: jest.fn(),
+    remove: jest.fn(),
   };
   let app: INestApplication;
 
@@ -233,9 +234,44 @@ describe('Size Charts API (e2e)', () => {
       .expect(404);
   });
 
-  it('does not expose a hard-delete endpoint', async () => {
+  it('deletes an existing chart with no response body', async () => {
+    sizeChartsService.remove.mockResolvedValue(undefined);
+
+    await request(app.getHttpServer())
+      .delete(`/masters/size-charts/${id}`)
+      .expect(204)
+      .expect('');
+
+    expect(sizeChartsService.remove).toHaveBeenCalledWith(id);
+  });
+
+  it('rejects an invalid chart id before delete reaches the service', async () => {
+    await request(app.getHttpServer())
+      .delete('/masters/size-charts/not-a-uuid')
+      .expect(400);
+
+    expect(sizeChartsService.remove).not.toHaveBeenCalled();
+  });
+
+  it('returns not found when deleting an unknown chart', async () => {
+    sizeChartsService.remove.mockRejectedValue(
+      new NotFoundException('Size chart not found'),
+    );
+
     await request(app.getHttpServer())
       .delete(`/masters/size-charts/${id}`)
       .expect(404);
+  });
+
+  it('returns conflict when business data references the chart', async () => {
+    sizeChartsService.remove.mockRejectedValue(
+      new ConflictException(
+        'Size chart cannot be deleted because it is referenced by business data',
+      ),
+    );
+
+    await request(app.getHttpServer())
+      .delete(`/masters/size-charts/${id}`)
+      .expect(409);
   });
 });

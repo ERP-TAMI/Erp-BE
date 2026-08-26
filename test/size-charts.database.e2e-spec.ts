@@ -176,4 +176,54 @@ describe('Size Charts API with PostgreSQL (e2e)', () => {
       ),
     ).toBe(false);
   });
+
+  it('deletes an unreferenced chart and cascades its size items', async () => {
+    const created = await request(app.getHttpServer())
+      .post('/masters/size-charts')
+      .send({ name: `${runKey} Delete`, sizes: ['S', 'M'] })
+      .expect(201);
+
+    await expect(items.countBy({ sizeChartId: created.body.id })).resolves.toBe(
+      2,
+    );
+
+    await request(app.getHttpServer())
+      .delete(`/masters/size-charts/${created.body.id}`)
+      .expect(204)
+      .expect('');
+
+    await expect(charts.findOneBy({ id: created.body.id })).resolves.toBeNull();
+    await expect(items.countBy({ sizeChartId: created.body.id })).resolves.toBe(
+      0,
+    );
+  });
+
+  it('rejects delete when another chart revision references the chart', async () => {
+    const created = await request(app.getHttpServer())
+      .post('/masters/size-charts')
+      .send({ name: `${runKey} Referenced`, sizes: ['S'] })
+      .expect(201);
+    const child = await charts.save(
+      charts.create({
+        name: `${runKey} Revision child`,
+        status: RecordStatus.ACTIVE,
+        revisionNo: 2,
+        supersedesId: created.body.id,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      }),
+    );
+
+    try {
+      await request(app.getHttpServer())
+        .delete(`/masters/size-charts/${created.body.id}`)
+        .expect(409);
+
+      await expect(
+        charts.findOneBy({ id: created.body.id }),
+      ).resolves.toBeTruthy();
+    } finally {
+      await charts.delete(child.id);
+    }
+  });
 });

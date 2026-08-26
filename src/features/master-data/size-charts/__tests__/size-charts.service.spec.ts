@@ -58,6 +58,7 @@ describe('SizeChartsService', () => {
       createQueryBuilder: jest.fn().mockReturnValue(queryBuilder),
       create: jest.fn(),
       save: jest.fn(),
+      remove: jest.fn(),
     } as unknown as jest.Mocked<Repository<SizeChart>>;
     items = {
       find: jest.fn(),
@@ -258,5 +259,31 @@ describe('SizeChartsService', () => {
     charts.findOneBy.mockResolvedValue(null);
 
     await expect(service.findOne(chart.id)).rejects.toThrow(NotFoundException);
+  });
+
+  it('deletes an existing chart and lets database cascades remove its items', async () => {
+    charts.remove.mockResolvedValue({ ...chart });
+
+    await expect(service.remove(chart.id)).resolves.toBeUndefined();
+
+    expect(charts.findOneBy).toHaveBeenCalledWith({ id: chart.id });
+    expect(charts.remove).toHaveBeenCalledWith(
+      expect.objectContaining({ id: chart.id }),
+    );
+    expect(items.delete).not.toHaveBeenCalled();
+  });
+
+  it('returns not found instead of issuing delete for an unknown chart', async () => {
+    charts.findOneBy.mockResolvedValue(null);
+
+    await expect(service.remove(chart.id)).rejects.toThrow(NotFoundException);
+
+    expect(charts.remove).not.toHaveBeenCalled();
+  });
+
+  it('maps a nested foreign-key violation during delete to conflict', async () => {
+    charts.remove.mockRejectedValue({ driverError: { code: '23503' } });
+
+    await expect(service.remove(chart.id)).rejects.toThrow(ConflictException);
   });
 });

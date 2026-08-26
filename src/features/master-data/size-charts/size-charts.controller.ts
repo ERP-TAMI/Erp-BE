@@ -1,7 +1,10 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
+  HttpCode,
+  HttpStatus,
   Param,
   ParseUUIDPipe,
   Patch,
@@ -14,6 +17,7 @@ import {
   ApiConflictResponse,
   ApiCreatedResponse,
   ApiNotFoundResponse,
+  ApiNoContentResponse,
   ApiOkResponse,
   ApiTags,
 } from '@nestjs/swagger';
@@ -75,5 +79,18 @@ export class SizeChartsController {
     @Body() dto: UpdateSizeChartStatusDto,
   ): Promise<SizeChartResponseDto> {
     return this.sizeChartsService.updateStatus(id, dto);
+  }
+
+  @Delete(':id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiNoContentResponse({ description: 'Size chart deleted' })
+  @ApiConflictResponse({
+    description: 'Business data references this size chart',
+  })
+  @ApiNotFoundResponse({ description: 'Size chart was not found' })
+  remove(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+  ): Promise<void> {
+    return this.sizeChartsService.remove(id);
   }
 }
