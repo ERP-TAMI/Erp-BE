@@ -171,6 +171,27 @@ describe('StageGroupsService', () => {
     expect(items.find).not.toHaveBeenCalled();
   });
 
+  it('normalizes and updates the stage group code', async () => {
+    groups.findOneBy.mockResolvedValue({ ...group });
+
+    await expect(
+      service.update(groupId, { groupCode: ' nc-may-2 ' }),
+    ).resolves.toMatchObject({ groupCode: 'NC-MAY-2' });
+  });
+
+  it('rejects a duplicate stage group code when updating', async () => {
+    groups.findOneBy.mockResolvedValue({ ...group });
+    (groupQueryBuilder.getOne as jest.Mock).mockResolvedValue({
+      ...group,
+      id: 'another-group',
+    });
+
+    await expect(
+      service.update(groupId, { groupCode: ' nc-cat ' }),
+    ).rejects.toThrow(ConflictException);
+    expect(groups.save).not.toHaveBeenCalled();
+  });
+
   it('keeps retained IDs, inserts new children, and removes omitted children', async () => {
     const removed: StageGroupItem = {
       ...item,

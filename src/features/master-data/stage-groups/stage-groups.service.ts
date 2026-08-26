@@ -135,28 +135,46 @@ export class StageGroupsService {
     id: string,
     dto: UpdateStageGroupDto,
   ): Promise<StageGroupResponseDto> {
-    return this.dataSource.transaction(async (manager) => {
-      const repositories = this.getRepositories(manager);
-      const group = await this.getExistingGroup(repositories.groups, id);
-      if (dto.groupName !== undefined) group.groupName = dto.groupName.trim();
-      if (dto.description !== undefined) {
-        group.description = this.normalizeDescription(dto.description);
-      }
-      const savedGroup = await repositories.groups.save(group);
+    try {
+      return await this.dataSource.transaction(async (manager) => {
+        const repositories = this.getRepositories(manager);
+        const group = await this.getExistingGroup(repositories.groups, id);
+        if (dto.groupCode !== undefined) {
+          const groupCode = this.normalizeCode(dto.groupCode);
+          if (groupCode !== this.normalizeCode(group.groupCode)) {
+            await this.ensureCodeUnique(
+              repositories.groups,
+              groupCode,
+              group.id,
+            );
+            group.groupCode = groupCode;
+          }
+        }
+        if (dto.groupName !== undefined) group.groupName = dto.groupName.trim();
+        if (dto.description !== undefined) {
+          group.description = this.normalizeDescription(dto.description);
+        }
+        const savedGroup = await repositories.groups.save(group);
 
-      if (dto.items === undefined) {
-        return this.loadResponse(repositories.items, savedGroup);
-      }
+        if (dto.items === undefined) {
+          return this.loadResponse(repositories.items, savedGroup);
+        }
 
-      this.ensureOrderIndices(dto.items);
-      this.ensureUniqueItemIds(dto.items);
-      const savedItems = await this.reconcileItems(
-        repositories.items,
-        id,
-        dto.items,
-      );
-      return StageGroupResponseDto.fromEntities(savedGroup, savedItems);
-    });
+        this.ensureOrderIndices(dto.items);
+        this.ensureUniqueItemIds(dto.items);
+        const savedItems = await this.reconcileItems(
+          repositories.items,
+          id,
+          dto.items,
+        );
+        return StageGroupResponseDto.fromEntities(savedGroup, savedItems);
+      });
+    } catch (error) {
+      if (this.hasDatabaseCode(error, '23505')) {
+        throw new ConflictException('Stage group code already exists');
+      }
+      throw error;
+    }
   }
 
   async updateStatus(
@@ -321,12 +339,13 @@ export class StageGroupsService {
   private async ensureCodeUnique(
     repository: Repository<StageGroup>,
     groupCode: string,
+    excludedGroupId?: string,
   ): Promise<void> {
     const duplicate = await repository
       .createQueryBuilder('stageGroup')
       .where('UPPER(BTRIM(stageGroup.groupCode)) = :groupCode', { groupCode })
       .getOne();
-    if (duplicate) {
+    if (duplicate && duplicate.id !== excludedGroupId) {
       throw new ConflictException('Stage group code already exists');
     }
   }

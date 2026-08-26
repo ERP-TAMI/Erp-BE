@@ -12,10 +12,19 @@ import {
 import {
   isProvided,
   MATERIAL_YIELD_PATTERN,
+  normalizeCode,
   trimText,
 } from './material-dto.transforms';
 
 export class UpdateMaterialDto {
+  @ApiPropertyOptional({ example: 'FAB-001', maxLength: 50 })
+  @Transform(normalizeCode)
+  @ValidateIf(isProvided)
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(50)
+  materialCode?: string;
+
   @ApiPropertyOptional({ example: 'Main fabric', maxLength: 255 })
   @Transform(trimText)
   @ValidateIf(isProvided)

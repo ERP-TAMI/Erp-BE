@@ -157,10 +157,25 @@ describe('Materials API (e2e)', () => {
     },
   );
 
-  it('keeps the material code immutable on update', async () => {
+  it('normalizes and updates the material code through the HTTP API', async () => {
+    const updated = { ...material, materialCode: 'FAB-002' };
+    materialsService.update.mockResolvedValue(updated);
+
     await request(app.getHttpServer())
       .patch(`/masters/materials/${id}`)
-      .send({ materialCode: 'FAB-002' })
+      .send({ materialCode: ' fab-002 ' })
+      .expect(200)
+      .expect(updated);
+
+    expect(materialsService.update).toHaveBeenCalledWith(id, {
+      materialCode: 'FAB-002',
+    });
+  });
+
+  it('rejects an empty material code on update', async () => {
+    await request(app.getHttpServer())
+      .patch(`/masters/materials/${id}`)
+      .send({ materialCode: '   ' })
       .expect(400);
 
     expect(materialsService.update).not.toHaveBeenCalled();

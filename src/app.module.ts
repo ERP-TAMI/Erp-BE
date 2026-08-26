@@ -11,6 +11,7 @@ import { StagesModule } from './features/master-data/stages/stages.module';
 import { StageGroupsModule } from './features/master-data/stage-groups/stage-groups.module';
 import { MaterialsModule } from './features/master-data/materials/materials.module';
 import { UnitsModule } from './features/master-data/units/units.module';
+import { WorkshopsModule } from './features/master-data/workshops/workshops.module';
 import { DocumentsModule } from './features/documents/documents.module';
 import { StylesModule } from './features/styles/styles.module';
 import { DraftBomsModule } from './features/draft-boms/draft-boms.module';
@@ -35,6 +36,7 @@ const imports = [
   StageGroupsModule,
   MaterialsModule,
   UnitsModule,
+  WorkshopsModule,
   DocumentsModule,
   StylesModule,
   UploadsModule,
