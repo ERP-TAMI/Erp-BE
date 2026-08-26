@@ -1,5 +1,11 @@
 import { Entity, Column, PrimaryGeneratedColumn } from 'typeorm';
 
+const numericColumnTransformer = {
+  to: (val: number) => val,
+  from: (val: string | number | null) =>
+    val !== null && val !== undefined ? Number(val) : 0,
+};
+
 @Entity('style_operation_steps')
 export class StyleOperationStep {
   @PrimaryGeneratedColumn('uuid')
@@ -26,10 +32,17 @@ export class StyleOperationStep {
     scale: 3,
     default: 0,
     name: 'time_per_piece',
+    transformer: numericColumnTransformer,
   })
   timePerPiece: number;
 
-  @Column({ type: 'numeric', precision: 12, scale: 3, default: 0 })
+  @Column({
+    type: 'numeric',
+    precision: 12,
+    scale: 3,
+    default: 0,
+    transformer: numericColumnTransformer,
+  })
   ssv: number;
 
   @Column({ type: 'int', default: 0, name: 'target_total' })
@@ -48,5 +61,5 @@ export class StyleOperationStep {
   groupId: string | null;
 
   @Column({ type: 'jsonb', nullable: true, name: 'group_items' })
-  groupItems: any;
+  groupItems: Record<string, unknown>[] | null;
 }

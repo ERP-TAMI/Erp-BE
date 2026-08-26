@@ -122,7 +122,7 @@ export class StyleOperationStepsController {
   @ApiResponse({ status: 404, description: 'Không tìm thấy mẫu Fit' })
   async replaceAll(
     @Param('styleId', ParseUUIDPipe) styleId: string,
-    @Body() body: BulkSaveStyleOperationStepsDto | any,
+    @Body() body: BulkSaveStyleOperationStepsDto,
   ): Promise<StyleOperationStep[]> {
     const steps = Array.isArray(body) ? body : body?.steps || [];
     const as3bCmBaseDays = Array.isArray(body)

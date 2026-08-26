@@ -12,6 +12,7 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import type { Response } from 'express';
 import * as fs from 'fs';
+import * as fsPromises from 'fs/promises';
 import * as path from 'path';
 import { randomUUID } from 'crypto';
 
@@ -20,7 +21,7 @@ export class UploadsController {
   @Post()
   @UseInterceptors(FileInterceptor('file'))
   async uploadFile(
-    @UploadedFile() file: any,
+    @UploadedFile() file: Express.Multer.File,
     @Query('folder') folder: string = 'style-images',
   ) {
     if (!file) {
@@ -33,14 +34,14 @@ export class UploadsController {
     );
     const uploadDir = path.join(process.cwd(), 'uploads', cleanFolder);
     if (!fs.existsSync(uploadDir)) {
-      fs.mkdirSync(uploadDir, { recursive: true });
+      await fsPromises.mkdir(uploadDir, { recursive: true });
     }
 
     const ext = path.extname(file.originalname) || '.png';
     const filename = `${randomUUID()}${ext}`;
     const filePath = path.join(uploadDir, filename);
 
-    fs.writeFileSync(filePath, file.buffer);
+    await fsPromises.writeFile(filePath, file.buffer);
 
     const fileUrl = `/uploads/${cleanFolder}/${filename}`;
     return {
