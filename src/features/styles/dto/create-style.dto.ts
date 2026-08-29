@@ -3,7 +3,6 @@ import {
   IsNotEmpty,
   IsOptional,
   IsEnum,
-  IsUUID,
   MaxLength,
 } from 'class-validator';
 import { StyleStatus } from '../../../common/enums/database.enums';
@@ -28,8 +27,11 @@ export class CreateStyleDto {
   @MaxLength(100, { message: 'Danh mục không được vượt quá 100 ký tự' })
   category?: string;
 
-  @IsUUID()
+  @IsString()
   @IsOptional()
+  @MaxLength(500, {
+    message: 'baseImageVersionId không được vượt quá 500 ký tự',
+  })
   baseImageVersionId?: string;
 
   @IsEnum(StyleStatus)
