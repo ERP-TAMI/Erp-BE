@@ -98,9 +98,7 @@ describe('Style Production Docs API (e2e)', () => {
   it('DELETE /styles/:styleId/production-docs/attachments/:documentId should unlink attachment without deleting original file', async () => {
     const docFileId = '323e4567-e89b-12d3-a456-426614174000';
     await request(app.getHttpServer())
-      .delete(
-        `/styles/${mockStyleId}/production-docs/attachments/${docFileId}`,
-      )
+      .delete(`/styles/${mockStyleId}/production-docs/attachments/${docFileId}`)
       .expect(204);
   });
 });
