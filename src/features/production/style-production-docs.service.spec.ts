@@ -166,7 +166,11 @@ describe('StyleProductionDocsService', () => {
       prodDocRepoMock.findOne.mockResolvedValueOnce(null);
       const sizeData = [{ imageUrl: '/uploads/img-1.png' }];
       const sizeRows = [
-        { sizeLabel: 'M', measurementName: 'Chest', imageUrl: '/uploads/img-2.png' },
+        {
+          sizeLabel: 'M',
+          measurementName: 'Chest',
+          imageUrl: '/uploads/img-2.png',
+        },
       ];
 
       await service.createWithAutoFill('style-uuid-1', {

@@ -148,14 +148,17 @@ export class StyleProductionDocsService {
       imageGroups && imageGroups.length > 0
         ? imageGroups
         : fallbackImageUrls?.length
-            ? Array.from({ length: Math.ceil(fallbackImageUrls.length / 2) }, (_, index) => ({
-              kind: 'image' as const,
-              heading: null,
-              content: null,
-              headingColor: 'red' as const,
-              imageUrls: fallbackImageUrls.slice(index * 2, index * 2 + 2),
-              orderIndex: index,
-            }))
+          ? Array.from(
+              { length: Math.ceil(fallbackImageUrls.length / 2) },
+              (_, index) => ({
+                kind: 'image' as const,
+                heading: null,
+                content: null,
+                headingColor: 'red' as const,
+                imageUrls: fallbackImageUrls.slice(index * 2, index * 2 + 2),
+                orderIndex: index,
+              }),
+            )
           : [];
 
     return groups
@@ -163,11 +166,16 @@ export class StyleProductionDocsService {
         kind: group.kind === 'text' ? ('text' as const) : ('image' as const),
         heading: group.heading?.trim() || null,
         content: group.kind === 'text' ? group.content?.trim() || null : null,
-        headingColor: group.headingColor === 'black' ? ('black' as const) : ('red' as const),
+        headingColor:
+          group.headingColor === 'black'
+            ? ('black' as const)
+            : ('red' as const),
         imageUrls: (group.imageUrls ?? []).filter(Boolean).slice(0, 2),
         orderIndex: group.orderIndex ?? index,
       }))
-      .filter((group) => group.heading || group.content || group.imageUrls.length > 0);
+      .filter(
+        (group) => group.heading || group.content || group.imageUrls.length > 0,
+      );
   }
 
   async findByStyleId(
@@ -212,13 +220,16 @@ export class StyleProductionDocsService {
 
     const section1ImageUrl =
       dto.section1ImageUrl?.trim() || style.baseImageVersionId || null;
-    const section1Description = dto.section1Description?.trim() || style.description || null;
+    const section1Description =
+      dto.section1Description?.trim() || style.description || null;
 
     const materialCodes = await this.getActiveBomMaterialCodes(style.styleCode);
     const section2Accessories =
-      dto.section2Accessories?.trim() || (materialCodes.length > 0 ? materialCodes.join('\n') : null);
+      dto.section2Accessories?.trim() ||
+      (materialCodes.length > 0 ? materialCodes.join('\n') : null);
     const section3Notes = dto.section3Notes?.trim() || null;
-    const section4CustomerFeedback = dto.section4CustomerFeedback?.trim() || null;
+    const section4CustomerFeedback =
+      dto.section4CustomerFeedback?.trim() || null;
 
     const doc = this.prodDocRepo.create({
       styleId,
@@ -836,7 +847,11 @@ export class StyleProductionDocsService {
         }
     };
 
-    const clearRangeBottomBorder = (rowIndex: number, left: number, right: number) => {
+    const clearRangeBottomBorder = (
+      rowIndex: number,
+      left: number,
+      right: number,
+    ) => {
       for (let c = left; c <= right; c++) {
         const cell = ws.getCell(rowIndex, c);
         const border = { ...cell.border };
@@ -864,11 +879,21 @@ export class StyleProductionDocsService {
     r1.value = {
       richText: [
         {
-          font: { name: EXPORT_FONT_NAME, bold: true, size: 13, color: { argb: 'FFFFFFFF' } },
+          font: {
+            name: EXPORT_FONT_NAME,
+            bold: true,
+            size: 13,
+            color: { argb: 'FFFFFFFF' },
+          },
           text: 'CÔNG TY TNHH DỆT MAY THƯƠNG MẠI ',
         },
         {
-          font: { name: EXPORT_FONT_NAME, bold: true, size: 15, color: { argb: 'FFFF0000' } },
+          font: {
+            name: EXPORT_FONT_NAME,
+            bold: true,
+            size: 15,
+            color: { argb: 'FFFF0000' },
+          },
           text: 'TẤN   MINH',
         },
       ],
@@ -880,7 +905,12 @@ export class StyleProductionDocsService {
     const r2 = ws.getRow(2).getCell(1);
     applyStyle(r2, {
       fill: DARK_BG,
-      font: { name: EXPORT_FONT_NAME, bold: true, size: 10, color: { argb: 'FFFFFFFF' } },
+      font: {
+        name: EXPORT_FONT_NAME,
+        bold: true,
+        size: 10,
+        color: { argb: 'FFFFFFFF' },
+      },
       alignment: { horizontal: 'center', vertical: 'middle' },
     });
     r2.value = 'TAN MINH TEXTILE SEWING TRADING CO.,LTD';
@@ -1113,7 +1143,10 @@ export class StyleProductionDocsService {
         ws.addImage(imgId, {
           tl: {
             col: Math.max(0, (FULL_SIZE_FRAME_W_PX - scaledW) / 2) / 67.2,
-            row: startR - 1 + FULL_SIZE_IMAGE_TOP_PADDING_PX / FULL_SIZE_DEFAULT_ROW_PX,
+            row:
+              startR -
+              1 +
+              FULL_SIZE_IMAGE_TOP_PADDING_PX / FULL_SIZE_DEFAULT_ROW_PX,
           } as any,
           ext: { width: scaledW, height: scaledH },
         } as any);
@@ -1140,25 +1173,44 @@ export class StyleProductionDocsService {
     const IMAGE_TOP_PADDING_PX = 8;
     const DYNAMIC_IMAGE_TARGET_HEIGHT_PX = 150;
     const IMAGE_LAYOUT_COLUMN_WIDTHS = [5, 36, 12, 12, 12, 12, 12, 10];
-    const FRAME_W_PX = IMAGE_LAYOUT_COLUMN_WIDTHS.reduce((sum, width) => sum + width * 7, 0);
+    const FRAME_W_PX = IMAGE_LAYOUT_COLUMN_WIDTHS.reduce(
+      (sum, width) => sum + width * 7,
+      0,
+    );
     const getSlotWidthPx = (start: number, end: number) =>
-      IMAGE_LAYOUT_COLUMN_WIDTHS.slice(start, end).reduce((sum, width) => sum + width * 7, 0);
+      IMAGE_LAYOUT_COLUMN_WIDTHS.slice(start, end).reduce(
+        (sum, width) => sum + width * 7,
+        0,
+      );
     const allocateGroupBounds = (groups: { imageUrls: string[] }[]) => {
       if (groups.length === 1) return [{ start: 0, end: 8 }];
       const leftCount = groups[0].imageUrls.length;
       const rightCount = groups[1].imageUrls.length;
-      const splitCol = leftCount === rightCount ? 4 : leftCount > rightCount ? 6 : 2;
-      return [{ start: 0, end: splitCol }, { start: splitCol, end: 8 }];
+      const splitCol =
+        leftCount === rightCount ? 4 : leftCount > rightCount ? 6 : 2;
+      return [
+        { start: 0, end: splitCol },
+        { start: splitCol, end: 8 },
+      ];
     };
-    const splitGroupIntoImageSlots = (start: number, end: number, count: number) => {
+    const splitGroupIntoImageSlots = (
+      start: number,
+      end: number,
+      count: number,
+    ) => {
       if (count <= 1) return [{ start, end }];
       const middle = start + Math.floor((end - start) / 2);
-      return [{ start, end: middle }, { start: middle, end }];
+      return [
+        { start, end: middle },
+        { start: middle, end },
+      ];
     };
     const renderDynamicImageGroup = async (
-      imageGroups: ReturnType<StyleProductionDocsService['normalizeImageGroups']>,
+      imageGroups: ReturnType<
+        StyleProductionDocsService['normalizeImageGroups']
+      >,
     ) => {
-      for (let groupStart = 0; groupStart < imageGroups.length; ) {
+      for (let groupStart = 0; groupStart < imageGroups.length;) {
         const currentGroup = imageGroups[groupStart];
         if (currentGroup.kind === 'text') {
           mergeCellsWithoutStyle(row, 1, row, 8);
@@ -1171,7 +1223,8 @@ export class StyleProductionDocsService {
           setRangeBorder(row, 1, row, 8, { left: true, right: true }, 'medium');
           ws.getRow(row).height = 20;
           row++;
-          if (currentGroup.content) textBlock(currentGroup.content, 1, TABLE_FONT);
+          if (currentGroup.content)
+            textBlock(currentGroup.content, 1, TABLE_FONT);
           groupStart++;
           continue;
         }
@@ -1194,7 +1247,9 @@ export class StyleProductionDocsService {
                 ...TABLE_FONT,
                 bold: true,
                 underline: true,
-                color: { argb: group.headingColor === 'red' ? 'FFFF0000' : 'FF000000' },
+                color: {
+                  argb: group.headingColor === 'red' ? 'FFFF0000' : 'FF000000',
+                },
               },
               alignment: { horizontal: 'center', vertical: 'middle' },
             });
@@ -1213,7 +1268,9 @@ export class StyleProductionDocsService {
         }[] = [];
 
         for (let groupIndex = 0; groupIndex < groupPair.length; groupIndex++) {
-          const urls = groupPair[groupIndex].imageUrls.filter(Boolean).slice(0, 2);
+          const urls = groupPair[groupIndex].imageUrls
+            .filter(Boolean)
+            .slice(0, 2);
           const slots = splitGroupIntoImageSlots(
             groupBounds[groupIndex].start,
             groupBounds[groupIndex].end,
@@ -1226,12 +1283,21 @@ export class StyleProductionDocsService {
             const origW = dims.width ?? FRAME_W_PX;
             const origH = dims.height ?? 280;
             const slot = slots[imageIndex];
-            const maxWidth = Math.max(1, getSlotWidthPx(slot.start, slot.end) - 8);
-            const scale = Math.min(1, maxWidth / origW, DYNAMIC_IMAGE_TARGET_HEIGHT_PX / origH);
+            const maxWidth = Math.max(
+              1,
+              getSlotWidthPx(slot.start, slot.end) - 8,
+            );
+            const scale = Math.min(
+              1,
+              maxWidth / origW,
+              DYNAMIC_IMAGE_TARGET_HEIGHT_PX / origH,
+            );
             scaledImages.push({
               buffer: image.buffer,
               extension: image.extension,
-              tlCol: slot.start + Math.max(0, (maxWidth - Math.round(origW * scale)) / 2) / 67.2,
+              tlCol:
+                slot.start +
+                Math.max(0, (maxWidth - Math.round(origW * scale)) / 2) / 67.2,
               scaledW: Math.round(origW * scale),
               scaledH: Math.round(origH * scale),
             });
@@ -1239,19 +1305,38 @@ export class StyleProductionDocsService {
         }
 
         if (scaledImages.length === 0) continue;
-        const rowMaxHeight = Math.max(...scaledImages.map((image) => image.scaledH)) + IMAGE_TOP_PADDING_PX;
-        const rowsNeeded = Math.max(1, Math.ceil(rowMaxHeight / DEFAULT_ROW_PX));
+        const rowMaxHeight =
+          Math.max(...scaledImages.map((image) => image.scaledH)) +
+          IMAGE_TOP_PADDING_PX;
+        const rowsNeeded = Math.max(
+          1,
+          Math.ceil(rowMaxHeight / DEFAULT_ROW_PX),
+        );
         const rowHeight = rowMaxHeight / rowsNeeded;
-        for (let k = 0; k < rowsNeeded; k++) ws.getRow(row + k).height = rowHeight;
-        setRangeBorder(row, 1, row + rowsNeeded - 1, 8, {
-          right: true,
-          bottom: true,
-          left: true,
-        }, 'medium');
+        for (let k = 0; k < rowsNeeded; k++)
+          ws.getRow(row + k).height = rowHeight;
+        setRangeBorder(
+          row,
+          1,
+          row + rowsNeeded - 1,
+          8,
+          {
+            right: true,
+            bottom: true,
+            left: true,
+          },
+          'medium',
+        );
         for (const image of scaledImages) {
-          const imageId = wb.addImage({ buffer: image.buffer as any, extension: image.extension });
+          const imageId = wb.addImage({
+            buffer: image.buffer as any,
+            extension: image.extension,
+          });
           ws.addImage(imageId, {
-            tl: { col: image.tlCol, row: row - 1 + IMAGE_TOP_PADDING_PX / DEFAULT_ROW_PX } as any,
+            tl: {
+              col: image.tlCol,
+              row: row - 1 + IMAGE_TOP_PADDING_PX / DEFAULT_ROW_PX,
+            } as any,
             ext: { width: image.scaledW, height: image.scaledH },
           } as any);
         }
@@ -1292,7 +1377,11 @@ export class StyleProductionDocsService {
       worksheetRow.eachCell({ includeEmpty: true }, (cell: ExcelJS.Cell) => {
         cell.font = { ...(cell.font ?? {}), name: EXPORT_FONT_NAME };
         const value = cell.value as any;
-        if (value && typeof value === 'object' && Array.isArray(value.richText)) {
+        if (
+          value &&
+          typeof value === 'object' &&
+          Array.isArray(value.richText)
+        ) {
           cell.value = {
             ...value,
             richText: value.richText.map((run: any) => ({

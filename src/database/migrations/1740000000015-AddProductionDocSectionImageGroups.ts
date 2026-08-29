@@ -1,9 +1,7 @@
 import { MigrationInterface, QueryRunner } from 'typeorm';
 
-export class AddProductionDocSectionImageGroups1740000000013
-  implements MigrationInterface
-{
-  name = 'AddProductionDocSectionImageGroups1740000000013';
+export class AddProductionDocSectionImageGroups1740000000015 implements MigrationInterface {
+  name = 'AddProductionDocSectionImageGroups1740000000015';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.query(`

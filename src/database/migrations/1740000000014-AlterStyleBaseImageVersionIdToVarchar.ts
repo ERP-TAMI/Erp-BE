@@ -1,7 +1,7 @@
 import { MigrationInterface, QueryRunner } from 'typeorm';
 
-export class AlterStyleBaseImageVersionIdToVarchar1740000000012 implements MigrationInterface {
-  name = 'AlterStyleBaseImageVersionIdToVarchar1740000000012';
+export class AlterStyleBaseImageVersionIdToVarchar1740000000014 implements MigrationInterface {
+  name = 'AlterStyleBaseImageVersionIdToVarchar1740000000014';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.query(`

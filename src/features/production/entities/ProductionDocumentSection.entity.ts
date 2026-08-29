@@ -25,12 +25,14 @@ export class ProductionDocumentSection {
 
   // Local uploaded image URLs are persisted here as JSON.
   @Column({ type: 'jsonb', nullable: true, name: 'image_groups' })
-  imageGroups: {
-    kind?: 'text' | 'image';
-    heading: string | null;
-    content?: string | null;
-    headingColor: 'red' | 'black';
-    imageUrls: string[];
-    orderIndex?: number;
-  }[] | null;
+  imageGroups:
+    | {
+        kind?: 'text' | 'image';
+        heading: string | null;
+        content?: string | null;
+        headingColor: 'red' | 'black';
+        imageUrls: string[];
+        orderIndex?: number;
+      }[]
+    | null;
 }
