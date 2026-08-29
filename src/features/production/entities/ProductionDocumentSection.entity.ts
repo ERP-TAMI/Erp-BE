@@ -22,4 +22,15 @@ export class ProductionDocumentSection {
 
   @Column({ type: 'boolean', default: false, name: 'is_fixed' })
   isFixed: boolean;
+
+  // Local uploaded image URLs are persisted here as JSON.
+  @Column({ type: 'jsonb', nullable: true, name: 'image_groups' })
+  imageGroups: {
+    kind?: 'text' | 'image';
+    heading: string | null;
+    content?: string | null;
+    headingColor: 'red' | 'black';
+    imageUrls: string[];
+    orderIndex?: number;
+  }[] | null;
 }
