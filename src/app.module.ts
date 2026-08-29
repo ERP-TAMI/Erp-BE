@@ -8,8 +8,11 @@ import { AuthModule } from './features/auth/auth.module';
 import { MasterDataModule } from './features/master-data/master-data.module';
 import { MaterialGroupsModule } from './features/master-data/material-groups/material-groups.module';
 import { StagesModule } from './features/master-data/stages/stages.module';
+import { StageGroupsModule } from './features/master-data/stage-groups/stage-groups.module';
 import { MaterialsModule } from './features/master-data/materials/materials.module';
 import { UnitsModule } from './features/master-data/units/units.module';
+import { WorkshopsModule } from './features/master-data/workshops/workshops.module';
+import { SizeChartsModule } from './features/master-data/size-charts/size-charts.module';
 import { DocumentsModule } from './features/documents/documents.module';
 import { StylesModule } from './features/styles/styles.module';
 import { DraftBomsModule } from './features/draft-boms/draft-boms.module';
@@ -30,8 +33,11 @@ const imports = [
   MasterDataModule,
   MaterialGroupsModule,
   StagesModule,
+  StageGroupsModule,
   MaterialsModule,
   UnitsModule,
+  WorkshopsModule,
+  SizeChartsModule,
   DocumentsModule,
   StylesModule,
   DraftBomsModule,
