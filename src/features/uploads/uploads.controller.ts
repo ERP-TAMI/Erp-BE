@@ -10,6 +10,12 @@ import {
   Res,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiConsumes,
+  ApiResponse,
+} from '@nestjs/swagger';
 import type { Response } from 'express';
 import * as fs from 'fs';
 import * as fsPromises from 'fs/promises';
@@ -23,11 +29,16 @@ interface UploadedFileStruct {
   mimetype?: string;
   size: number;
   buffer: Buffer;
+  filename?: string;
 }
 
+@ApiTags('uploads')
 @Controller(['uploads', 'api/uploads', 'api/v1/uploads'])
 export class UploadsController {
   @Post()
+  @ApiOperation({ summary: 'Tải lên hình ảnh local' })
+  @ApiConsumes('multipart/form-data')
+  @ApiResponse({ status: 201, description: 'Tải lên thành công' })
   @UseInterceptors(FileInterceptor('file'))
   async uploadFile(
     @UploadedFile() file: UploadedFileStruct,
@@ -50,13 +61,19 @@ export class UploadsController {
     const filename = `${randomUUID()}${ext}`;
     const filePath = path.join(uploadDir, filename);
 
-    await fsPromises.writeFile(filePath, file.buffer);
+    if (file.buffer) {
+      await fsPromises.writeFile(filePath, file.buffer);
+    }
 
     const fileUrl = `/uploads/${cleanFolder}/${filename}`;
     return {
+      url: fileUrl,
       fileKey: `${cleanFolder}/${filename}`,
       fileUrl,
+      filename,
       fileName: file.originalname,
+      originalname: file.originalname,
+      size: file.size,
       sizeMb: parseFloat((file.size / (1024 * 1024)).toFixed(3)),
     };
   }

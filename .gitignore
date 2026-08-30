@@ -15,5 +15,6 @@ pnpm-debug.log*
 .idea
 .vscode
 
+# Uploaded Media
 uploads/*
 !uploads/.gitkeep

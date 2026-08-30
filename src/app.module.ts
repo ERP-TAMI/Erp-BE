@@ -12,6 +12,7 @@ import { StageGroupsModule } from './features/master-data/stage-groups/stage-gro
 import { MaterialsModule } from './features/master-data/materials/materials.module';
 import { UnitsModule } from './features/master-data/units/units.module';
 import { WorkshopsModule } from './features/master-data/workshops/workshops.module';
+import { SizeChartsModule } from './features/master-data/size-charts/size-charts.module';
 import { DocumentsModule } from './features/documents/documents.module';
 import { StylesModule } from './features/styles/styles.module';
 import { DraftBomsModule } from './features/draft-boms/draft-boms.module';
@@ -21,9 +22,8 @@ import { ProductionModule } from './features/production/production.module';
 import { NotificationsModule } from './features/notifications/notifications.module';
 import { AuditModule } from './features/audit/audit.module';
 import { PlatformModule } from './features/platform/platform.module';
-import { AppLoggerModule } from './common/logger/logger.module';
-
 import { UploadsModule } from './features/uploads/uploads.module';
+import { AppLoggerModule } from './common/logger/logger.module';
 
 const imports = [
   ConfigModule.forRoot({ isGlobal: true }),
@@ -37,6 +37,7 @@ const imports = [
   MaterialsModule,
   UnitsModule,
   WorkshopsModule,
+  SizeChartsModule,
   DocumentsModule,
   StylesModule,
   UploadsModule,
