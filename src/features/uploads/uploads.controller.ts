@@ -16,12 +16,21 @@ import * as fsPromises from 'fs/promises';
 import * as path from 'path';
 import { randomUUID } from 'crypto';
 
+interface UploadedFileStruct {
+  fieldname?: string;
+  originalname: string;
+  encoding?: string;
+  mimetype?: string;
+  size: number;
+  buffer: Buffer;
+}
+
 @Controller(['uploads', 'api/uploads', 'api/v1/uploads'])
 export class UploadsController {
   @Post()
   @UseInterceptors(FileInterceptor('file'))
   async uploadFile(
-    @UploadedFile() file: Express.Multer.File,
+    @UploadedFile() file: UploadedFileStruct,
     @Query('folder') folder: string = 'style-images',
   ) {
     if (!file) {
