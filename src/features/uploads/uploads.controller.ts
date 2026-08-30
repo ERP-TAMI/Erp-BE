@@ -41,7 +41,7 @@ export class UploadsController {
   @ApiResponse({ status: 201, description: 'Tải lên thành công' })
   @UseInterceptors(FileInterceptor('file'))
   async uploadFile(
-    @UploadedFile() file: UploadedFileStruct,
+    @UploadedFile() file?: UploadedFileStruct,
     @Query('folder') folder: string = 'style-images',
   ) {
     if (!file) {

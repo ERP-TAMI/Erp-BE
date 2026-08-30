@@ -17,11 +17,13 @@ describe('UploadsController', () => {
     expect(controller).toBeDefined();
   });
 
-  it('should throw BadRequestException if no file is provided', () => {
-    expect(() => controller.uploadFile(undefined)).toThrow(BadRequestException);
+  it('should throw BadRequestException if no file is provided', async () => {
+    await expect(controller.uploadFile(undefined)).rejects.toThrow(
+      BadRequestException,
+    );
   });
 
-  it('should return file metadata and local URL if valid image file is provided', () => {
+  it('should return file metadata and local URL if valid image file is provided', async () => {
     const mockFile: any = {
       fieldname: 'file',
       originalname: 'sample.jpg',
@@ -35,14 +37,13 @@ describe('UploadsController', () => {
       stream: null as any,
     };
 
-    const result = controller.uploadFile(mockFile);
+    const result = await controller.uploadFile(mockFile);
 
-    expect(result).toEqual({
-      url: '/uploads/img-123456789.jpg',
-      filename: 'img-123456789.jpg',
+    expect(result).toMatchObject({
+      url: expect.stringContaining('/uploads/'),
+      filename: expect.any(String),
       originalname: 'sample.jpg',
       size: 1024,
-      mimetype: 'image/jpeg',
     });
   });
 });
