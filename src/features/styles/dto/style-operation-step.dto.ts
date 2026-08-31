@@ -14,12 +14,12 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 export class CreateStyleOperationStepDto {
   @ApiPropertyOptional({ description: 'ID công đoạn cha (nếu thuộc nhóm)' })
   @IsOptional()
-  @IsUUID()
+  @IsString()
   parentStepId?: string;
 
   @ApiPropertyOptional({ description: 'ID stage master (nếu từ dữ liệu nền)' })
   @IsOptional()
-  @IsUUID()
+  @IsString()
   stageId?: string;
 
   @ApiProperty({ description: 'Tên công đoạn' })
@@ -73,7 +73,7 @@ export class CreateStyleOperationStepDto {
 
   @ApiPropertyOptional({ description: 'ID của nhóm master data (nếu có)' })
   @IsOptional()
-  @IsUUID()
+  @IsString()
   groupId?: string;
 
   @ApiPropertyOptional({
@@ -86,12 +86,12 @@ export class CreateStyleOperationStepDto {
 export class UpdateStyleOperationStepDto {
   @ApiPropertyOptional({ description: 'ID công đoạn cha (nếu thuộc nhóm)' })
   @IsOptional()
-  @IsUUID()
+  @IsString()
   parentStepId?: string;
 
   @ApiPropertyOptional({ description: 'ID stage master (nếu từ dữ liệu nền)' })
   @IsOptional()
-  @IsUUID()
+  @IsString()
   stageId?: string;
 
   @ApiPropertyOptional({ description: 'Tên công đoạn' })
@@ -140,7 +140,7 @@ export class UpdateStyleOperationStepDto {
 
   @ApiPropertyOptional({ description: 'ID của nhóm master data (nếu có)' })
   @IsOptional()
-  @IsUUID()
+  @IsString()
   groupId?: string;
 
   @ApiPropertyOptional({
@@ -150,11 +150,79 @@ export class UpdateStyleOperationStepDto {
   groupItems?: any;
 }
 
-export class StyleOperationStepItemDto extends CreateStyleOperationStepDto {
+export class StyleOperationStepItemDto {
   @ApiPropertyOptional({ description: 'ID dòng công đoạn (nếu đã có)' })
   @IsOptional()
   @IsString()
   id?: string;
+
+  @ApiPropertyOptional({ description: 'ID mẫu Fit (styleId)' })
+  @IsOptional()
+  @IsString()
+  styleId?: string;
+
+  @ApiPropertyOptional({ description: 'ID công đoạn cha (nếu thuộc nhóm)' })
+  @IsOptional()
+  @IsString()
+  parentStepId?: string;
+
+  @ApiPropertyOptional({ description: 'ID stage master (nếu từ dữ liệu nền)' })
+  @IsOptional()
+  @IsString()
+  stageId?: string;
+
+  @ApiPropertyOptional({ description: 'Tên công đoạn' })
+  @IsOptional()
+  @IsString()
+  stepName?: string;
+
+  @ApiPropertyOptional({ description: 'Mô tả công đoạn' })
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @ApiPropertyOptional({ description: 'Thời gian per piece (giây/SP)' })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  timePerPiece?: number;
+
+  @ApiPropertyOptional({ description: 'SSV (giây)' })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  ssv?: number;
+
+  @ApiPropertyOptional({ description: 'Tổng chỉ tiêu sản phẩm' })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  targetTotal?: number;
+
+  @ApiPropertyOptional({ description: 'Ghi chú công đoạn' })
+  @IsOptional()
+  @IsString()
+  note?: string;
+
+  @ApiPropertyOptional({ description: 'Thứ tự hiển thị' })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  orderIndex?: number;
+
+  @ApiPropertyOptional({ description: 'Có phải nhóm công đoạn hay không' })
+  @IsOptional()
+  @IsBoolean()
+  isGroup?: boolean;
+
+  @ApiPropertyOptional({ description: 'ID của nhóm master data (nếu có)' })
+  @IsOptional()
+  @IsString()
+  groupId?: string;
+
+  @ApiPropertyOptional({ description: 'Danh sách items công đoạn con trong nhóm' })
+  @IsOptional()
+  groupItems?: any;
 }
 
 export class BulkSaveStyleOperationStepsDto {
