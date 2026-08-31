@@ -51,6 +51,7 @@ describe('StyleOperationStepsService', () => {
       delete: jest.fn().mockResolvedValue({ affected: 1 }),
       remove: jest.fn().mockResolvedValue(undefined),
       update: jest.fn().mockResolvedValue({ affected: 1 }),
+      query: jest.fn().mockResolvedValue([]),
     };
 
     styleRepoMock = {
@@ -135,9 +136,10 @@ describe('StyleOperationStepsService', () => {
       expect(styleRepoMock.update).toHaveBeenCalledWith(mockStyleId, {
         as3bCmBaseDays: 45,
       });
-      expect(stepRepoMock.delete).toHaveBeenCalledWith({
-        styleId: mockStyleId,
-      });
+      expect(stepRepoMock.query).toHaveBeenCalledWith(
+        'DELETE FROM style_operation_steps WHERE style_id = $1',
+        [mockStyleId],
+      );
       expect(stepRepoMock.save).toHaveBeenCalled();
       expect(result).toHaveLength(2);
     });
@@ -161,9 +163,10 @@ describe('StyleOperationStepsService', () => {
 
       const result = await service.createMany(mockStyleId, steps as any);
 
-      expect(stepRepoMock.delete).toHaveBeenCalledWith({
-        styleId: mockStyleId,
-      });
+      expect(stepRepoMock.query).toHaveBeenCalledWith(
+        'DELETE FROM style_operation_steps WHERE style_id = $1',
+        [mockStyleId],
+      );
       expect(result).toHaveLength(2);
       expect(result[0].id).not.toBe('group-1787700099');
       expect(result[1].id).not.toBe('child-1787700099');

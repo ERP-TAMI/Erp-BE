@@ -4,7 +4,6 @@ import {
   IsNumber,
   IsBoolean,
   IsArray,
-  IsUUID,
   Min,
   ValidateNested,
 } from 'class-validator';
@@ -220,7 +219,9 @@ export class StyleOperationStepItemDto {
   @IsString()
   groupId?: string;
 
-  @ApiPropertyOptional({ description: 'Danh sách items công đoạn con trong nhóm' })
+  @ApiPropertyOptional({
+    description: 'Danh sách items công đoạn con trong nhóm',
+  })
   @IsOptional()
   groupItems?: any;
 }

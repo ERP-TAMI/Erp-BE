@@ -92,7 +92,9 @@ export class StyleOperationStepsService {
       }
 
       try {
-        const groupRows = await this.stepRepo.query('SELECT id FROM stage_groups');
+        const groupRows = await this.stepRepo.query(
+          'SELECT id FROM stage_groups',
+        );
         groupRows.forEach((r: { id: string }) => validGroupIds.add(r.id));
       } catch (err) {
         console.warn('Could not query stage_groups table:', err);
@@ -119,7 +121,7 @@ export class StyleOperationStepsService {
         if (!items || !Array.isArray(items)) return null;
         try {
           return JSON.parse(JSON.stringify(items));
-        } catch (e) {
+        } catch {
           return null;
         }
       };
@@ -221,7 +223,11 @@ export class StyleOperationStepsService {
 
       return steps.map((_, index) => savedStepsMap.get(index)!);
     } catch (err: any) {
-      console.error('Lỗi khi lưu quy trình công đoạn (createMany):', err?.message, err?.code);
+      console.error(
+        'Lỗi khi lưu quy trình công đoạn (createMany):',
+        err?.message,
+        err?.code,
+      );
       throw err;
     }
   }
