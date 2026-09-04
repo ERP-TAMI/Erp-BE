@@ -32,6 +32,35 @@ export class ProductionDocument {
   })
   status: ProductionDocStatus;
 
+  // Section 1: Mô tả hình dáng
+  @Column({ type: 'text', nullable: true, name: 'section1_description' })
+  section1Description: string | null;
+
+  @Column({ type: 'text', nullable: true, name: 'section1_image_url' })
+  section1ImageUrl: string | null;
+
+  // Section 2: Phụ liệu
+  @Column({ type: 'text', nullable: true, name: 'section2_accessories' })
+  section2Accessories: string | null;
+
+  // Section 3: Lưu ý trải cắt
+  @Column({ type: 'text', nullable: true, name: 'section3_notes' })
+  section3Notes: string | null;
+
+  // Section 4: Comment khách hàng
+  @Column({ type: 'text', nullable: true, name: 'section4_customer_feedback' })
+  section4CustomerFeedback: string | null;
+
+  // Size data (JSON)
+  @Column({ type: 'jsonb', nullable: true, name: 'size_data' })
+  sizeData: any;
+
+  @Column({ type: 'uuid', nullable: true, name: 'copied_from_style_id' })
+  copiedFromStyleId: string | null;
+
+  @Column({ type: 'timestamptz', nullable: true, name: 'copied_at' })
+  copiedAt: Date | null;
+
   @Column({ type: 'uuid', nullable: true, name: 'source_document_id' })
   sourceDocumentId: string | null;
 

@@ -47,12 +47,12 @@ export class StageGroupsService {
   ) {}
 
   async findAll(
-    query: QueryStageGroupsDto,
+    query?: QueryStageGroupsDto,
   ): Promise<StageGroupSummaryResponseDto[]> {
-    const baseWhere: FindOptionsWhere<StageGroup> = query.status
+    const baseWhere: FindOptionsWhere<StageGroup> = query?.status
       ? { status: query.status }
       : {};
-    const search = query.search?.trim();
+    const search = query?.search?.trim();
     const where: FindOptionsWhere<StageGroup> | FindOptionsWhere<StageGroup>[] =
       search
         ? [

@@ -9,5 +9,6 @@ import { StageGroupsService } from './stage-groups.service';
   imports: [TypeOrmModule.forFeature([StageGroup, StageGroupItem])],
   controllers: [StageGroupsController],
   providers: [StageGroupsService],
+  exports: [StageGroupsService],
 })
 export class StageGroupsModule {}
