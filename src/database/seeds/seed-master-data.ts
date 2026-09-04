@@ -122,7 +122,7 @@ async function ensureMaterials(manager: EntityManager): Promise<void> {
      JOIN material_groups
        ON LOWER(BTRIM(material_groups.name)) = LOWER(BTRIM(seed.material_group_name))
      JOIN units ON LOWER(BTRIM(units.name)) = LOWER(BTRIM(seed.unit_name))
-     ON CONFLICT (material_code) DO NOTHING`,
+     ON CONFLICT (UPPER(BTRIM(material_code))) DO NOTHING`,
     rows,
   );
 }
