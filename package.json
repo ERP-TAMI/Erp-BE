@@ -28,6 +28,8 @@
     "seed:stages": "ts-node -r tsconfig-paths/register src/database/seeds/seed-stages.ts",
     "seed:stage-groups": "ts-node -r tsconfig-paths/register src/database/seeds/seed-stage-groups.ts",
     "seed:workshops": "ts-node -r tsconfig-paths/register src/database/seeds/seed-workshops.ts",
+    "seed:master-data": "ts-node -r tsconfig-paths/register src/database/seeds/seed-master-data.ts",
+    "seed:master-data:reset": "ts-node -r tsconfig-paths/register src/database/seeds/seed-master-data.ts --reset",
     "verify:start-dev": "node scripts/verify-start-dev.js"
   },
   "dependencies": {

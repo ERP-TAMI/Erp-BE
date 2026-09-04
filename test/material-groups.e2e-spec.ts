@@ -1,5 +1,6 @@
 import {
   ConflictException,
+  ExecutionContext,
   INestApplication,
   ValidationPipe,
 } from '@nestjs/common';
@@ -7,6 +8,7 @@ import { Test } from '@nestjs/testing';
 import * as request from 'supertest';
 import { HttpExceptionFilter } from '../src/common/filters/http-exception.filter';
 import { RecordStatus } from '../src/common/enums/database.enums';
+import { JwtAuthGuard } from '../src/common/guards/jwt-auth.guard';
 import { MaterialGroupsController } from '../src/features/master-data/material-groups/material-groups.controller';
 import { MaterialGroupsService } from '../src/features/master-data/material-groups/material-groups.service';
 
@@ -25,16 +27,31 @@ describe('Material groups API (e2e)', () => {
     updateStatus: jest.fn(),
     remove: jest.fn(),
   };
+  let currentPermissions: string[];
   let app: INestApplication;
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    currentPermissions = [
+      'master_data.material_groups.view',
+      'master_data.material_groups.manage',
+    ];
     const moduleRef = await Test.createTestingModule({
       controllers: [MaterialGroupsController],
       providers: [
         { provide: MaterialGroupsService, useValue: materialGroupsService },
       ],
-    }).compile();
+    })
+      .overrideGuard(JwtAuthGuard)
+      .useValue({
+        canActivate: (context: ExecutionContext) => {
+          context.switchToHttp().getRequest().user = {
+            permissions: currentPermissions,
+          };
+          return true;
+        },
+      })
+      .compile();
 
     app = moduleRef.createNestApplication();
     app.useGlobalFilters(new HttpExceptionFilter());
@@ -77,6 +94,29 @@ describe('Material groups API (e2e)', () => {
     expect(materialGroupsService.findAll).toHaveBeenCalledWith({
       status: RecordStatus.ACTIVE,
     });
+  });
+
+  it('allows view-only users to list groups but forbids mutations', async () => {
+    materialGroupsService.findAll.mockResolvedValue([group]);
+    currentPermissions = ['master_data.material_groups.view'];
+
+    await request(app.getHttpServer())
+      .get('/masters/material-groups?status=active')
+      .expect(200);
+    await request(app.getHttpServer())
+      .post('/masters/material-groups')
+      .send({ name: 'Forbidden group' })
+      .expect(403);
+    expect(materialGroupsService.create).not.toHaveBeenCalled();
+  });
+
+  it('forbids reading groups without the view permission', async () => {
+    currentPermissions = [];
+
+    await request(app.getHttpServer())
+      .get('/masters/material-groups')
+      .expect(403);
+    expect(materialGroupsService.findAll).not.toHaveBeenCalled();
   });
 
   it('returns material group detail through the HTTP API', async () => {

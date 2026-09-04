@@ -5,6 +5,8 @@ import * as request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { HttpExceptionFilter } from '../src/common/filters/http-exception.filter';
 import { RecordStatus } from '../src/common/enums/database.enums';
+import { JwtAuthGuard } from '../src/common/guards/jwt-auth.guard';
+import { PermissionGuard } from '../src/common/guards/permission.guard';
 import { MaterialGroup } from '../src/features/master-data/entities/MaterialGroup.entity';
 
 const databaseE2e =
@@ -19,7 +21,12 @@ databaseE2e('Material groups database API (e2e)', () => {
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
       imports: [AppModule],
-    }).compile();
+    })
+      .overrideGuard(JwtAuthGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(PermissionGuard)
+      .useValue({ canActivate: () => true })
+      .compile();
 
     app = moduleRef.createNestApplication();
     app.useGlobalFilters(new HttpExceptionFilter());
