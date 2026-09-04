@@ -40,6 +40,7 @@ const imports = [
   SizeChartsModule,
   DocumentsModule,
   StylesModule,
+  UploadsModule,
   DraftBomsModule,
   PurchaseOrdersModule,
   BomsModule,
@@ -47,7 +48,6 @@ const imports = [
   NotificationsModule,
   AuditModule,
   PlatformModule,
-  UploadsModule,
 ];
 
 @Module({
