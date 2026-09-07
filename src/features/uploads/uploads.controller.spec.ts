@@ -66,9 +66,9 @@ describe('UploadsController', () => {
       buffer: Buffer.alloc(100),
     };
 
-    await expect(
-      controller.uploadFile(mockFile, 'documents'),
-    ).rejects.toThrow('Dung lượng file vượt quá giới hạn tối đa 20MB');
+    await expect(controller.uploadFile(mockFile, 'documents')).rejects.toThrow(
+      'Dung lượng file vượt quá giới hạn tối đa 20MB',
+    );
   });
 
   it('should throw BadRequestException if file format is executable / prohibited', async () => {
@@ -78,8 +78,8 @@ describe('UploadsController', () => {
       buffer: Buffer.from('test'),
     };
 
-    await expect(
-      controller.uploadFile(mockFile, 'documents'),
-    ).rejects.toThrow('không được hỗ trợ vì lý do bảo mật');
+    await expect(controller.uploadFile(mockFile, 'documents')).rejects.toThrow(
+      'không được hỗ trợ vì lý do bảo mật',
+    );
   });
 });

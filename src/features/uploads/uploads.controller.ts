@@ -54,7 +54,9 @@ export class UploadsController {
     );
 
     const ext = (path.extname(file.originalname) || '').toLowerCase();
-    const isImageFolder = ['style-images', 'sample-images', 'images'].includes(cleanFolder);
+    const isImageFolder = ['style-images', 'sample-images', 'images'].includes(
+      cleanFolder,
+    );
     const maxSizeBytes = isImageFolder ? 10 * 1024 * 1024 : 20 * 1024 * 1024;
 
     if (file.size > maxSizeBytes) {
