@@ -45,20 +45,48 @@ export class UploadsController {
     @Query('folder') folder: string = 'style-images',
   ) {
     if (!file) {
-      throw new BadRequestException('Vui lòng chọn file ảnh để tải lên');
+      throw new BadRequestException('Vui lòng chọn file để tải lên');
     }
 
     const cleanFolder = (folder || 'style-images').replace(
       /[^a-zA-Z0-9_-]/g,
       '',
     );
+
+    const ext = (path.extname(file.originalname) || '').toLowerCase();
+    const isImageFolder = ['style-images', 'sample-images', 'images'].includes(cleanFolder);
+    const maxSizeBytes = isImageFolder ? 10 * 1024 * 1024 : 20 * 1024 * 1024;
+
+    if (file.size > maxSizeBytes) {
+      const limitMb = isImageFolder ? 10 : 20;
+      throw new BadRequestException(
+        `Dung lượng file vượt quá giới hạn tối đa ${limitMb}MB`,
+      );
+    }
+
+    const dangerousExtensions = [
+      '.exe',
+      '.bat',
+      '.sh',
+      '.cmd',
+      '.msi',
+      '.vbs',
+      '.scr',
+      '.ps1',
+    ];
+    if (dangerousExtensions.includes(ext)) {
+      throw new BadRequestException(
+        `Định dạng file ${ext} không được hỗ trợ vì lý do bảo mật`,
+      );
+    }
+
     const uploadDir = path.join(process.cwd(), 'uploads', cleanFolder);
     if (!fs.existsSync(uploadDir)) {
       await fsPromises.mkdir(uploadDir, { recursive: true });
     }
 
-    const ext = path.extname(file.originalname) || '.png';
-    const filename = `${randomUUID()}${ext}`;
+    const fileExt = ext || '.png';
+    const filename = `${randomUUID()}${fileExt}`;
     const filePath = path.join(uploadDir, filename);
 
     if (file.buffer) {

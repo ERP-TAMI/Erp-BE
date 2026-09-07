@@ -46,4 +46,40 @@ describe('UploadsController', () => {
       size: 1024,
     });
   });
+
+  it('should throw BadRequestException if image file exceeds 10MB', async () => {
+    const mockFile: any = {
+      originalname: 'large-image.jpg',
+      size: 11 * 1024 * 1024,
+      buffer: Buffer.alloc(100),
+    };
+
+    await expect(
+      controller.uploadFile(mockFile, 'style-images'),
+    ).rejects.toThrow('Dung lượng file vượt quá giới hạn tối đa 10MB');
+  });
+
+  it('should throw BadRequestException if document exceeds 20MB', async () => {
+    const mockFile: any = {
+      originalname: 'large-doc.pdf',
+      size: 21 * 1024 * 1024,
+      buffer: Buffer.alloc(100),
+    };
+
+    await expect(
+      controller.uploadFile(mockFile, 'documents'),
+    ).rejects.toThrow('Dung lượng file vượt quá giới hạn tối đa 20MB');
+  });
+
+  it('should throw BadRequestException if file format is executable / prohibited', async () => {
+    const mockFile: any = {
+      originalname: 'malware.exe',
+      size: 1024,
+      buffer: Buffer.from('test'),
+    };
+
+    await expect(
+      controller.uploadFile(mockFile, 'documents'),
+    ).rejects.toThrow('không được hỗ trợ vì lý do bảo mật');
+  });
 });
