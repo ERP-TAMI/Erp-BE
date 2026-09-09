@@ -15,6 +15,7 @@ import {
   ProductStatus,
   DocumentPurpose,
 } from '../../common/enums/database.enums';
+import { poDocumentFileFilter } from './purchase-orders.controller';
 
 describe('PurchaseOrdersService', () => {
   let service: PurchaseOrdersService;
@@ -531,7 +532,7 @@ describe('PurchaseOrdersService', () => {
           originalname: 'cleanup-test.pdf',
           mimetype: 'application/pdf',
           size: 10,
-          buffer: Buffer.from('test content'),
+          buffer: Buffer.from('%PDF-1.4 test content'),
         }),
       ).rejects.toThrow('DB Connection Failed');
     });
@@ -579,6 +580,168 @@ describe('PurchaseOrdersService', () => {
       expect(html).not.toContain('<img');
       expect(html).toContain('&lt;script&gt;');
       expect(html).toContain('&lt;img');
+    });
+  });
+
+  describe('poDocumentFileFilter (MIME & extension mapping)', () => {
+    it('should reject payload.html even with Content-Type: application/pdf', () => {
+      const callback = jest.fn();
+      poDocumentFileFilter(
+        {},
+        { originalname: 'payload.html', mimetype: 'application/pdf' },
+        callback,
+      );
+
+      expect(callback).toHaveBeenCalledWith(
+        expect.any(BadRequestException),
+        false,
+      );
+      const error = callback.mock.calls[0][0];
+      expect(error.message).toContain(
+        'Định dạng phần mở rộng ".html" không được hỗ trợ',
+      );
+    });
+
+    it('should reject payload.exe even with Content-Type: application/pdf', () => {
+      const callback = jest.fn();
+      poDocumentFileFilter(
+        {},
+        { originalname: 'payload.exe', mimetype: 'application/pdf' },
+        callback,
+      );
+
+      expect(callback).toHaveBeenCalledWith(
+        expect.any(BadRequestException),
+        false,
+      );
+      const error = callback.mock.calls[0][0];
+      expect(error.message).toContain(
+        'Định dạng phần mở rộng ".exe" không được hỗ trợ',
+      );
+    });
+
+    it('should reject document.pdf with mismatched Content-Type: text/html', () => {
+      const callback = jest.fn();
+      poDocumentFileFilter(
+        {},
+        { originalname: 'document.pdf', mimetype: 'text/html' },
+        callback,
+      );
+
+      expect(callback).toHaveBeenCalledWith(
+        expect.any(BadRequestException),
+        false,
+      );
+      const error = callback.mock.calls[0][0];
+      expect(error.message).toContain(
+        'Loại MIME "text/html" không hợp lệ cho tệp ".pdf"',
+      );
+    });
+
+    it('should accept valid PDF with application/pdf', () => {
+      const callback = jest.fn();
+      poDocumentFileFilter(
+        {},
+        { originalname: 'document.pdf', mimetype: 'application/pdf' },
+        callback,
+      );
+
+      expect(callback).toHaveBeenCalledWith(null, true);
+    });
+
+    it('should accept valid TXT with Content-Type containing charset', () => {
+      const callback = jest.fn();
+      poDocumentFileFilter(
+        {},
+        { originalname: 'notes.txt', mimetype: 'text/plain; charset=utf-8' },
+        callback,
+      );
+
+      expect(callback).toHaveBeenCalledWith(null, true);
+    });
+  });
+
+  describe('validateFileMagicBytes', () => {
+    it('should accept valid PDF magic bytes', () => {
+      const validPdf = Buffer.from('%PDF-1.5 test');
+      expect(() =>
+        service.validateFileMagicBytes('.pdf', validPdf),
+      ).not.toThrow();
+    });
+
+    it('should reject fake PDF without %PDF header', () => {
+      const fakePdf = Buffer.from('MZ\x90\x00 executable payload');
+      expect(() => service.validateFileMagicBytes('.pdf', fakePdf)).toThrow(
+        'Tệp không phải là định dạng PDF hợp lệ (chữ ký magic bytes không khớp).',
+      );
+    });
+
+    it('should accept valid PNG signature', () => {
+      const validPng = Buffer.from([
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00,
+      ]);
+      expect(() =>
+        service.validateFileMagicBytes('.png', validPng),
+      ).not.toThrow();
+    });
+
+    it('should reject fake PNG signature', () => {
+      const fakePng = Buffer.from('not a png');
+      expect(() => service.validateFileMagicBytes('.png', fakePng)).toThrow(
+        'Tệp không phải là định dạng PNG hợp lệ (chữ ký magic bytes không khớp).',
+      );
+    });
+
+    it('should accept valid JPEG header', () => {
+      const validJpg = Buffer.from([0xff, 0xd8, 0xff, 0xe0]);
+      expect(() =>
+        service.validateFileMagicBytes('.jpg', validJpg),
+      ).not.toThrow();
+    });
+
+    it('should reject fake JPEG header', () => {
+      const fakeJpg = Buffer.from('fake jpg');
+      expect(() => service.validateFileMagicBytes('.jpg', fakeJpg)).toThrow(
+        'Tệp không phải là định dạng JPEG/JPG hợp lệ (chữ ký magic bytes không khớp).',
+      );
+    });
+
+    it('should accept valid DOCX / XLSX ZIP signature PK', () => {
+      const validZip = Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00]);
+      expect(() =>
+        service.validateFileMagicBytes('.docx', validZip),
+      ).not.toThrow();
+      expect(() =>
+        service.validateFileMagicBytes('.xlsx', validZip),
+      ).not.toThrow();
+    });
+
+    it('should reject fake DOCX without PK header', () => {
+      const fakeDocx = Buffer.from('fake docx');
+      expect(() => service.validateFileMagicBytes('.docx', fakeDocx)).toThrow(
+        'Tệp không phải là định dạng .DOCX hợp lệ (chữ ký magic bytes không khớp).',
+      );
+    });
+
+    it('should reject text file containing disguised <script> tag', () => {
+      const maliciousTxt = Buffer.from('Hello world <script>alert(1)</script>');
+      expect(() =>
+        service.validateFileMagicBytes('.txt', maliciousTxt),
+      ).toThrow('Tệp văn bản ".txt" chứa mã HTML/Script không được phép.');
+    });
+
+    it('should reject text file containing null bytes', () => {
+      const binaryTxt = Buffer.from('Binary\x00data');
+      expect(() => service.validateFileMagicBytes('.txt', binaryTxt)).toThrow(
+        'Tệp văn bản ".txt" chứa ký tự nhị phân không hợp lệ.',
+      );
+    });
+
+    it('should accept clean text / CSV file', () => {
+      const cleanCsv = Buffer.from('col1,col2,col3\nval1,val2,val3');
+      expect(() =>
+        service.validateFileMagicBytes('.csv', cleanCsv),
+      ).not.toThrow();
     });
   });
 });

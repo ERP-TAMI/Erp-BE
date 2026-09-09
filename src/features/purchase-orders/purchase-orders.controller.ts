@@ -47,34 +47,36 @@ import { PurchaseOrder } from './entities/PurchaseOrder.entity';
 import { PurchaseOrderProduct } from './entities/PurchaseOrderProduct.entity';
 import { PurchaseOrderStatusHistory } from './entities/PurchaseOrderStatusHistory.entity';
 
-const ALLOWED_PO_EXTENSIONS = new Set([
-  '.pdf',
-  '.docx',
-  '.doc',
-  '.xlsx',
-  '.xls',
-  '.csv',
-  '.png',
-  '.jpg',
-  '.jpeg',
-  '.webp',
-  '.gif',
-  '.txt',
-]);
-
-const ALLOWED_PO_MIME_TYPES = new Set([
-  'application/pdf',
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  'application/msword',
-  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-  'application/vnd.ms-excel',
-  'text/csv',
-  'image/png',
-  'image/jpeg',
-  'image/webp',
-  'image/gif',
-  'text/plain',
-]);
+export const ALLOWED_PO_MIME_BY_EXTENSION: Record<string, string[]> = {
+  '.pdf': ['application/pdf'],
+  '.docx': [
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/zip',
+    'application/octet-stream',
+    'application/x-zip-compressed',
+  ],
+  '.doc': ['application/msword'],
+  '.xlsx': [
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'application/zip',
+    'application/octet-stream',
+    'application/x-zip-compressed',
+  ],
+  '.xls': ['application/vnd.ms-excel'],
+  '.csv': [
+    'text/csv',
+    'text/plain',
+    'application/vnd.ms-excel',
+    'application/csv',
+    'text/x-csv',
+  ],
+  '.txt': ['text/plain'],
+  '.png': ['image/png'],
+  '.jpg': ['image/jpeg'],
+  '.jpeg': ['image/jpeg'],
+  '.webp': ['image/webp'],
+  '.gif': ['image/gif'],
+};
 
 export const poDocumentFileFilter = (
   _req: any,
@@ -84,17 +86,29 @@ export const poDocumentFileFilter = (
   const ext = (
     file?.originalname ? path.extname(file.originalname) : ''
   ).toLowerCase();
-  const mime = (file?.mimetype || '').toLowerCase();
-  if (ALLOWED_PO_EXTENSIONS.has(ext) || ALLOWED_PO_MIME_TYPES.has(mime)) {
-    callback(null, true);
-  } else {
-    callback(
+  const rawMime = (file?.mimetype || '').toLowerCase();
+  const cleanMime = rawMime.split(';')[0].trim();
+
+  const allowedMimes = ALLOWED_PO_MIME_BY_EXTENSION[ext];
+  if (!allowedMimes) {
+    return callback(
       new BadRequestException(
-        `Định dạng tệp "${file?.originalname || 'không rõ'}" không được hỗ trợ. Chỉ chấp nhận các định dạng: PDF, DOCX, DOC, XLSX, XLS, CSV, TXT, PNG, JPG, JPEG, WEBP.`,
+        `Định dạng phần mở rộng "${ext || 'không có'}" không được hỗ trợ. Chỉ chấp nhận các định dạng: ${Object.keys(ALLOWED_PO_MIME_BY_EXTENSION).join(', ')}.`,
       ),
       false,
     );
   }
+
+  if (!allowedMimes.includes(cleanMime)) {
+    return callback(
+      new BadRequestException(
+        `Loại MIME "${rawMime}" không hợp lệ cho tệp "${ext}". Chỉ chấp nhận: ${allowedMimes.join(', ')}.`,
+      ),
+      false,
+    );
+  }
+
+  callback(null, true);
 };
 
 @ApiTags('purchase-orders')
