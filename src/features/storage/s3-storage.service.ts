@@ -5,7 +5,6 @@ import {
   PutObjectCommand,
   GetObjectCommand,
   DeleteObjectCommand,
-  HeadObjectCommand,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { HeadObjectResult, StorageService } from './storage.interface';
@@ -66,14 +65,43 @@ export class S3StorageService implements StorageService {
   async headObject(objectKey: string): Promise<HeadObjectResult> {
     try {
       const result = await this.client.send(
-        new HeadObjectCommand({ Bucket: this.bucket, Key: objectKey }),
+        new GetObjectCommand({
+          Bucket: this.bucket,
+          Key: objectKey,
+          Range: 'bytes=0-0',
+        }),
       );
-      return { exists: true, sizeBytes: result.ContentLength };
+      const sizeBytes =
+        this.parseTotalSizeFromContentRange(result.ContentRange) ??
+        result.ContentLength;
+      return { exists: true, sizeBytes };
     } catch (error) {
-      if ((error as { name?: string })?.name === 'NotFound') {
+      const err = error as {
+        name?: string;
+        $metadata?: { httpStatusCode?: number };
+      };
+      // HeadObjectCommand has no response body (HTTP HEAD), so the SDK can't
+      // parse its error into a usable name/status here; a ranged GetObject
+      // does return a parseable body. Our IAM policy has no s3:ListBucket,
+      // so S3 also returns 403 AccessDenied instead of 404 for a missing key
+      // — both mean "not found" since our policy always grants GetObject on
+      // any object that actually exists.
+      const notFoundNames = ['NoSuchKey', 'NotFound', 'AccessDenied'];
+      if (
+        (err?.name && notFoundNames.includes(err.name)) ||
+        err?.$metadata?.httpStatusCode === 404 ||
+        err?.$metadata?.httpStatusCode === 403
+      ) {
         return { exists: false };
       }
       throw error;
     }
+  }
+
+  private parseTotalSizeFromContentRange(
+    contentRange?: string,
+  ): number | undefined {
+    const match = contentRange?.match(/\/(\d+)$/);
+    return match ? Number(match[1]) : undefined;
   }
 }

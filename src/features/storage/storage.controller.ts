@@ -13,15 +13,17 @@ import { extname } from 'path';
 import { Auth } from '../../common/decorators/auth.decorator';
 import { assertAllowedFile } from '../../common/utils/file-validation';
 import { PresignUploadDto, StorageEntityType } from './dto/presign-upload.dto';
-import { STORAGE_SERVICE, StorageService } from './storage.interface';
+import {
+  PRESIGN_GET_EXPIRY_SECONDS,
+  PRESIGN_PUT_EXPIRY_SECONDS,
+  STORAGE_SERVICE,
+  StorageService,
+} from './storage.interface';
 
 const ENTITY_TYPE_PATH: Record<StorageEntityType, string> = {
   [StorageEntityType.STYLE]: 'styles',
   [StorageEntityType.PURCHASE_ORDER]: 'purchase-orders',
 };
-
-const PRESIGN_PUT_EXPIRY_SECONDS = 300;
-const PRESIGN_GET_EXPIRY_SECONDS = 3600;
 
 @Auth()
 @Controller('storage/uploads')

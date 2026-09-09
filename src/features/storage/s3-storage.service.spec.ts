@@ -15,9 +15,6 @@ jest.mock('@aws-sdk/client-s3', () => ({
   DeleteObjectCommand: jest
     .fn()
     .mockImplementation((input: unknown) => ({ input })),
-  HeadObjectCommand: jest
-    .fn()
-    .mockImplementation((input: unknown) => ({ input })),
 }));
 
 jest.mock('@aws-sdk/s3-request-presigner', () => ({
@@ -98,16 +95,51 @@ describe('S3StorageService', () => {
     );
   });
 
-  it('reports exists=true with the object size when found', async () => {
-    mockSend.mockResolvedValue({ ContentLength: 42 });
+  it('checks existence via a ranged GetObject and parses the total size from Content-Range', async () => {
+    mockSend.mockResolvedValue({ ContentRange: 'bytes 0-0/42' });
 
     const result = await service.headObject('k');
 
+    expect(mockSend).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: { Bucket: 'erp-tami-storage-dev', Key: 'k', Range: 'bytes=0-0' },
+      }),
+    );
     expect(result).toEqual({ exists: true, sizeBytes: 42 });
   });
 
-  it('reports exists=false when S3 responds NotFound', async () => {
-    mockSend.mockRejectedValue({ name: 'NotFound' });
+  it('falls back to ContentLength when Content-Range is absent', async () => {
+    mockSend.mockResolvedValue({ ContentLength: 1 });
+
+    const result = await service.headObject('k');
+
+    expect(result).toEqual({ exists: true, sizeBytes: 1 });
+  });
+
+  it('reports exists=false for NoSuchKey', async () => {
+    mockSend.mockRejectedValue({ name: 'NoSuchKey' });
+
+    const result = await service.headObject('missing-key');
+
+    expect(result).toEqual({ exists: false });
+  });
+
+  it('reports exists=false for AccessDenied (no s3:ListBucket makes a missing key look like 403)', async () => {
+    mockSend.mockRejectedValue({
+      name: 'AccessDenied',
+      $metadata: { httpStatusCode: 403 },
+    });
+
+    const result = await service.headObject('missing-key');
+
+    expect(result).toEqual({ exists: false });
+  });
+
+  it('reports exists=false for a bare 404 with no parseable error name', async () => {
+    mockSend.mockRejectedValue({
+      name: 'Unknown',
+      $metadata: { httpStatusCode: 404 },
+    });
 
     const result = await service.headObject('missing-key');
 
