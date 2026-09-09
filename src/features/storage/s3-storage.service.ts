@@ -80,12 +80,7 @@ export class S3StorageService implements StorageService {
         name?: string;
         $metadata?: { httpStatusCode?: number };
       };
-      // HeadObjectCommand has no response body (HTTP HEAD), so the SDK can't
-      // parse its error into a usable name/status here; a ranged GetObject
-      // does return a parseable body. Our IAM policy has no s3:ListBucket,
-      // so S3 also returns 403 AccessDenied instead of 404 for a missing key
-      // — both mean "not found" since our policy always grants GetObject on
-      // any object that actually exists.
+      // GetObject used instead of HeadObject: HEAD has no body, so the SDK can't parse its error.
       const notFoundNames = ['NoSuchKey', 'NotFound', 'AccessDenied'];
       if (
         (err?.name && notFoundNames.includes(err.name)) ||
