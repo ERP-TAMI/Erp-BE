@@ -203,7 +203,10 @@ export class PurchaseOrdersController {
   @Patch(':id/documents/:documentId')
   @ApiOperation({ summary: 'Cập nhật phân loại tài liệu trong PO' })
   @ApiResponse({ status: 200, description: 'Đã cập nhật phân loại tài liệu' })
-  @ApiResponse({ status: 400, description: 'PO đã khóa hoặc mục đích sử dụng không hợp lệ' })
+  @ApiResponse({
+    status: 400,
+    description: 'PO đã khóa hoặc mục đích sử dụng không hợp lệ',
+  })
   @ApiResponse({ status: 404, description: 'Không tìm thấy PO hoặc tài liệu' })
   async updateDocumentPurpose(
     @Param('id', ParseUUIDPipe) id: string,
@@ -212,7 +215,12 @@ export class PurchaseOrdersController {
     @Req() req?: any,
   ): Promise<PurchaseOrderDetailResponse> {
     const userId = req?.user?.id || req?.user?.sub;
-    return this.service.updateDocumentPurpose(id, documentId, dto.purpose, userId);
+    return this.service.updateDocumentPurpose(
+      id,
+      documentId,
+      dto.purpose,
+      userId,
+    );
   }
 
   @Delete(':id/documents/:documentId')

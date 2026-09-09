@@ -956,7 +956,9 @@ export class PurchaseOrdersService {
           const id = rm[1];
           let target = rm[2];
           if (target.startsWith('/')) target = target.slice(1);
-          const zipPath = target.startsWith('word/') ? target : `word/${target}`;
+          const zipPath = target.startsWith('word/')
+            ? target
+            : `word/${target}`;
           const imgZipFile = zip.file(zipPath);
           if (imgZipFile) {
             const ext =
@@ -964,7 +966,10 @@ export class PurchaseOrdersService {
             const mime =
               ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : `image/${ext}`;
             const imgBuf = await imgZipFile.async('nodebuffer');
-            imageMap.set(id, `data:${mime};base64,${imgBuf.toString('base64')}`);
+            imageMap.set(
+              id,
+              `data:${mime};base64,${imgBuf.toString('base64')}`,
+            );
           }
         }
       }

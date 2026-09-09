@@ -9,7 +9,11 @@ import { PurchaseOrderProduct } from './entities/PurchaseOrderProduct.entity';
 import { Document } from '../documents/entities/Document.entity';
 import { DocumentVersion } from '../documents/entities/DocumentVersion.entity';
 import { Customer } from '../master-data/entities/Customer.entity';
-import { PoStatus, ProductStatus, DocumentPurpose } from '../../common/enums/database.enums';
+import {
+  PoStatus,
+  ProductStatus,
+  DocumentPurpose,
+} from '../../common/enums/database.enums';
 
 describe('PurchaseOrdersService', () => {
   let service: PurchaseOrdersService;
