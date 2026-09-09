@@ -18,9 +18,9 @@ export class CreatePurchaseOrderDto {
   @MaxLength(100, { message: 'Mã PO khách hàng không được vượt quá 100 ký tự' })
   customerPoCode?: string;
 
-  @IsUUID('4', { message: 'customerId phải là định dạng UUID hợp lệ' })
-  @IsNotEmpty({ message: 'Khách hàng (customerId) không được để trống' })
-  customerId: string;
+  @IsUUID(undefined, { message: 'customerId phải là định dạng UUID hợp lệ' })
+  @IsOptional()
+  customerId?: string;
 
   @IsString()
   @IsNotEmpty({ message: 'Tên khách hàng không được để trống' })

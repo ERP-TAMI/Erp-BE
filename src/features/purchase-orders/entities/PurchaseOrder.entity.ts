@@ -17,8 +17,8 @@ export class PurchaseOrder {
   })
   customerPoCode: string | null;
 
-  @Column({ type: 'uuid', name: 'customer_id' })
-  customerId: string;
+  @Column({ type: 'uuid', name: 'customer_id', nullable: true })
+  customerId: string | null;
 
   @Column({ type: 'varchar', length: 255, name: 'customer_name_snapshot' })
   customerNameSnapshot: string;

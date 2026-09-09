@@ -1,3 +1,9 @@
+import * as fs from 'fs';
+import * as fsPromises from 'fs/promises';
+import * as path from 'path';
+import { randomUUID } from 'crypto';
+import * as ExcelJS from 'exceljs';
+import * as JSZip from 'jszip';
 import {
   Injectable,
   NotFoundException,
@@ -9,14 +15,25 @@ import { Repository, In } from 'typeorm';
 import { PurchaseOrder } from './entities/PurchaseOrder.entity';
 import { PurchaseOrderStatusHistory } from './entities/PurchaseOrderStatusHistory.entity';
 import { PurchaseOrderDocument } from './entities/PurchaseOrderDocument.entity';
+import { PurchaseOrderProduct } from './entities/PurchaseOrderProduct.entity';
 import { Document } from '../documents/entities/Document.entity';
-import { PoStatus } from '../../common/enums/database.enums';
+import { DocumentVersion } from '../documents/entities/DocumentVersion.entity';
+import { Customer } from '../master-data/entities/Customer.entity';
+import {
+  DocumentPurpose,
+  PoStatus,
+  ProductStatus,
+  RecordStatus,
+  UploadStatus,
+} from '../../common/enums/database.enums';
 import {
   CreatePurchaseOrderDto,
   UpdatePurchaseOrderDto,
   QueryPurchaseOrderDto,
   UpdatePoStatusDto,
   LinkPoDocumentDto,
+  CreatePoProductDto,
+  UpdatePoProductDto,
 } from './dto';
 
 export interface PaginatedPoResult<T> {
@@ -27,11 +44,40 @@ export interface PaginatedPoResult<T> {
   totalPages: number;
 }
 
+export interface PoExcelCell {
+  value: string;
+  image?: string;
+  images?: string[];
+  rowSpan?: number;
+  colSpan?: number;
+  isMerged?: boolean;
+  bold?: boolean;
+  align?: 'left' | 'center' | 'right';
+}
+
+export interface PoDocumentPreviewSheet {
+  name: string;
+  rowCount: number;
+  columnCount: number;
+  rows: string[][];
+  cells?: PoExcelCell[][];
+  unanchoredImages?: string[];
+}
+
+export interface PoDocumentPreviewResponse {
+  type: 'excel' | 'word' | 'pdf' | 'image' | 'text' | 'unsupported';
+  fileName: string;
+  fileUrl?: string;
+  sheets?: PoDocumentPreviewSheet[];
+  html?: string;
+  text?: string;
+}
+
 export interface PurchaseOrderDetailResponse {
   id: string;
   poCode: string;
   customerPoCode: string | null;
-  customerId: string;
+  customerId: string | null;
   customerNameSnapshot: string;
   receivedDate: Date;
   note: string | null;
@@ -42,12 +88,16 @@ export interface PurchaseOrderDetailResponse {
   createdBy: string | null;
   createdAt: Date;
   updatedAt: Date;
+  products: PurchaseOrderProduct[];
   documents: {
     documentId: string;
     documentCode: string | null;
     title: string;
     purpose: string;
     linkedAt: Date;
+    fileUrl?: string | null;
+    fileName?: string | null;
+    fileSize?: number | null;
   }[];
   statusHistory: {
     id: string;
@@ -69,8 +119,14 @@ export class PurchaseOrdersService {
     private readonly historyRepo: Repository<PurchaseOrderStatusHistory>,
     @InjectRepository(PurchaseOrderDocument)
     private readonly poDocRepo: Repository<PurchaseOrderDocument>,
+    @InjectRepository(PurchaseOrderProduct)
+    private readonly productRepo: Repository<PurchaseOrderProduct>,
     @InjectRepository(Document)
     private readonly docRepo: Repository<Document>,
+    @InjectRepository(DocumentVersion)
+    private readonly docVersionRepo: Repository<DocumentVersion>,
+    @InjectRepository(Customer)
+    private readonly customerRepo: Repository<Customer>,
   ) {}
 
   async create(
@@ -86,11 +142,51 @@ export class PurchaseOrdersService {
       );
     }
 
+    let customerId = dto.customerId;
+    if (customerId) {
+      const exists = await this.customerRepo.findOne({
+        where: { id: customerId },
+      });
+      if (!exists) {
+        customerId = undefined;
+      }
+    }
+
+    if (!customerId) {
+      const existingCustomer = await this.customerRepo.findOne({
+        where: { customerName: dto.customerNameSnapshot },
+      });
+      if (existingCustomer) {
+        customerId = existingCustomer.id;
+      } else {
+        const [firstCustomer] = await this.customerRepo.find({
+          order: { createdAt: 'ASC' },
+          take: 1,
+        });
+        if (firstCustomer) {
+          customerId = firstCustomer.id;
+        } else {
+          const nowCustomer = new Date();
+          const newCustomer = this.customerRepo.create({
+            customerCode: 'CUST-' + Date.now().toString().slice(-6),
+            customerName: dto.customerNameSnapshot || 'Khách hàng mặc định',
+            status: RecordStatus.ACTIVE,
+            createdAt: nowCustomer,
+            updatedAt: nowCustomer,
+          });
+          const savedCustomer = (await this.customerRepo.save(
+            newCustomer,
+          )) as Customer;
+          customerId = savedCustomer?.id || dto.customerId;
+        }
+      }
+    }
+
     const now = new Date();
     const poEntity = this.poRepo.create({
       poCode: dto.poCode,
       customerPoCode: dto.customerPoCode || null,
-      customerId: dto.customerId,
+      customerId: customerId,
       customerNameSnapshot: dto.customerNameSnapshot,
       receivedDate: new Date(dto.receivedDate),
       note: dto.note || null,
@@ -108,8 +204,8 @@ export class PurchaseOrdersService {
       purchaseOrderId: savedPo.id,
       oldStatus: null,
       newStatus: PoStatus.DRAFT,
-      action: 'Tạo mới PO',
-      reason: null,
+      action: 'Khởi tạo PO',
+      reason: 'Tạo mới đơn hàng PO',
       changedBy: userId || null,
       changedAt: now,
     });
@@ -120,23 +216,25 @@ export class PurchaseOrdersService {
 
   async findAll(
     query: QueryPurchaseOrderDto,
-  ): Promise<PaginatedPoResult<PurchaseOrder>> {
-    const page = query.page && query.page > 0 ? query.page : 1;
-    const limit = query.limit && query.limit > 0 ? query.limit : 10;
+  ): Promise<PaginatedPoResult<PurchaseOrder & { productsCount: number }>> {
+    const page = Math.max(1, Number(query.page) || 1);
+    const limit = Math.max(1, Math.min(100, Number(query.limit) || 10));
     const skip = (page - 1) * limit;
 
     const qb = this.poRepo.createQueryBuilder('po');
 
     if (query.search?.trim()) {
-      const searchTerm = `%${query.search.trim()}%`;
+      const search = `%${query.search.trim().toLowerCase()}%`;
       qb.andWhere(
-        '(po.poCode ILIKE :search OR po.customerNameSnapshot ILIKE :search OR po.customerPoCode ILIKE :search)',
-        { search: searchTerm },
+        "(LOWER(po.poCode) LIKE :search OR LOWER(COALESCE(po.customerPoCode, '')) LIKE :search OR LOWER(po.customerNameSnapshot) LIKE :search)",
+        { search },
       );
     }
 
     if (query.poCode?.trim()) {
-      qb.andWhere('po.poCode = :poCode', { poCode: query.poCode.trim() });
+      qb.andWhere('LOWER(po.poCode) LIKE :poCode', {
+        poCode: `%${query.poCode.trim().toLowerCase()}%`,
+      });
     }
 
     if (query.customerId?.trim()) {
@@ -179,8 +277,34 @@ export class PurchaseOrdersService {
     const [items, total] = await qb.getManyAndCount();
     const totalPages = Math.ceil(total / limit) || 1;
 
+    // Fetch product counts for returned items
+    const poIds = items.map((i) => i.id);
+    let countsMap: Record<string, number> = {};
+    if (poIds.length > 0) {
+      const countsRaw = await this.productRepo
+        .createQueryBuilder('p')
+        .select('p.purchaseOrderId', 'poId')
+        .addSelect('COUNT(p.id)', 'count')
+        .where('p.purchaseOrderId IN (:...poIds)', { poIds })
+        .groupBy('p.purchaseOrderId')
+        .getRawMany();
+
+      countsMap = countsRaw.reduce(
+        (acc, row) => {
+          acc[row.poId] = Number(row.count) || 0;
+          return acc;
+        },
+        {} as Record<string, number>,
+      );
+    }
+
+    const itemsWithCounts = items.map((po) => ({
+      ...po,
+      productsCount: countsMap[po.id] || 0,
+    }));
+
     return {
-      items,
+      items: itemsWithCounts,
       total,
       page,
       limit,
@@ -201,21 +325,43 @@ export class PurchaseOrdersService {
 
     const docIds = poDocs.map((pd) => pd.documentId);
     let docsMap: Map<string, Document> = new Map();
+    let docVersionsMap: Map<string, DocumentVersion> = new Map();
 
     if (docIds.length > 0) {
       const docs = await this.docRepo.find({ where: { id: In(docIds) } });
       docsMap = new Map(docs.map((d) => [d.id, d]));
+
+      const versionIds = docs
+        .map((d) => d.currentVersionId)
+        .filter((vId): vId is string => Boolean(vId));
+      if (versionIds.length > 0) {
+        const versions = await this.docVersionRepo.find({
+          where: { id: In(versionIds) },
+        });
+        docVersionsMap = new Map(versions.map((v) => [v.id, v]));
+      }
     }
 
     const formattedDocs = poDocs.map((pd) => {
       const masterDoc = docsMap.get(pd.documentId);
+      const version = masterDoc?.currentVersionId
+        ? docVersionsMap.get(masterDoc.currentVersionId)
+        : null;
       return {
         documentId: pd.documentId,
         documentCode: masterDoc?.documentCode || null,
         title: masterDoc?.title || 'Tài liệu PO',
         purpose: pd.purpose,
         linkedAt: pd.linkedAt,
+        fileUrl: version?.storageKey || null,
+        fileName: version?.originalFileName || masterDoc?.title || null,
+        fileSize: version?.byteSize ? Number(version.byteSize) : null,
       };
+    });
+
+    const products = await this.productRepo.find({
+      where: { purchaseOrderId: id },
+      order: { createdAt: 'ASC' },
     });
 
     const history = await this.historyRepo.find({
@@ -238,6 +384,7 @@ export class PurchaseOrdersService {
       createdBy: po.createdBy,
       createdAt: po.createdAt,
       updatedAt: po.updatedAt,
+      products,
       documents: formattedDocs,
       statusHistory: history.map((h) => ({
         id: h.id,
@@ -263,7 +410,7 @@ export class PurchaseOrdersService {
 
     if (po.status === PoStatus.CLOSED) {
       throw new BadRequestException(
-        'PO đã ở trạng thái Final (đã khóa), chỉ có thể thay đổi thông tin qua luồng điều chỉnh.',
+        'PO đã ở trạng thái Đã khóa, chỉ có thể thay đổi thông tin qua luồng điều chỉnh.',
       );
     }
 
@@ -309,7 +456,11 @@ export class PurchaseOrdersService {
     }
 
     const validTransitions: Record<PoStatus, PoStatus[]> = {
-      [PoStatus.DRAFT]: [PoStatus.PENDING_RD, PoStatus.CANCELLED],
+      [PoStatus.DRAFT]: [
+        PoStatus.IN_PROGRESS,
+        PoStatus.PENDING_RD,
+        PoStatus.CANCELLED,
+      ],
       [PoStatus.PENDING_RD]: [PoStatus.IN_PROGRESS, PoStatus.CANCELLED],
       [PoStatus.IN_PROGRESS]: [PoStatus.CLOSED, PoStatus.CANCELLED],
       [PoStatus.CLOSED]: [],
@@ -319,7 +470,7 @@ export class PurchaseOrdersService {
     const allowedNextStatuses = validTransitions[currentStatus] || [];
     if (!allowedNextStatuses.includes(newStatus)) {
       throw new BadRequestException(
-        `Không thể chuyển trạng thái từ ${currentStatus} sang ${newStatus}. Vui lòng thực hiện theo đúng luồng: Nháp -> Chờ R&D -> Đang xử lý -> Final / Đã hủy.`,
+        `Không thể chuyển trạng thái từ ${currentStatus} sang ${newStatus}. Vui lòng thực hiện theo đúng luồng: Nháp -> Đang xử lý -> Khóa.`,
       );
     }
 
@@ -328,7 +479,7 @@ export class PurchaseOrdersService {
       !dto.reason?.trim()
     ) {
       throw new BadRequestException(
-        'Chuyển trạng thái sang Final hoặc Đã hủy bắt buộc phải nhập lý do.',
+        'Chuyển trạng thái sang Đã khóa hoặc Đã hủy bắt buộc phải nhập lý do.',
       );
     }
 
@@ -352,7 +503,7 @@ export class PurchaseOrdersService {
         : newStatus === PoStatus.IN_PROGRESS
           ? 'Bắt đầu xử lý PO'
           : newStatus === PoStatus.CLOSED
-            ? 'Chốt PO Final'
+            ? 'Khóa PO'
             : 'Hủy đơn hàng PO';
 
     const history = this.historyRepo.create({
@@ -369,6 +520,169 @@ export class PurchaseOrdersService {
     return this.findOne(id);
   }
 
+  // ─── PO Products Management ──────────────────────────────────────────────────
+
+  async getProducts(poId: string): Promise<PurchaseOrderProduct[]> {
+    await this.findOne(poId);
+    return this.productRepo.find({
+      where: { purchaseOrderId: poId },
+      order: { createdAt: 'ASC' },
+    });
+  }
+
+  async addProduct(
+    poId: string,
+    dto: CreatePoProductDto,
+    userId?: string,
+  ): Promise<PurchaseOrderProduct> {
+    const po = await this.poRepo.findOne({ where: { id: poId } });
+    if (!po) {
+      throw new NotFoundException(`Không tìm thấy đơn hàng PO với ID: ${poId}`);
+    }
+
+    if (po.status === PoStatus.CLOSED) {
+      throw new BadRequestException(
+        'Đơn hàng PO đã khóa, không thể thêm sản phẩm mới.',
+      );
+    }
+
+    const existingProduct = await this.productRepo.findOne({
+      where: { purchaseOrderId: poId, productCode: dto.productCode.trim() },
+    });
+    if (existingProduct) {
+      throw new ConflictException(
+        `Mã sản phẩm "${dto.productCode}" đã tồn tại trong PO này.`,
+      );
+    }
+
+    const now = new Date();
+    const product = this.productRepo.create({
+      purchaseOrderId: poId,
+      sourceStyleId: dto.sourceStyleId || undefined,
+      productCode: dto.productCode.trim(),
+      productName: dto.productName.trim(),
+      category: dto.category?.trim() || undefined,
+      materialNote: dto.materialNote?.trim() || undefined,
+      deadline: dto.deadline ? new Date(dto.deadline) : undefined,
+      status: ProductStatus.DRAFT,
+      as3bCmBaseDays: dto.as3bCmBaseDays || 30,
+      createdBy: (userId || null) as any,
+      createdAt: now,
+      updatedBy: (userId || null) as any,
+      updatedAt: now,
+    });
+
+    const saved = await this.productRepo.save(product);
+
+    // Audit log
+    const log = this.historyRepo.create({
+      purchaseOrderId: poId,
+      oldStatus: po.status,
+      newStatus: po.status,
+      action: 'Thêm sản phẩm vào PO',
+      reason: `Thêm sản phẩm ${dto.productCode} — ${dto.productName}`,
+      changedBy: userId || null,
+      changedAt: now,
+    });
+    await this.historyRepo.save(log);
+
+    return saved;
+  }
+
+  async updateProduct(
+    poId: string,
+    productId: string,
+    dto: UpdatePoProductDto,
+    userId?: string,
+  ): Promise<PurchaseOrderProduct> {
+    const po = await this.poRepo.findOne({ where: { id: poId } });
+    if (!po) {
+      throw new NotFoundException(`Không tìm thấy đơn hàng PO với ID: ${poId}`);
+    }
+
+    if (po.status === PoStatus.CLOSED) {
+      throw new BadRequestException(
+        'Đơn hàng PO đã khóa, không thể cập nhật sản phẩm.',
+      );
+    }
+
+    const product = await this.productRepo.findOne({
+      where: { id: productId, purchaseOrderId: poId },
+    });
+    if (!product) {
+      throw new NotFoundException(
+        `Không tìm thấy sản phẩm với ID: ${productId} trong PO này`,
+      );
+    }
+
+    if (dto.productCode && dto.productCode.trim() !== product.productCode) {
+      const duplicate = await this.productRepo.findOne({
+        where: { purchaseOrderId: poId, productCode: dto.productCode.trim() },
+      });
+      if (duplicate) {
+        throw new ConflictException(
+          `Mã sản phẩm "${dto.productCode}" đã được sử dụng trong PO này.`,
+        );
+      }
+      product.productCode = dto.productCode.trim();
+    }
+
+    if (dto.productName) product.productName = dto.productName.trim();
+    if (dto.category !== undefined)
+      product.category = dto.category?.trim() || '';
+    if (dto.materialNote !== undefined)
+      product.materialNote = dto.materialNote?.trim() || '';
+    if (dto.deadline !== undefined)
+      product.deadline = dto.deadline ? new Date(dto.deadline) : (null as any);
+    if (dto.as3bCmBaseDays !== undefined)
+      product.as3bCmBaseDays = dto.as3bCmBaseDays;
+
+    product.updatedBy = (userId || null) as any;
+    product.updatedAt = new Date();
+
+    return this.productRepo.save(product);
+  }
+
+  async removeProduct(
+    poId: string,
+    productId: string,
+    userId?: string,
+  ): Promise<void> {
+    const po = await this.poRepo.findOne({ where: { id: poId } });
+    if (!po) {
+      throw new NotFoundException(`Không tìm thấy đơn hàng PO với ID: ${poId}`);
+    }
+
+    if (po.status === PoStatus.CLOSED) {
+      throw new BadRequestException(
+        'Đơn hàng PO đã khóa, không thể xóa sản phẩm.',
+      );
+    }
+
+    const product = await this.productRepo.findOne({
+      where: { id: productId, purchaseOrderId: poId },
+    });
+    if (!product) {
+      throw new NotFoundException(
+        `Không tìm thấy sản phẩm với ID: ${productId} trong PO này`,
+      );
+    }
+
+    await this.productRepo.remove(product);
+
+    // Audit log
+    const log = this.historyRepo.create({
+      purchaseOrderId: poId,
+      oldStatus: po.status,
+      newStatus: po.status,
+      action: 'Xóa sản phẩm khỏi PO',
+      reason: `Đã xóa sản phẩm ${product.productCode} — ${product.productName}`,
+      changedBy: userId || null,
+      changedAt: new Date(),
+    });
+    await this.historyRepo.save(log);
+  }
+
   async linkDocument(
     poId: string,
     dto: LinkPoDocumentDto,
@@ -379,11 +693,21 @@ export class PurchaseOrdersService {
       throw new NotFoundException(`Không tìm thấy đơn hàng PO với ID: ${poId}`);
     }
 
+    if (po.status === PoStatus.CLOSED) {
+      throw new BadRequestException(
+        'Đơn hàng PO đã khóa, không thể thay đổi tài liệu.',
+      );
+    }
+
     const existingLink = await this.poDocRepo.findOne({
       where: { purchaseOrderId: poId, documentId: dto.documentId },
     });
 
-    if (!existingLink) {
+    if (existingLink) {
+      existingLink.purpose = dto.purpose;
+      if (userId) existingLink.linkedBy = userId;
+      await this.poDocRepo.save(existingLink);
+    } else {
       const link = this.poDocRepo.create({
         purchaseOrderId: poId,
         documentId: dto.documentId,
@@ -397,7 +721,48 @@ export class PurchaseOrdersService {
     return this.findOne(poId);
   }
 
+  async updateDocumentPurpose(
+    poId: string,
+    documentId: string,
+    purpose: DocumentPurpose,
+    userId?: string,
+  ): Promise<PurchaseOrderDetailResponse> {
+    const po = await this.poRepo.findOne({ where: { id: poId } });
+    if (!po) {
+      throw new NotFoundException(`Không tìm thấy đơn hàng PO với ID: ${poId}`);
+    }
+
+    if (po.status === PoStatus.CLOSED) {
+      throw new BadRequestException(
+        'Đơn hàng PO đã khóa, không thể thay đổi phân loại tài liệu.',
+      );
+    }
+
+    const existingLink = await this.poDocRepo.findOne({
+      where: { purchaseOrderId: poId, documentId },
+    });
+
+    if (!existingLink) {
+      throw new NotFoundException(
+        `Không tìm thấy tài liệu với ID: ${documentId} trong đơn hàng PO này`,
+      );
+    }
+
+    existingLink.purpose = purpose;
+    if (userId) existingLink.linkedBy = userId;
+    await this.poDocRepo.save(existingLink);
+
+    return this.findOne(poId);
+  }
+
   async unlinkDocument(poId: string, documentId: string): Promise<void> {
+    const po = await this.poRepo.findOne({ where: { id: poId } });
+    if (po && po.status === PoStatus.CLOSED) {
+      throw new BadRequestException(
+        'Đơn hàng PO đã khóa, không thể gỡ tài liệu.',
+      );
+    }
+
     const existingLink = await this.poDocRepo.findOne({
       where: { purchaseOrderId: poId, documentId },
     });
@@ -413,5 +778,538 @@ export class PurchaseOrdersService {
       where: { purchaseOrderId: poId },
       order: { changedAt: 'DESC' },
     });
+  }
+
+  async uploadDocument(
+    poId: string,
+    file: {
+      originalname: string;
+      mimetype: string;
+      size: number;
+      buffer: Buffer;
+    },
+    purpose: string = 'other',
+    userId?: string,
+  ): Promise<{
+    documentId: string;
+    documentCode: string | null;
+    title: string;
+    purpose: string;
+    linkedAt: Date;
+    fileUrl: string;
+    fileName: string;
+    fileSize: number;
+  }> {
+    const po = await this.poRepo.findOne({ where: { id: poId } });
+    if (!po) {
+      throw new NotFoundException(`Không tìm thấy đơn hàng PO với ID: ${poId}`);
+    }
+
+    if (po.status === PoStatus.CLOSED) {
+      throw new BadRequestException(
+        'Đơn hàng PO đã khóa, không thể tải lên tài liệu mới.',
+      );
+    }
+
+    const uploadDir = path.join(process.cwd(), 'uploads', 'po-documents');
+    if (!fs.existsSync(uploadDir)) {
+      await fsPromises.mkdir(uploadDir, { recursive: true });
+    }
+
+    const ext = path.extname(file.originalname) || '';
+    const filename = `${randomUUID()}${ext}`;
+    const filePath = path.join(uploadDir, filename);
+
+    if (file.buffer) {
+      await fsPromises.writeFile(filePath, file.buffer);
+    }
+
+    const storageKey = `/uploads/po-documents/${filename}`;
+    const now = new Date();
+
+    const doc = this.docRepo.create({
+      documentCode: `DOC-PO-${Date.now().toString().slice(-6)}`,
+      title: file.originalname,
+      createdBy: userId || (null as any),
+      createdAt: now,
+    });
+    const savedDoc = (await this.docRepo.save(doc)) as unknown as Document;
+
+    const version = this.docVersionRepo.create({
+      documentId: savedDoc.id,
+      versionNo: 1,
+      originalFileName: file.originalname,
+      storageKey,
+      mimeType: file.mimetype || 'application/octet-stream',
+      byteSize: file.size || 0,
+      status: UploadStatus.READY,
+      uploadedBy: userId || (null as any),
+      uploadedAt: now,
+    });
+    const savedVersion = (await this.docVersionRepo.save(
+      version,
+    )) as unknown as DocumentVersion;
+
+    savedDoc.currentVersionId = savedVersion.id;
+    await this.docRepo.save(savedDoc);
+
+    const docPurpose =
+      (purpose as DocumentPurpose) || DocumentPurpose.PO_ORIGINAL;
+    const poDoc = this.poDocRepo.create({
+      purchaseOrderId: poId,
+      documentId: savedDoc.id,
+      purpose: docPurpose,
+      linkedBy: userId || (null as any),
+      linkedAt: now,
+    });
+    await this.poDocRepo.save(poDoc);
+
+    return {
+      documentId: savedDoc.id,
+      documentCode: savedDoc.documentCode,
+      title: savedDoc.title,
+      purpose: String(docPurpose),
+      linkedAt: now,
+      fileUrl: storageKey,
+      fileName: file.originalname,
+      fileSize: file.size,
+    };
+  }
+
+  async uploadMultipleDocuments(
+    poId: string,
+    files: any[],
+    purpose: string = 'other',
+    userId?: string,
+  ): Promise<
+    {
+      documentId: string;
+      documentCode: string | null;
+      title: string;
+      purpose: string;
+      linkedAt: Date;
+      fileUrl: string;
+      fileName: string;
+      fileSize: number;
+    }[]
+  > {
+    const results: {
+      documentId: string;
+      documentCode: string | null;
+      title: string;
+      purpose: string;
+      linkedAt: Date;
+      fileUrl: string;
+      fileName: string;
+      fileSize: number;
+    }[] = [];
+
+    for (const file of files) {
+      const doc = await this.uploadDocument(poId, file, purpose, userId);
+      results.push(doc);
+    }
+
+    return results;
+  }
+
+  private formatExcelCellValue(cell: any): string {
+    if (cell === null || cell === undefined) return '';
+    if (typeof cell === 'object') {
+      if ('result' in cell) return String((cell as any).result ?? '');
+      if ('richText' in cell && Array.isArray((cell as any).richText)) {
+        return (cell as any).richText.map((rt: any) => rt.text || '').join('');
+      }
+      if ('text' in cell) return String((cell as any).text ?? '');
+    }
+    return String(cell);
+  }
+
+  private columnNameToNumber(name: string): number {
+    let sum = 0;
+    for (let i = 0; i < name.length; i++) {
+      const code = name.toUpperCase().charCodeAt(i);
+      if (code >= 65 && code <= 90) {
+        sum = sum * 26 + (code - 64);
+      }
+    }
+    return sum || 1;
+  }
+
+  private async parseDocxToHtml(buffer: Buffer): Promise<string> {
+    const zip = await JSZip.loadAsync(buffer);
+    const xmlFile = zip.file('word/document.xml');
+    if (!xmlFile) {
+      return '<p class="text-gray-500 italic">Không tìm thấy nội dung văn bản Word trong tệp.</p>';
+    }
+    const xml = await xmlFile.async('string');
+
+    // Extract embedded images from relationships
+    const imageMap = new Map<string, string>();
+    try {
+      const relsFile = zip.file('word/_rels/document.xml.rels');
+      if (relsFile) {
+        const relsXml = await relsFile.async('string');
+        const relMatches = relsXml.matchAll(
+          /<Relationship[^>]+Id="([^"]+)"[^>]+Target="([^"]+)"/gi,
+        );
+        for (const rm of relMatches) {
+          const id = rm[1];
+          let target = rm[2];
+          if (target.startsWith('/')) target = target.slice(1);
+          const zipPath = target.startsWith('word/') ? target : `word/${target}`;
+          const imgZipFile = zip.file(zipPath);
+          if (imgZipFile) {
+            const ext =
+              path.extname(target).toLowerCase().replace('.', '') || 'png';
+            const mime =
+              ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : `image/${ext}`;
+            const imgBuf = await imgZipFile.async('nodebuffer');
+            imageMap.set(id, `data:${mime};base64,${imgBuf.toString('base64')}`);
+          }
+        }
+      }
+    } catch {
+      // Ignore rels errors, proceed with text parsing
+    }
+
+    let html = '';
+    const blockRegex = /<w:(p|tbl)\b[\s\S]*?<\/w:\1>/g;
+    let match: RegExpExecArray | null;
+    while ((match = blockRegex.exec(xml)) !== null) {
+      const block = match[0];
+      if (match[1] === 'p') {
+        const isHeading = /<w:pStyle\s+w:val="Heading(\d)"/i.exec(block);
+        let pText = '';
+        const tMatches = block.matchAll(/<w:t[^>]*>([\s\S]*?)<\/w:t>/g);
+        for (const t of tMatches) {
+          pText += t[1];
+        }
+        const trimmed = pText.trim();
+
+        // Check for images embedded in this paragraph
+        let imgHtml = '';
+        const blipMatches = block.matchAll(
+          /<(?:a:blip|v:imagedata)[^>]+(?:r:embed|r:id)="([^"]+)"/gi,
+        );
+        for (const bm of blipMatches) {
+          const relId = bm[1];
+          const imgData = imageMap.get(relId);
+          if (imgData) {
+            imgHtml += `<div class="my-3 text-center"><img src="${imgData}" class="max-h-96 max-w-full rounded shadow-sm inline-block object-contain" alt="Hình ảnh tài liệu" /></div>`;
+          }
+        }
+
+        if (imgHtml) {
+          html += imgHtml;
+        }
+
+        if (trimmed) {
+          if (isHeading) {
+            const level = Math.min(6, parseInt(isHeading[1], 10));
+            html += `<h${level} class="font-bold text-lg text-gray-900 dark:text-white my-2">${trimmed}</h${level}>`;
+          } else {
+            html += `<p class="text-gray-800 dark:text-gray-200 my-1 leading-relaxed">${trimmed}</p>`;
+          }
+        }
+      } else if (match[1] === 'tbl') {
+        html +=
+          '<div class="overflow-x-auto my-3"><table class="w-full border-collapse border border-gray-200 dark:border-gray-700 text-sm">';
+        const trMatches = block.matchAll(/<w:tr\b[\s\S]*?<\/w:tr>/g);
+        for (const tr of trMatches) {
+          html +=
+            '<tr class="border-b border-gray-200 dark:border-gray-700 hover:bg-gray-50/50 dark:hover:bg-gray-800/40">';
+          const tcMatches = tr[0].matchAll(/<w:tc\b[\s\S]*?<\/w:tc>/g);
+          for (const tc of tcMatches) {
+            let cellText = '';
+            const tMatches = tc[0].matchAll(/<w:t[^>]*>([\s\S]*?)<\/w:t>/g);
+            for (const t of tMatches) {
+              cellText += (cellText ? ' ' : '') + t[1];
+            }
+            html += `<td class="border border-gray-200 dark:border-gray-700 p-2 text-gray-800 dark:text-gray-200">${cellText}</td>`;
+          }
+          html += '</tr>';
+        }
+        html += '</table></div>';
+      }
+    }
+    return (
+      html ||
+      '<p class="text-gray-500 italic">Tài liệu không có nội dung văn bản hiển thị.</p>'
+    );
+  }
+
+  async previewDocument(
+    poId: string,
+    documentId: string,
+  ): Promise<PoDocumentPreviewResponse> {
+    const poDoc = await this.poDocRepo.findOne({
+      where: { purchaseOrderId: poId, documentId },
+    });
+    if (!poDoc) {
+      throw new NotFoundException('Tài liệu không thuộc đơn hàng PO này.');
+    }
+
+    const doc = await this.docRepo.findOne({ where: { id: documentId } });
+    if (!doc) {
+      throw new NotFoundException('Không tìm thấy thông tin tài liệu.');
+    }
+
+    let version: DocumentVersion | null = null;
+    if (doc.currentVersionId) {
+      version = await this.docVersionRepo.findOne({
+        where: { id: doc.currentVersionId },
+      });
+    }
+    if (!version) {
+      const versions = await this.docVersionRepo.find({
+        where: { documentId },
+        order: { versionNo: 'DESC' },
+        take: 1,
+      });
+      version = versions[0] || null;
+    }
+
+    if (!version) {
+      throw new NotFoundException(
+        'Không tìm thấy phiên bản tệp tin của tài liệu này.',
+      );
+    }
+
+    const relativePath = version.storageKey.startsWith('/')
+      ? version.storageKey.slice(1)
+      : version.storageKey;
+    const filePath = path.join(process.cwd(), relativePath);
+
+    if (!fs.existsSync(filePath)) {
+      throw new NotFoundException(
+        'Tệp tin vật lý không tồn tại trên hệ thống.',
+      );
+    }
+
+    const ext = path
+      .extname(version.originalFileName || version.storageKey)
+      .toLowerCase();
+
+    if (ext === '.xlsx' || ext === '.xls') {
+      const wb = new ExcelJS.Workbook();
+      await wb.xlsx.readFile(filePath);
+      const sheets: PoDocumentPreviewSheet[] = wb.worksheets.map((ws) => {
+        const maxRows = Math.max(ws.rowCount || 0, ws.actualRowCount || 0);
+        const maxCols = Math.max(
+          ws.columnCount || 0,
+          ws.actualColumnCount || 0,
+        );
+
+        // 1. Build map of merged cells
+        const mergeSpans = new Map<
+          string,
+          { rowSpan: number; colSpan: number }
+        >();
+        const slaveCellSet = new Set<string>();
+
+        const mergesObj = (ws as any)._merges;
+        if (mergesObj && typeof mergesObj === 'object') {
+          for (const key of Object.keys(mergesObj)) {
+            const m = mergesObj[key]?.model;
+            if (
+              m &&
+              typeof m.top === 'number' &&
+              typeof m.bottom === 'number' &&
+              typeof m.left === 'number' &&
+              typeof m.right === 'number'
+            ) {
+              const rowSpan = m.bottom - m.top + 1;
+              const colSpan = m.right - m.left + 1;
+              mergeSpans.set(`${m.top},${m.left}`, { rowSpan, colSpan });
+
+              for (let r = m.top; r <= m.bottom; r++) {
+                for (let c = m.left; c <= m.right; c++) {
+                  if (r !== m.top || c !== m.left) {
+                    slaveCellSet.add(`${r},${c}`);
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        // 2. Extract embedded images
+        const cellImageMap = new Map<string, string[]>();
+        const unanchoredImages: string[] = [];
+
+        try {
+          const wsImages = ws.getImages ? ws.getImages() : [];
+          for (const img of wsImages) {
+            let r = 1;
+            let c = 1;
+            let hasAnchor = false;
+
+            const rawRange = img.range as any;
+            if (typeof rawRange === 'string') {
+              const match = rawRange.match(/([A-Za-z]+)(\d+)/);
+              if (match) {
+                c = this.columnNameToNumber(match[1]);
+                r = parseInt(match[2], 10);
+                hasAnchor = true;
+              }
+            } else if (rawRange && typeof rawRange === 'object') {
+              const tl = rawRange.tl;
+              if (tl) {
+                if (typeof tl.nativeRow === 'number') {
+                  r = tl.nativeRow + 1;
+                  hasAnchor = true;
+                } else if (typeof tl.row === 'number') {
+                  r = Math.floor(tl.row);
+                  hasAnchor = true;
+                }
+                if (typeof tl.nativeCol === 'number') {
+                  c = tl.nativeCol + 1;
+                  hasAnchor = true;
+                } else if (typeof tl.col === 'number') {
+                  c = Math.floor(tl.col);
+                  hasAnchor = true;
+                }
+              }
+            }
+
+            const media = wb.getImage(Number(img.imageId));
+            if (media && media.buffer) {
+              const extName = (media.extension || 'png')
+                .toLowerCase()
+                .replace('.', '');
+              const mime =
+                extName === 'jpg' || extName === 'jpeg'
+                  ? 'image/jpeg'
+                  : `image/${extName}`;
+              const dataUrl = `data:${mime};base64,${Buffer.from(media.buffer).toString('base64')}`;
+
+              if (hasAnchor) {
+                // If target cell is inside a merge, redirect image to master cell
+                const cell = ws.getCell(r, c);
+                let targetR = r;
+                let targetC = c;
+                if (cell?.isMerged && cell.master) {
+                  targetR = Number(cell.master.row) || r;
+                  targetC = Number(cell.master.col) || c;
+                }
+                const key = `${targetR},${targetC}`;
+                const list = cellImageMap.get(key) || [];
+                list.push(dataUrl);
+                cellImageMap.set(key, list);
+              } else {
+                unanchoredImages.push(dataUrl);
+              }
+            }
+          }
+        } catch {
+          // Gracefully continue if drawing/image extraction fails
+        }
+
+        // 3. Build cell matrix
+        const cells: PoExcelCell[][] = [];
+        const rows: string[][] = [];
+
+        for (let r = 1; r <= maxRows; r++) {
+          const rowCells: PoExcelCell[] = [];
+          const rowValues: string[] = [];
+          for (let c = 1; c <= maxCols; c++) {
+            const cell = ws.getCell(r, c);
+            const rawVal = this.formatExcelCellValue(cell?.value);
+            rowValues.push(rawVal);
+
+            const masterR = cell?.master ? Number(cell.master.row) : null;
+            const masterC = cell?.master ? Number(cell.master.col) : null;
+            const isSlave =
+              slaveCellSet.has(`${r},${c}`) ||
+              (cell?.isMerged &&
+                cell.master &&
+                (masterR !== r || masterC !== c));
+
+            const cellKey = `${r},${c}`;
+            const images = cellImageMap.get(cellKey);
+            const span = mergeSpans.get(cellKey);
+
+            const bold = Boolean(cell?.font?.bold);
+            let align: 'left' | 'center' | 'right' | undefined;
+            if (cell?.alignment?.horizontal === 'center') align = 'center';
+            else if (cell?.alignment?.horizontal === 'right') align = 'right';
+            else if (cell?.alignment?.horizontal === 'left') align = 'left';
+
+            rowCells.push({
+              value: rawVal,
+              image: images?.[0],
+              images: images && images.length > 1 ? images : undefined,
+              rowSpan: span && span.rowSpan > 1 ? span.rowSpan : undefined,
+              colSpan: span && span.colSpan > 1 ? span.colSpan : undefined,
+              isMerged: isSlave ? true : undefined,
+              bold: bold ? true : undefined,
+              align,
+            });
+          }
+          cells.push(rowCells);
+          rows.push(rowValues);
+        }
+
+        return {
+          name: ws.name,
+          rowCount: maxRows,
+          columnCount: maxCols,
+          rows,
+          cells,
+          unanchoredImages:
+            unanchoredImages.length > 0 ? unanchoredImages : undefined,
+        };
+      });
+
+      return {
+        type: 'excel',
+        fileName: version.originalFileName,
+        fileUrl: version.storageKey,
+        sheets,
+      };
+    }
+
+    if (ext === '.docx') {
+      const fileBuf = await fsPromises.readFile(filePath);
+      const html = await this.parseDocxToHtml(fileBuf);
+      return {
+        type: 'word',
+        fileName: version.originalFileName,
+        fileUrl: version.storageKey,
+        html,
+      };
+    }
+
+    if (ext === '.pdf') {
+      return {
+        type: 'pdf',
+        fileName: version.originalFileName,
+        fileUrl: version.storageKey,
+      };
+    }
+
+    if (['.png', '.jpg', '.jpeg', '.webp', '.gif', '.svg'].includes(ext)) {
+      return {
+        type: 'image',
+        fileName: version.originalFileName,
+        fileUrl: version.storageKey,
+      };
+    }
+
+    if (['.txt', '.csv', '.json', '.md'].includes(ext)) {
+      const text = await fsPromises.readFile(filePath, 'utf-8');
+      return {
+        type: 'text',
+        fileName: version.originalFileName,
+        fileUrl: version.storageKey,
+        text,
+      };
+    }
+
+    return {
+      type: 'unsupported',
+      fileName: version.originalFileName,
+      fileUrl: version.storageKey,
+    };
   }
 }

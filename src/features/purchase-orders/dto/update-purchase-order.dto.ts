@@ -12,7 +12,7 @@ export class UpdatePurchaseOrderDto {
   @MaxLength(100, { message: 'Mã PO khách hàng không được vượt quá 100 ký tự' })
   customerPoCode?: string;
 
-  @IsUUID('4', { message: 'customerId phải là định dạng UUID hợp lệ' })
+  @IsUUID(undefined, { message: 'customerId phải là định dạng UUID hợp lệ' })
   @IsOptional()
   customerId?: string;
 
