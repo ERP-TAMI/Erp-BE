@@ -359,5 +359,65 @@ describe('PurchaseOrdersService', () => {
         ),
       ).rejects.toThrow(BadRequestException);
     });
+
+    it('should reject update if PO is CANCELLED', async () => {
+      mockPoRepo.findOne.mockResolvedValueOnce({
+        id: 'po-1',
+        status: PoStatus.CANCELLED,
+      });
+
+      await expect(
+        service.updateDocumentPurpose(
+          'po-1',
+          'doc-1',
+          DocumentPurpose.SAMPLE_IMAGE,
+        ),
+      ).rejects.toThrow(
+        'Đơn hàng PO đã hủy, không thể thay đổi phân loại tài liệu.',
+      );
+    });
+  });
+
+  describe('Cancelled PO invariant protection', () => {
+    it('should block updates if PO is CANCELLED', async () => {
+      mockPoRepo.findOne.mockResolvedValueOnce({
+        id: 'po-1',
+        poCode: 'PO-001',
+        status: PoStatus.CANCELLED,
+      });
+
+      await expect(
+        service.update('po-1', { note: 'Thay đổi ghi chú' }),
+      ).rejects.toThrow('Đơn hàng PO đã hủy, không thể chỉnh sửa thông tin.');
+    });
+
+    it('should block adding product if PO is CANCELLED', async () => {
+      mockPoRepo.findOne.mockResolvedValueOnce({
+        id: 'po-1',
+        status: PoStatus.CANCELLED,
+      });
+
+      await expect(
+        service.addProduct('po-1', {
+          productCode: 'PROD-001',
+          productName: 'Áo Polo',
+        }),
+      ).rejects.toThrow('Đơn hàng PO đã hủy, không thể thêm sản phẩm mới.');
+    });
+  });
+
+  describe('escapeHtml in parseDocxToHtml', () => {
+    it('should escape malicious script and img tags in docx text', async () => {
+      const escapeFn = (service as any).escapeHtml.bind(service);
+      const malicious =
+        '<script>alert("xss")</script>&<img src="x" onerror="evil()"/>';
+      const safe = escapeFn(malicious);
+
+      expect(safe).not.toContain('<script>');
+      expect(safe).not.toContain('</script>');
+      expect(safe).toContain('&lt;script&gt;');
+      expect(safe).toContain('&lt;img');
+      expect(safe).toContain('&amp;');
+    });
   });
 });

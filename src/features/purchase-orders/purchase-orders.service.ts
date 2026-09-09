@@ -398,6 +398,28 @@ export class PurchaseOrdersService {
     };
   }
 
+  private checkPoNotLocked(po: PurchaseOrder, action: string): void {
+    if (po.status === PoStatus.CLOSED) {
+      throw new BadRequestException(
+        action === 'chỉnh sửa thông tin'
+          ? 'PO đã ở trạng thái Đã khóa, chỉ có thể thay đổi thông tin qua luồng điều chỉnh.'
+          : `Đơn hàng PO đã khóa, không thể ${action}.`,
+      );
+    }
+    if (po.status === PoStatus.CANCELLED) {
+      throw new BadRequestException(`Đơn hàng PO đã hủy, không thể ${action}.`);
+    }
+  }
+
+  private escapeHtml(str: string): string {
+    return str
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
   async update(
     id: string,
     dto: UpdatePurchaseOrderDto,
@@ -408,11 +430,7 @@ export class PurchaseOrdersService {
       throw new NotFoundException(`Không tìm thấy đơn hàng PO với ID: ${id}`);
     }
 
-    if (po.status === PoStatus.CLOSED) {
-      throw new BadRequestException(
-        'PO đã ở trạng thái Đã khóa, chỉ có thể thay đổi thông tin qua luồng điều chỉnh.',
-      );
-    }
+    this.checkPoNotLocked(po, 'chỉnh sửa thông tin');
 
     if (dto.customerPoCode !== undefined) {
       po.customerPoCode = dto.customerPoCode || null;
@@ -540,11 +558,7 @@ export class PurchaseOrdersService {
       throw new NotFoundException(`Không tìm thấy đơn hàng PO với ID: ${poId}`);
     }
 
-    if (po.status === PoStatus.CLOSED) {
-      throw new BadRequestException(
-        'Đơn hàng PO đã khóa, không thể thêm sản phẩm mới.',
-      );
-    }
+    this.checkPoNotLocked(po, 'thêm sản phẩm mới');
 
     const existingProduct = await this.productRepo.findOne({
       where: { purchaseOrderId: poId, productCode: dto.productCode.trim() },
@@ -600,11 +614,7 @@ export class PurchaseOrdersService {
       throw new NotFoundException(`Không tìm thấy đơn hàng PO với ID: ${poId}`);
     }
 
-    if (po.status === PoStatus.CLOSED) {
-      throw new BadRequestException(
-        'Đơn hàng PO đã khóa, không thể cập nhật sản phẩm.',
-      );
-    }
+    this.checkPoNotLocked(po, 'cập nhật sản phẩm');
 
     const product = await this.productRepo.findOne({
       where: { id: productId, purchaseOrderId: poId },
@@ -653,11 +663,7 @@ export class PurchaseOrdersService {
       throw new NotFoundException(`Không tìm thấy đơn hàng PO với ID: ${poId}`);
     }
 
-    if (po.status === PoStatus.CLOSED) {
-      throw new BadRequestException(
-        'Đơn hàng PO đã khóa, không thể xóa sản phẩm.',
-      );
-    }
+    this.checkPoNotLocked(po, 'xóa sản phẩm');
 
     const product = await this.productRepo.findOne({
       where: { id: productId, purchaseOrderId: poId },
@@ -693,11 +699,7 @@ export class PurchaseOrdersService {
       throw new NotFoundException(`Không tìm thấy đơn hàng PO với ID: ${poId}`);
     }
 
-    if (po.status === PoStatus.CLOSED) {
-      throw new BadRequestException(
-        'Đơn hàng PO đã khóa, không thể thay đổi tài liệu.',
-      );
-    }
+    this.checkPoNotLocked(po, 'thay đổi tài liệu');
 
     const existingLink = await this.poDocRepo.findOne({
       where: { purchaseOrderId: poId, documentId: dto.documentId },
@@ -732,11 +734,7 @@ export class PurchaseOrdersService {
       throw new NotFoundException(`Không tìm thấy đơn hàng PO với ID: ${poId}`);
     }
 
-    if (po.status === PoStatus.CLOSED) {
-      throw new BadRequestException(
-        'Đơn hàng PO đã khóa, không thể thay đổi phân loại tài liệu.',
-      );
-    }
+    this.checkPoNotLocked(po, 'thay đổi phân loại tài liệu');
 
     const existingLink = await this.poDocRepo.findOne({
       where: { purchaseOrderId: poId, documentId },
@@ -757,11 +755,10 @@ export class PurchaseOrdersService {
 
   async unlinkDocument(poId: string, documentId: string): Promise<void> {
     const po = await this.poRepo.findOne({ where: { id: poId } });
-    if (po && po.status === PoStatus.CLOSED) {
-      throw new BadRequestException(
-        'Đơn hàng PO đã khóa, không thể gỡ tài liệu.',
-      );
+    if (!po) {
+      throw new NotFoundException(`Không tìm thấy đơn hàng PO với ID: ${poId}`);
     }
+    this.checkPoNotLocked(po, 'gỡ tài liệu');
 
     const existingLink = await this.poDocRepo.findOne({
       where: { purchaseOrderId: poId, documentId },
@@ -1009,11 +1006,12 @@ export class PurchaseOrdersService {
         }
 
         if (trimmed) {
+          const safeText = this.escapeHtml(trimmed);
           if (isHeading) {
             const level = Math.min(6, parseInt(isHeading[1], 10));
-            html += `<h${level} class="font-bold text-lg text-gray-900 dark:text-white my-2">${trimmed}</h${level}>`;
+            html += `<h${level} class="font-bold text-lg text-gray-900 dark:text-white my-2">${safeText}</h${level}>`;
           } else {
-            html += `<p class="text-gray-800 dark:text-gray-200 my-1 leading-relaxed">${trimmed}</p>`;
+            html += `<p class="text-gray-800 dark:text-gray-200 my-1 leading-relaxed">${safeText}</p>`;
           }
         }
       } else if (match[1] === 'tbl') {
@@ -1030,7 +1028,8 @@ export class PurchaseOrdersService {
             for (const t of tMatches) {
               cellText += (cellText ? ' ' : '') + t[1];
             }
-            html += `<td class="border border-gray-200 dark:border-gray-700 p-2 text-gray-800 dark:text-gray-200">${cellText}</td>`;
+            const safeCellText = this.escapeHtml(cellText.trim());
+            html += `<td class="border border-gray-200 dark:border-gray-700 p-2 text-gray-800 dark:text-gray-200">${safeCellText}</td>`;
           }
           html += '</tr>';
         }
