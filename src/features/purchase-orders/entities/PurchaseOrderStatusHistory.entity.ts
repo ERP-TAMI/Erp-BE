@@ -16,7 +16,7 @@ export class PurchaseOrderStatusHistory {
     nullable: true,
     name: 'old_status',
   })
-  oldStatus: PoStatus;
+  oldStatus: PoStatus | null;
 
   @Column({
     type: 'enum',
@@ -30,10 +30,10 @@ export class PurchaseOrderStatusHistory {
   action: string;
 
   @Column({ type: 'text', nullable: true })
-  reason: string;
+  reason: string | null;
 
   @Column({ type: 'uuid', nullable: true, name: 'changed_by' })
-  changedBy: string;
+  changedBy: string | null;
 
   @Column({ type: 'timestamptz', name: 'changed_at' })
   changedAt: Date;
