@@ -23,6 +23,7 @@ import { NotificationsModule } from './features/notifications/notifications.modu
 import { AuditModule } from './features/audit/audit.module';
 import { PlatformModule } from './features/platform/platform.module';
 import { UploadsModule } from './features/uploads/uploads.module';
+import { StorageModule } from './features/storage/storage.module';
 import { AppLoggerModule } from './common/logger/logger.module';
 
 const imports = [
@@ -41,6 +42,7 @@ const imports = [
   DocumentsModule,
   StylesModule,
   UploadsModule,
+  StorageModule,
   DraftBomsModule,
   PurchaseOrdersModule,
   BomsModule,
