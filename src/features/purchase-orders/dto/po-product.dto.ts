@@ -19,15 +19,32 @@ export class CreatePoProductDto {
   @IsUUID('4', { message: 'sourceStyleId phải là UUID hợp lệ' })
   sourceStyleId?: string;
 
-  @ApiProperty({
+  @ApiPropertyOptional({
+    description: 'Alias cho sourceStyleId',
+  })
+  @IsOptional()
+  @IsUUID('4', { message: 'styleId phải là UUID hợp lệ' })
+  styleId?: string;
+
+  @ApiPropertyOptional({
     description: 'Mã sản phẩm / Style trong PO',
     example: 'PROD-2026-001',
     maxLength: 100,
   })
+  @IsOptional()
   @IsString({ message: 'productCode phải là chuỗi ký tự' })
-  @IsNotEmpty({ message: 'productCode không được để trống' })
   @MaxLength(100, { message: 'productCode không vượt quá 100 ký tự' })
-  productCode: string;
+  productCode?: string;
+
+  @ApiPropertyOptional({
+    description: 'Alias cho productCode',
+    example: 'ST-2026-001',
+    maxLength: 100,
+  })
+  @IsOptional()
+  @IsString({ message: 'styleCode phải là chuỗi ký tự' })
+  @MaxLength(100, { message: 'styleCode không vượt quá 100 ký tự' })
+  styleCode?: string;
 
   @ApiProperty({
     description: 'Tên sản phẩm',
@@ -56,6 +73,20 @@ export class CreatePoProductDto {
   @IsOptional()
   @IsString()
   materialNote?: string;
+
+  @ApiPropertyOptional({
+    description: 'Alias cho materialNote / màu sắc',
+  })
+  @IsOptional()
+  @IsString()
+  colorName?: string;
+
+  @ApiPropertyOptional({
+    description: 'Trạng thái dòng sản phẩm (dành cho client gửi lên)',
+  })
+  @IsOptional()
+  @IsString()
+  status?: string;
 
   @ApiPropertyOptional({
     description: 'Hạn giao hàng của sản phẩm',
@@ -88,6 +119,30 @@ export class UpdatePoProductDto {
   productCode?: string;
 
   @ApiPropertyOptional({
+    description: 'Alias cho productCode',
+    example: 'ST-2026-001',
+    maxLength: 100,
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  styleCode?: string;
+
+  @ApiPropertyOptional({
+    description: 'ID mẫu Fit nguồn',
+  })
+  @IsOptional()
+  @IsUUID('4')
+  sourceStyleId?: string;
+
+  @ApiPropertyOptional({
+    description: 'Alias cho sourceStyleId',
+  })
+  @IsOptional()
+  @IsUUID('4')
+  styleId?: string;
+
+  @ApiPropertyOptional({
     description: 'Tên sản phẩm',
     example: 'Áo Polo Nam Classic Fit',
     maxLength: 255,
@@ -114,6 +169,20 @@ export class UpdatePoProductDto {
   @IsOptional()
   @IsString()
   materialNote?: string;
+
+  @ApiPropertyOptional({
+    description: 'Alias cho materialNote',
+  })
+  @IsOptional()
+  @IsString()
+  colorName?: string;
+
+  @ApiPropertyOptional({
+    description: 'Trạng thái dòng sản phẩm',
+  })
+  @IsOptional()
+  @IsString()
+  status?: string;
 
   @ApiPropertyOptional({
     description: 'Hạn giao hàng của sản phẩm',

@@ -1,3 +1,4 @@
+import * as path from 'path';
 import {
   Controller,
   Get,
@@ -22,7 +23,10 @@ import {
   ApiOperation,
   ApiResponse,
   ApiConsumes,
+  ApiBearerAuth,
 } from '@nestjs/swagger';
+import { Auth } from '../../common/decorators/auth.decorator';
+import { DocumentPurpose } from '../../common/enums/database.enums';
 import {
   PurchaseOrdersService,
   PaginatedPoResult,
@@ -43,7 +47,59 @@ import { PurchaseOrder } from './entities/PurchaseOrder.entity';
 import { PurchaseOrderProduct } from './entities/PurchaseOrderProduct.entity';
 import { PurchaseOrderStatusHistory } from './entities/PurchaseOrderStatusHistory.entity';
 
+const ALLOWED_PO_EXTENSIONS = new Set([
+  '.pdf',
+  '.docx',
+  '.doc',
+  '.xlsx',
+  '.xls',
+  '.csv',
+  '.png',
+  '.jpg',
+  '.jpeg',
+  '.webp',
+  '.gif',
+  '.txt',
+]);
+
+const ALLOWED_PO_MIME_TYPES = new Set([
+  'application/pdf',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.ms-excel',
+  'text/csv',
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+  'image/gif',
+  'text/plain',
+]);
+
+export const poDocumentFileFilter = (
+  _req: any,
+  file: any,
+  callback: (error: Error | null, acceptFile: boolean) => void,
+) => {
+  const ext = (
+    file?.originalname ? path.extname(file.originalname) : ''
+  ).toLowerCase();
+  const mime = (file?.mimetype || '').toLowerCase();
+  if (ALLOWED_PO_EXTENSIONS.has(ext) || ALLOWED_PO_MIME_TYPES.has(mime)) {
+    callback(null, true);
+  } else {
+    callback(
+      new BadRequestException(
+        `Định dạng tệp "${file?.originalname || 'không rõ'}" không được hỗ trợ. Chỉ chấp nhận các định dạng: PDF, DOCX, DOC, XLSX, XLS, CSV, TXT, PNG, JPG, JPEG, WEBP.`,
+      ),
+      false,
+    );
+  }
+};
+
 @ApiTags('purchase-orders')
+@ApiBearerAuth()
+@Auth()
 @Controller([
   'purchase-orders',
   'api/purchase-orders',
@@ -242,7 +298,12 @@ export class PurchaseOrdersController {
     description: 'Đã tải lên và đính kèm tài liệu vào PO',
   })
   @ApiResponse({ status: 400, description: 'PO đã khóa hoặc thiếu tệp' })
-  @UseInterceptors(FileInterceptor('file'))
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: { fileSize: 25 * 1024 * 1024 },
+      fileFilter: poDocumentFileFilter,
+    }),
+  )
   async uploadDocument(
     @Param('id', ParseUUIDPipe) id: string,
     @UploadedFile() file?: any,
@@ -252,8 +313,15 @@ export class PurchaseOrdersController {
     if (!file) {
       throw new BadRequestException('Vui lòng chọn tệp để tải lên');
     }
+    const validPurposes = Object.values(DocumentPurpose);
+    const targetPurpose = (purpose || DocumentPurpose.OTHER) as DocumentPurpose;
+    if (!validPurposes.includes(targetPurpose)) {
+      throw new BadRequestException(
+        `Mục đích sử dụng tài liệu không hợp lệ. Các giá trị hợp lệ: ${validPurposes.join(', ')}`,
+      );
+    }
     const userId = req?.user?.id || req?.user?.sub;
-    return this.service.uploadDocument(id, file, purpose, userId);
+    return this.service.uploadDocument(id, file, targetPurpose, userId);
   }
 
   @Post(':id/documents/upload-multiple')
@@ -264,7 +332,12 @@ export class PurchaseOrdersController {
     description: 'Đã tải lên danh sách tài liệu vào PO',
   })
   @ApiResponse({ status: 400, description: 'PO đã khóa hoặc thiếu tệp' })
-  @UseInterceptors(FilesInterceptor('files'))
+  @UseInterceptors(
+    FilesInterceptor('files', 20, {
+      limits: { fileSize: 25 * 1024 * 1024, files: 20 },
+      fileFilter: poDocumentFileFilter,
+    }),
+  )
   async uploadMultipleDocuments(
     @Param('id', ParseUUIDPipe) id: string,
     @UploadedFiles() files?: any[],
@@ -274,8 +347,20 @@ export class PurchaseOrdersController {
     if (!files || files.length === 0) {
       throw new BadRequestException('Vui lòng chọn ít nhất một tệp để tải lên');
     }
+    const validPurposes = Object.values(DocumentPurpose);
+    const targetPurpose = (purpose || DocumentPurpose.OTHER) as DocumentPurpose;
+    if (!validPurposes.includes(targetPurpose)) {
+      throw new BadRequestException(
+        `Mục đích sử dụng tài liệu không hợp lệ. Các giá trị hợp lệ: ${validPurposes.join(', ')}`,
+      );
+    }
     const userId = req?.user?.id || req?.user?.sub;
-    return this.service.uploadMultipleDocuments(id, files, purpose, userId);
+    return this.service.uploadMultipleDocuments(
+      id,
+      files,
+      targetPurpose,
+      userId,
+    );
   }
 
   @Get(':id/documents/:documentId/preview')

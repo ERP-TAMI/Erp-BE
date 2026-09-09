@@ -1,3 +1,4 @@
+import * as JSZip from 'jszip';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { ConflictException, BadRequestException } from '@nestjs/common';
@@ -166,6 +167,45 @@ describe('PurchaseOrdersService', () => {
       expect(result.status).toBe(PoStatus.DRAFT);
       expect(mockHistoryRepo.save).toHaveBeenCalled();
     });
+
+    it('should set customerId to null when customerNameSnapshot does not match any customer', async () => {
+      mockPoRepo.findOne.mockResolvedValueOnce(null);
+      mockCustomerRepo.findOne.mockResolvedValueOnce(null);
+      const now = new Date();
+      const mockCreatedPo = {
+        id: 'po-101',
+        poCode: 'PO-101',
+        customerId: null,
+        customerNameSnapshot: 'Khách hàng hoàn toàn mới',
+        receivedDate: now,
+        status: PoStatus.DRAFT,
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      mockPoRepo.create.mockReturnValue(mockCreatedPo);
+      mockPoRepo.save.mockResolvedValue(mockCreatedPo);
+      mockHistoryRepo.create.mockReturnValue({});
+      mockHistoryRepo.save.mockResolvedValue({});
+      mockPoDocRepo.find.mockResolvedValue([]);
+      mockProductRepo.find.mockResolvedValue([]);
+      mockHistoryRepo.find.mockResolvedValue([]);
+      mockPoRepo.findOne.mockResolvedValueOnce(mockCreatedPo);
+
+      const result = await service.create({
+        poCode: 'PO-101',
+        customerNameSnapshot: 'Khách hàng hoàn toàn mới',
+        receivedDate: '2026-09-07',
+      });
+
+      expect(mockPoRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          customerId: null,
+          customerNameSnapshot: 'Khách hàng hoàn toàn mới',
+        }),
+      );
+      expect(result.poCode).toBe('PO-101');
+    });
   });
 
   describe('updateStatus', () => {
@@ -294,6 +334,43 @@ describe('PurchaseOrdersService', () => {
       expect(mockProductRepo.save).toHaveBeenCalled();
     });
 
+    it('should add product using styleCode and styleId aliases', async () => {
+      mockPoRepo.findOne.mockResolvedValueOnce({
+        id: 'po-1',
+        status: PoStatus.DRAFT,
+      });
+      mockProductRepo.findOne.mockResolvedValueOnce(null);
+      const mockProduct = {
+        id: 'prod-2',
+        purchaseOrderId: 'po-1',
+        sourceStyleId: 'd9b2d63d-a233-4f9e-a89e-2938804918e7',
+        productCode: 'STYLE-002',
+        productName: 'Áo T-Shirt',
+        materialNote: 'Đỏ',
+        status: ProductStatus.DRAFT,
+      };
+      mockProductRepo.create.mockReturnValue(mockProduct);
+      mockProductRepo.save.mockResolvedValue(mockProduct);
+      mockHistoryRepo.create.mockReturnValue({});
+      mockHistoryRepo.save.mockResolvedValue({});
+
+      const result = await service.addProduct('po-1', {
+        styleCode: 'STYLE-002',
+        styleId: 'd9b2d63d-a233-4f9e-a89e-2938804918e7',
+        colorName: 'Đỏ',
+        productName: 'Áo T-Shirt',
+      });
+
+      expect(mockProductRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          productCode: 'STYLE-002',
+          sourceStyleId: 'd9b2d63d-a233-4f9e-a89e-2938804918e7',
+          materialNote: 'Đỏ',
+        }),
+      );
+      expect(result.productCode).toBe('STYLE-002');
+    });
+
     it('should block adding product if PO is CLOSED', async () => {
       mockPoRepo.findOne.mockResolvedValueOnce({
         id: 'po-1',
@@ -404,6 +481,60 @@ describe('PurchaseOrdersService', () => {
         }),
       ).rejects.toThrow('Đơn hàng PO đã hủy, không thể thêm sản phẩm mới.');
     });
+
+    it('should block uploading document if PO is CANCELLED', async () => {
+      mockPoRepo.findOne.mockResolvedValueOnce({
+        id: 'po-1',
+        status: PoStatus.CANCELLED,
+      });
+
+      await expect(
+        service.uploadDocument('po-1', {
+          originalname: 'test.pdf',
+          mimetype: 'application/pdf',
+          size: 4,
+          buffer: Buffer.from('test'),
+        }),
+      ).rejects.toThrow('Đơn hàng PO đã hủy, không thể tải lên tài liệu mới.');
+    });
+
+    it('should block uploading multiple documents if PO is CANCELLED', async () => {
+      mockPoRepo.findOne.mockResolvedValueOnce({
+        id: 'po-1',
+        status: PoStatus.CANCELLED,
+      });
+
+      await expect(
+        service.uploadMultipleDocuments('po-1', [
+          {
+            originalname: 'test1.pdf',
+            mimetype: 'application/pdf',
+            size: 5,
+            buffer: Buffer.from('test1'),
+          },
+        ]),
+      ).rejects.toThrow('Đơn hàng PO đã hủy, không thể tải lên tài liệu mới.');
+    });
+  });
+
+  describe('uploadDocument disk cleanup on DB failure', () => {
+    it('should delete uploaded file from disk if docRepo.save fails', async () => {
+      mockPoRepo.findOne.mockResolvedValueOnce({
+        id: 'po-1',
+        status: PoStatus.DRAFT,
+      });
+      mockDocRepo.create.mockReturnValue({ id: 'temp-doc' });
+      mockDocRepo.save.mockRejectedValueOnce(new Error('DB Connection Failed'));
+
+      await expect(
+        service.uploadDocument('po-1', {
+          originalname: 'cleanup-test.pdf',
+          mimetype: 'application/pdf',
+          size: 10,
+          buffer: Buffer.from('test content'),
+        }),
+      ).rejects.toThrow('DB Connection Failed');
+    });
   });
 
   describe('escapeHtml in parseDocxToHtml', () => {
@@ -418,6 +549,36 @@ describe('PurchaseOrdersService', () => {
       expect(safe).toContain('&lt;script&gt;');
       expect(safe).toContain('&lt;img');
       expect(safe).toContain('&amp;');
+    });
+
+    it('should parse docx buffer and escape malicious script and markup in paragraphs and tables', async () => {
+      const zip = new JSZip();
+      zip.file(
+        'word/document.xml',
+        `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+        <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+          <w:body>
+            <w:p>
+              <w:r><w:t><script>alert("xss")</script></w:t></w:r>
+            </w:p>
+            <w:tbl>
+              <w:tr>
+                <w:tc>
+                  <w:p><w:r><w:t><img src=x onerror=alert(1) /></w:t></w:r></w:p>
+                </w:tc>
+              </w:tr>
+            </w:tbl>
+          </w:body>
+        </w:document>`,
+      );
+      const buffer = await zip.generateAsync({ type: 'nodebuffer' });
+      const html = await (service as any).parseDocxToHtml(buffer);
+
+      expect(html).not.toContain('<script>');
+      expect(html).not.toContain('</script>');
+      expect(html).not.toContain('<img');
+      expect(html).toContain('&lt;script&gt;');
+      expect(html).toContain('&lt;img');
     });
   });
 });
