@@ -79,6 +79,7 @@ export interface PurchaseOrderDetailResponse {
   customerId: string | null;
   customerNameSnapshot: string;
   receivedDate: Date;
+  deadline: Date | null;
   note: string | null;
   status: PoStatus;
   cancellationReason: string | null;
@@ -107,6 +108,17 @@ export interface PurchaseOrderDetailResponse {
     changedBy: string | null;
     changedAt: Date;
   }[];
+}
+
+function toYmdString(val: string | Date): string {
+  if (!val) return '';
+  if (val instanceof Date) {
+    const y = val.getFullYear();
+    const m = String(val.getMonth() + 1).padStart(2, '0');
+    const d = String(val.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  return String(val).slice(0, 10);
 }
 
 @Injectable()
@@ -160,6 +172,23 @@ export class PurchaseOrdersService {
       }
     }
 
+    const today = new Date();
+    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+    const deadlineStr = toYmdString(dto.deadline);
+    const receivedDateStr = toYmdString(dto.receivedDate);
+
+    if (deadlineStr < todayStr) {
+      throw new BadRequestException(
+        'Hạn hoàn thành (deadline) không được ở trong quá khứ.',
+      );
+    }
+
+    if (deadlineStr <= receivedDateStr) {
+      throw new BadRequestException(
+        'Hạn hoàn thành (deadline) phải sau ngày nhận PO.',
+      );
+    }
+
     const now = new Date();
     const poEntity = this.poRepo.create({
       poCode: dto.poCode,
@@ -167,6 +196,7 @@ export class PurchaseOrdersService {
       customerId: customerId || null,
       customerNameSnapshot: dto.customerNameSnapshot,
       receivedDate: new Date(dto.receivedDate),
+      deadline: dto.deadline ? new Date(dto.deadline) : null,
       note: dto.note || null,
       status: PoStatus.DRAFT,
       createdBy: userId || null,
@@ -242,6 +272,7 @@ export class PurchaseOrdersService {
       createdAt: 'po.createdAt',
       poCode: 'po.poCode',
       receivedDate: 'po.receivedDate',
+      deadline: 'po.deadline',
       customerNameSnapshot: 'po.customerNameSnapshot',
       status: 'po.status',
     };
@@ -354,6 +385,7 @@ export class PurchaseOrdersService {
       customerId: po.customerId,
       customerNameSnapshot: po.customerNameSnapshot,
       receivedDate: po.receivedDate,
+      deadline: po.deadline || null,
       note: po.note,
       status: po.status,
       cancellationReason: po.cancellationReason,
@@ -410,6 +442,37 @@ export class PurchaseOrdersService {
 
     this.checkPoNotLocked(po, 'chỉnh sửa thông tin');
 
+    if (dto.deadline !== undefined && !dto.deadline) {
+      throw new BadRequestException(
+        'Hạn hoàn thành (deadline) không được để trống hoặc mang giá trị null.',
+      );
+    }
+
+    const newDeadlineStr =
+      dto.deadline !== undefined ? toYmdString(dto.deadline) : null;
+    const targetReceivedDate = dto.receivedDate || po.receivedDate;
+    const targetReceivedDateStr = targetReceivedDate
+      ? toYmdString(targetReceivedDate)
+      : '';
+
+    if (newDeadlineStr) {
+      if (targetReceivedDateStr && newDeadlineStr <= targetReceivedDateStr) {
+        throw new BadRequestException(
+          'Hạn hoàn thành (deadline) phải sau ngày nhận PO.',
+        );
+      }
+    } else if (dto.receivedDate && po.deadline && dto.deadline === undefined) {
+      const currentDeadlineStr = toYmdString(po.deadline);
+      if (
+        currentDeadlineStr &&
+        currentDeadlineStr <= toYmdString(dto.receivedDate)
+      ) {
+        throw new BadRequestException(
+          'Hạn hoàn thành (deadline) phải sau ngày nhận PO.',
+        );
+      }
+    }
+
     if (dto.customerPoCode !== undefined) {
       po.customerPoCode = dto.customerPoCode || null;
     }
@@ -421,6 +484,9 @@ export class PurchaseOrdersService {
     }
     if (dto.receivedDate) {
       po.receivedDate = new Date(dto.receivedDate);
+    }
+    if (dto.deadline !== undefined) {
+      po.deadline = new Date(dto.deadline);
     }
     if (dto.note !== undefined) {
       po.note = dto.note || null;

@@ -127,21 +127,50 @@ describe('PurchaseOrdersService', () => {
           poCode: 'PO-001',
           customerId: 'cust-1',
           customerNameSnapshot: 'Khách hàng A',
-          receivedDate: '2026-09-07',
+          receivedDate: '2030-01-01',
+          deadline: '2030-01-15',
         }),
       ).rejects.toThrow(ConflictException);
     });
 
-    it('should create new PO with status draft and write history', async () => {
+    it('should throw BadRequestException if deadline is in the past', async () => {
+      await expect(
+        service.create({
+          poCode: 'PO-PAST',
+          customerId: 'cust-1',
+          customerNameSnapshot: 'Khách hàng A',
+          receivedDate: '2020-01-01',
+          deadline: '2020-01-05',
+        }),
+      ).rejects.toThrow(
+        'Hạn hoàn thành (deadline) không được ở trong quá khứ.',
+      );
+    });
+
+    it('should throw BadRequestException if deadline is on or before receivedDate', async () => {
+      await expect(
+        service.create({
+          poCode: 'PO-INVALID',
+          customerId: 'cust-1',
+          customerNameSnapshot: 'Khách hàng A',
+          receivedDate: '2030-01-10',
+          deadline: '2030-01-05',
+        }),
+      ).rejects.toThrow('Hạn hoàn thành (deadline) phải sau ngày nhận PO.');
+    });
+
+    it('should create new PO with status draft, deadline and write history', async () => {
       mockPoRepo.findOne.mockResolvedValueOnce(null);
       mockCustomerRepo.findOne.mockResolvedValueOnce({ id: 'cust-1' });
       const now = new Date();
+      const deadlineDate = new Date('2030-01-15');
       const mockCreatedPo = {
         id: 'po-100',
         poCode: 'PO-100',
         customerId: 'cust-1',
         customerNameSnapshot: 'Khách hàng A',
-        receivedDate: now,
+        receivedDate: new Date('2030-01-01'),
+        deadline: deadlineDate,
         status: PoStatus.DRAFT,
         createdAt: now,
         updatedAt: now,
@@ -161,7 +190,8 @@ describe('PurchaseOrdersService', () => {
         poCode: 'PO-100',
         customerId: 'cust-1',
         customerNameSnapshot: 'Khách hàng A',
-        receivedDate: '2026-09-07',
+        receivedDate: '2030-01-01',
+        deadline: '2030-01-15',
       });
 
       expect(result.poCode).toBe('PO-100');
@@ -173,12 +203,14 @@ describe('PurchaseOrdersService', () => {
       mockPoRepo.findOne.mockResolvedValueOnce(null);
       mockCustomerRepo.findOne.mockResolvedValueOnce(null);
       const now = new Date();
+      const deadlineDate = new Date('2030-01-15');
       const mockCreatedPo = {
         id: 'po-101',
         poCode: 'PO-101',
         customerId: null,
         customerNameSnapshot: 'Khách hàng hoàn toàn mới',
-        receivedDate: now,
+        receivedDate: new Date('2030-01-01'),
+        deadline: deadlineDate,
         status: PoStatus.DRAFT,
         createdAt: now,
         updatedAt: now,
@@ -196,13 +228,15 @@ describe('PurchaseOrdersService', () => {
       const result = await service.create({
         poCode: 'PO-101',
         customerNameSnapshot: 'Khách hàng hoàn toàn mới',
-        receivedDate: '2026-09-07',
+        receivedDate: '2030-01-01',
+        deadline: '2030-01-15',
       });
 
       expect(mockPoRepo.create).toHaveBeenCalledWith(
         expect.objectContaining({
           customerId: null,
           customerNameSnapshot: 'Khách hàng hoàn toàn mới',
+          deadline: expect.any(Date),
         }),
       );
       expect(result.poCode).toBe('PO-101');
@@ -304,6 +338,59 @@ describe('PurchaseOrdersService', () => {
       await expect(
         service.update('po-1', { note: 'Thay đổi ghi chú' }),
       ).rejects.toThrow('PO đã ở trạng thái Đã khóa');
+    });
+
+    it('should throw BadRequestException if update deadline is null or empty', async () => {
+      mockPoRepo.findOne.mockResolvedValueOnce({
+        id: 'po-1',
+        poCode: 'PO-001',
+        status: PoStatus.DRAFT,
+        receivedDate: '2026-09-10',
+        deadline: new Date('2026-10-01'),
+      });
+
+      await expect(
+        service.update('po-1', { deadline: null as any }),
+      ).rejects.toThrow(
+        'Hạn hoàn thành (deadline) không được để trống hoặc mang giá trị null.',
+      );
+    });
+
+    it('should throw BadRequestException if update deadline is on or before receivedDate', async () => {
+      mockPoRepo.findOne.mockResolvedValueOnce({
+        id: 'po-1',
+        poCode: 'PO-001',
+        status: PoStatus.DRAFT,
+        receivedDate: '2026-09-10',
+      });
+
+      await expect(
+        service.update('po-1', { deadline: '2026-09-05' }),
+      ).rejects.toThrow('Hạn hoàn thành (deadline) phải sau ngày nhận PO.');
+    });
+
+    it('should allow updating deadline when deadline is after receivedDate', async () => {
+      const mockPo = {
+        id: 'po-1',
+        poCode: 'PO-001',
+        status: PoStatus.DRAFT,
+        receivedDate: '2026-09-10',
+        deadline: null,
+      };
+      mockPoRepo.findOne
+        .mockResolvedValueOnce(mockPo)
+        .mockResolvedValueOnce({ ...mockPo, deadline: new Date('2026-10-01') });
+      mockPoRepo.save.mockResolvedValueOnce({
+        ...mockPo,
+        deadline: new Date('2026-10-01'),
+      });
+      mockPoDocRepo.find.mockResolvedValue([]);
+      mockProductRepo.find.mockResolvedValue([]);
+      mockHistoryRepo.find.mockResolvedValue([]);
+
+      const res = await service.update('po-1', { deadline: '2026-10-01' });
+      expect(mockPoRepo.save).toHaveBeenCalled();
+      expect(res.deadline).toEqual(new Date('2026-10-01'));
     });
   });
 

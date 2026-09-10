@@ -354,6 +354,7 @@ Table purchase_orders {
   customer_id uuid [not null]
   customer_name_snapshot varchar(255) [not null]
   received_date date [not null]
+  deadline date
   note text
   status po_status [not null, default: `'draft'`]
   cancellation_reason text
