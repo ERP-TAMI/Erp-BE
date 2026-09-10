@@ -492,6 +492,7 @@ Schema được chuẩn hoá theo aggregate Style, PurchaseOrder, PurchaseOrderP
 | `customer_id` | `uuid` | not null | Thuộc tính nghiệp vụ/kiểm soát của bảng. |
 | `customer_name_snapshot` | `varchar(255)` | not null | Thuộc tính nghiệp vụ/kiểm soát của bảng. |
 | `received_date` | `date` | not null | Thuộc tính nghiệp vụ/kiểm soát của bảng. |
+| `deadline` | `date` | Nullable theo nghiệp vụ | Thời hạn hoàn thành đơn hàng. |
 | `note` | `text` | Nullable theo nghiệp vụ | Thuộc tính nghiệp vụ/kiểm soát của bảng. |
 | `status` | `po_status` | not null, default: `'draft'` | Thuộc tính nghiệp vụ/kiểm soát của bảng. |
 | `cancellation_reason` | `text` | Nullable theo nghiệp vụ | Thuộc tính nghiệp vụ/kiểm soát của bảng. |

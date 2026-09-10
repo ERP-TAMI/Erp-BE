@@ -34,6 +34,13 @@ export class CreatePurchaseOrderDto {
   @IsNotEmpty({ message: 'Ngày nhận không được để trống' })
   receivedDate: string;
 
+  @IsDateString(
+    {},
+    { message: 'Hạn hoàn thành (deadline) phải là ngày hợp lệ (YYYY-MM-DD)' },
+  )
+  @IsNotEmpty({ message: 'Hạn hoàn thành (deadline) không được để trống' })
+  deadline: string;
+
   @IsString()
   @IsOptional()
   note?: string;

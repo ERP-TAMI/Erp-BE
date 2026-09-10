@@ -28,6 +28,13 @@ export class UpdatePurchaseOrderDto {
   @IsOptional()
   receivedDate?: string;
 
+  @IsDateString(
+    {},
+    { message: 'Hạn hoàn thành (deadline) phải là ngày hợp lệ (YYYY-MM-DD)' },
+  )
+  @IsOptional()
+  deadline?: string;
+
   @IsString()
   @IsOptional()
   note?: string;
