@@ -29,17 +29,26 @@ export class ProductColorItemDto {
   @IsString()
   id?: string;
 
-  @ApiProperty({ description: 'Tên màu sắc (Trắng, Đen, Xanh...)', example: 'Trắng' })
+  @ApiProperty({
+    description: 'Tên màu sắc (Trắng, Đen, Xanh...)',
+    example: 'Trắng',
+  })
   @IsString()
   @IsNotEmpty()
   colorName: string;
 
-  @ApiPropertyOptional({ description: 'Mã màu (Hex hoặc code)', example: '#FFFFFF' })
+  @ApiPropertyOptional({
+    description: 'Mã màu (Hex hoặc code)',
+    example: '#FFFFFF',
+  })
   @IsOptional()
   @IsString()
   colorCode?: string;
 
-  @ApiPropertyOptional({ description: 'Bảng size breakdown của màu', type: [ProductColorSizeItemDto] })
+  @ApiPropertyOptional({
+    description: 'Bảng size breakdown của màu',
+    type: [ProductColorSizeItemDto],
+  })
   @IsOptional()
   @IsArray()
   sizes?: ProductColorSizeItemDto[];
@@ -156,7 +165,8 @@ export class CreatePoProductDto {
   };
 
   @ApiPropertyOptional({
-    description: 'Danh sách ID tài liệu từ kho PO muốn gán kèm khi tạo sản phẩm',
+    description:
+      'Danh sách ID tài liệu từ kho PO muốn gán kèm khi tạo sản phẩm',
     type: [String],
   })
   @IsOptional()
@@ -404,4 +414,3 @@ export class LinkProductDocumentDto {
   @IsString()
   purpose?: string;
 }
-

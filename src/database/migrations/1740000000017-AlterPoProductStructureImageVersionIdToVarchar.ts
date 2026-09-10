@@ -1,8 +1,6 @@
 import { MigrationInterface, QueryRunner } from 'typeorm';
 
-export class AlterPoProductStructureImageVersionIdToVarchar1740000000017
-  implements MigrationInterface
-{
+export class AlterPoProductStructureImageVersionIdToVarchar1740000000017 implements MigrationInterface {
   name = 'AlterPoProductStructureImageVersionIdToVarchar1740000000017';
 
   public async up(queryRunner: QueryRunner): Promise<void> {

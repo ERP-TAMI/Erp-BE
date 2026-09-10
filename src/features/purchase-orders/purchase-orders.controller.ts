@@ -27,7 +27,10 @@ import {
   ApiBearerAuth,
 } from '@nestjs/swagger';
 import { Auth } from '../../common/decorators/auth.decorator';
-import { DocumentPurpose, ProductStatus } from '../../common/enums/database.enums';
+import {
+  DocumentPurpose,
+  ProductStatus,
+} from '../../common/enums/database.enums';
 import {
   PurchaseOrdersService,
   PaginatedPoResult,
@@ -153,9 +156,7 @@ export class PurchaseOrdersController {
   @Get('import-fit-preview/:styleId')
   @ApiOperation({ summary: 'Xem trước dữ liệu Fit sẽ import vào Product' })
   @ApiResponse({ status: 200, description: 'Bản xem trước dữ liệu import' })
-  async getImportFitPreview(
-    @Param('styleId', ParseUUIDPipe) styleId: string,
-  ) {
+  async getImportFitPreview(@Param('styleId', ParseUUIDPipe) styleId: string) {
     return this.service.getImportFitPreview(styleId);
   }
 
@@ -204,9 +205,7 @@ export class PurchaseOrdersController {
   @Get(':id/products')
   @ApiOperation({ summary: 'Lấy danh sách sản phẩm thuộc đơn hàng PO' })
   @ApiResponse({ status: 200, description: 'Danh sách sản phẩm trong PO' })
-  async getProducts(
-    @Param('id', ParseUUIDPipe) id: string,
-  ) {
+  async getProducts(@Param('id', ParseUUIDPipe) id: string) {
     return this.service.getProducts(id);
   }
 
@@ -335,7 +334,9 @@ export class PurchaseOrdersController {
   }
 
   @Patch(':id/products/:productId/production-doc')
-  @ApiOperation({ summary: 'Cập nhật tài liệu sản xuất tiếng Việt của sản phẩm' })
+  @ApiOperation({
+    summary: 'Cập nhật tài liệu sản xuất tiếng Việt của sản phẩm',
+  })
   async updateProductProductionDoc(
     @Param('productId', ParseUUIDPipe) productId: string,
     @Body() dto: any,
@@ -355,7 +356,8 @@ export class PurchaseOrdersController {
     @Body() body?: { purpose?: string },
     @Req() req?: any,
   ) {
-    const targetPurpose = (body?.purpose || purpose) as DocumentPurpose | undefined;
+    const targetPurpose = (body?.purpose || purpose) as
+      DocumentPurpose | undefined;
     const userId = req?.user?.id || req?.user?.sub;
     return this.service.linkProductDocument(
       id,
@@ -367,7 +369,9 @@ export class PurchaseOrdersController {
   }
 
   @Patch(':id/products/:productId/documents/:documentId/purpose')
-  @ApiOperation({ summary: 'Cập nhật mục (PO Chi Tiết, TechPack, Khác) của tài liệu sản phẩm' })
+  @ApiOperation({
+    summary: 'Cập nhật mục (PO Chi Tiết, TechPack, Khác) của tài liệu sản phẩm',
+  })
   async updateProductDocumentPurpose(
     @Param('id', ParseUUIDPipe) id: string,
     @Param('productId', ParseUUIDPipe) productId: string,

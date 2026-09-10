@@ -59,7 +59,6 @@ import {
   UpdatePoProductDto,
   SaveProductOperationStepsDto,
   CreateProductSampleRoundDto,
-  UpdateProductSampleRoundDto,
 } from './dto';
 
 export interface PaginatedPoResult<T> {
@@ -187,7 +186,6 @@ export class PurchaseOrdersService {
     @InjectRepository(Customer)
     private readonly customerRepo: Repository<Customer>,
   ) {}
-
 
   async create(
     dto: CreatePurchaseOrderDto,
@@ -1385,7 +1383,9 @@ export class PurchaseOrdersService {
   async getImportFitPreview(styleId: string) {
     const style = await this.styleRepo.findOne({ where: { id: styleId } });
     if (!style) {
-      throw new NotFoundException(`Không tìm thấy Style Fit với ID: ${styleId}`);
+      throw new NotFoundException(
+        `Không tìm thấy Style Fit với ID: ${styleId}`,
+      );
     }
 
     // 1. Lấy danh sách công đoạn
@@ -1402,7 +1402,7 @@ export class PurchaseOrdersService {
 
     // Lấy ảnh đính kèm từng vòng mẫu nếu có
     const roundIds = sampleRounds.map((r) => r.id);
-    let sampleImagesMap: Map<string, StyleSampleImage[]> = new Map();
+    const sampleImagesMap: Map<string, StyleSampleImage[]> = new Map();
     if (roundIds.length > 0) {
       const sampleImages = await this.styleSampleImageRepo.find({
         where: { sampleRoundId: In(roundIds) },
@@ -1513,7 +1513,13 @@ export class PurchaseOrdersService {
     }
 
     // Đếm số công đoạn, số mẫu, số tài liệu cho từng Product
-    const [stepsCountRaw, samplesCountRaw, docsCountRaw, allProductDocs, allColors] = await Promise.all([
+    const [
+      stepsCountRaw,
+      samplesCountRaw,
+      docsCountRaw,
+      allProductDocs,
+      allColors,
+    ] = await Promise.all([
       this.productStepRepo
         .createQueryBuilder('step')
         .select('step.productId', 'productId')
@@ -1555,46 +1561,64 @@ export class PurchaseOrdersService {
       });
     }
 
-    const sizesByColorId = allSizes.reduce((acc, s) => {
-      if (!acc[s.productColorId]) acc[s.productColorId] = [];
-      acc[s.productColorId].push(s);
-      return acc;
-    }, {} as Record<string, PurchaseOrderProductColorSize[]>);
+    const sizesByColorId = allSizes.reduce(
+      (acc, s) => {
+        if (!acc[s.productColorId]) acc[s.productColorId] = [];
+        acc[s.productColorId].push(s);
+        return acc;
+      },
+      {} as Record<string, PurchaseOrderProductColorSize[]>,
+    );
 
-    const colorsByProductId = allColors.reduce((acc, c) => {
-      if (!acc[c.productId]) acc[c.productId] = [];
-      const colorSizes = sizesByColorId[c.id] || [];
-      const colorQty = colorSizes.reduce((sum, s) => sum + (Number(s.quantity) || 0), 0);
-      acc[c.productId].push({
-        id: c.id,
-        colorName: c.colorName,
-        colorCode: c.colorCode,
-        orderIndex: c.orderIndex,
-        sizes: colorSizes.map((s) => ({
-          id: s.id,
-          sizeLabel: s.sizeLabel,
-          quantity: Number(s.quantity) || 0,
-          orderIndex: s.orderIndex,
-        })),
-        totalQuantity: colorQty,
-      });
-      return acc;
-    }, {} as Record<string, any[]>);
+    const colorsByProductId = allColors.reduce(
+      (acc, c) => {
+        if (!acc[c.productId]) acc[c.productId] = [];
+        const colorSizes = sizesByColorId[c.id] || [];
+        const colorQty = colorSizes.reduce(
+          (sum, s) => sum + (Number(s.quantity) || 0),
+          0,
+        );
+        acc[c.productId].push({
+          id: c.id,
+          colorName: c.colorName,
+          colorCode: c.colorCode,
+          orderIndex: c.orderIndex,
+          sizes: colorSizes.map((s) => ({
+            id: s.id,
+            sizeLabel: s.sizeLabel,
+            quantity: Number(s.quantity) || 0,
+            orderIndex: s.orderIndex,
+          })),
+          totalQuantity: colorQty,
+        });
+        return acc;
+      },
+      {} as Record<string, any[]>,
+    );
 
-    const stepsCountMap = stepsCountRaw.reduce((acc, r) => {
-      acc[r.productId] = Number(r.count) || 0;
-      return acc;
-    }, {} as Record<string, number>);
+    const stepsCountMap = stepsCountRaw.reduce(
+      (acc, r) => {
+        acc[r.productId] = Number(r.count) || 0;
+        return acc;
+      },
+      {} as Record<string, number>,
+    );
 
-    const samplesCountMap = samplesCountRaw.reduce((acc, r) => {
-      acc[r.productId] = Number(r.count) || 0;
-      return acc;
-    }, {} as Record<string, number>);
+    const samplesCountMap = samplesCountRaw.reduce(
+      (acc, r) => {
+        acc[r.productId] = Number(r.count) || 0;
+        return acc;
+      },
+      {} as Record<string, number>,
+    );
 
-    const docsCountMap = docsCountRaw.reduce((acc, r) => {
-      acc[r.productId] = Number(r.count) || 0;
-      return acc;
-    }, {} as Record<string, number>);
+    const docsCountMap = docsCountRaw.reduce(
+      (acc, r) => {
+        acc[r.productId] = Number(r.count) || 0;
+        return acc;
+      },
+      {} as Record<string, number>,
+    );
 
     const productDocsMap = (allProductDocs || []).reduce(
       (
@@ -1658,35 +1682,42 @@ export class PurchaseOrdersService {
       );
     }
 
-    const [sourceStyle, steps, sampleRounds, prodDoc, productDocs, history, rawColors] =
-      await Promise.all([
-        product.sourceStyleId
-          ? this.styleRepo.findOne({ where: { id: product.sourceStyleId } })
-          : Promise.resolve(null),
-        this.productStepRepo.find({
-          where: { productId },
-          order: { orderIndex: 'ASC' },
-        }),
-        this.productSampleRoundRepo.find({
-          where: { productId },
-          order: { roundNo: 'ASC' },
-        }),
-        this.prodDocRepo.findOne({
-          where: { productId },
-        }),
-        this.productDocRepo.find({
-          where: { productId },
-          order: { linkedAt: 'DESC' },
-        }),
-        this.productHistoryRepo.find({
-          where: { productId },
-          order: { changedAt: 'DESC' },
-        }),
-        this.productColorRepo.find({
-          where: { productId },
-          order: { orderIndex: 'ASC' },
-        }),
-      ]);
+    const [
+      sourceStyle,
+      steps,
+      sampleRounds,
+      prodDoc,
+      productDocs,
+      history,
+      rawColors,
+    ] = await Promise.all([
+      product.sourceStyleId
+        ? this.styleRepo.findOne({ where: { id: product.sourceStyleId } })
+        : Promise.resolve(null),
+      this.productStepRepo.find({
+        where: { productId },
+        order: { orderIndex: 'ASC' },
+      }),
+      this.productSampleRoundRepo.find({
+        where: { productId },
+        order: { roundNo: 'ASC' },
+      }),
+      this.prodDocRepo.findOne({
+        where: { productId },
+      }),
+      this.productDocRepo.find({
+        where: { productId },
+        order: { linkedAt: 'DESC' },
+      }),
+      this.productHistoryRepo.find({
+        where: { productId },
+        order: { changedAt: 'DESC' },
+      }),
+      this.productColorRepo.find({
+        where: { productId },
+        order: { orderIndex: 'ASC' },
+      }),
+    ]);
 
     // Lấy thông tin tài liệu đính kèm Product kèm theo toàn bộ phiên bản
     let docsWithInfo: any[] = [];
@@ -1698,11 +1729,14 @@ export class PurchaseOrdersService {
         where: { documentId: In(docIds) },
         order: { versionNo: 'DESC' },
       });
-      const versionsByDoc = allVersions.reduce((acc, v) => {
-        if (!acc[v.documentId]) acc[v.documentId] = [];
-        acc[v.documentId].push(v);
-        return acc;
-      }, {} as Record<string, DocumentVersion[]>);
+      const versionsByDoc = allVersions.reduce(
+        (acc, v) => {
+          if (!acc[v.documentId]) acc[v.documentId] = [];
+          acc[v.documentId].push(v);
+          return acc;
+        },
+        {} as Record<string, DocumentVersion[]>,
+      );
 
       docsWithInfo = productDocs.map((pd) => {
         const masterDoc = docsMap.get(pd.documentId);
@@ -1715,11 +1749,15 @@ export class PurchaseOrdersService {
 
         return {
           ...pd,
-          title: masterDoc?.title || currentVersion?.originalFileName || 'Tài liệu',
+          title:
+            masterDoc?.title || currentVersion?.originalFileName || 'Tài liệu',
           documentCode: masterDoc?.documentCode || null,
-          fileName: currentVersion?.originalFileName || masterDoc?.title || null,
+          fileName:
+            currentVersion?.originalFileName || masterDoc?.title || null,
           fileUrl: currentVersion?.storageKey || null,
-          fileSize: currentVersion?.byteSize ? Number(currentVersion.byteSize) : null,
+          fileSize: currentVersion?.byteSize
+            ? Number(currentVersion.byteSize)
+            : null,
           currentVersionNo: currentVersion?.versionNo || 1,
           changeReason: currentVersion?.changeReason || null,
           versions: docVersions.map((v) => ({
@@ -1746,21 +1784,27 @@ export class PurchaseOrdersService {
         where: { productColorId: In(colorIds) },
         order: { orderIndex: 'ASC' },
       });
-      const sizesByColor = sizes.reduce((acc, s) => {
-        if (!acc[s.productColorId]) acc[s.productColorId] = [];
-        acc[s.productColorId].push({
-          id: s.id,
-          sizeLabel: s.sizeLabel,
-          quantity: Number(s.quantity) || 0,
-          orderIndex: s.orderIndex,
-        });
-        totalQuantity += Number(s.quantity) || 0;
-        return acc;
-      }, {} as Record<string, any[]>);
+      const sizesByColor = sizes.reduce(
+        (acc, s) => {
+          if (!acc[s.productColorId]) acc[s.productColorId] = [];
+          acc[s.productColorId].push({
+            id: s.id,
+            sizeLabel: s.sizeLabel,
+            quantity: Number(s.quantity) || 0,
+            orderIndex: s.orderIndex,
+          });
+          totalQuantity += Number(s.quantity) || 0;
+          return acc;
+        },
+        {} as Record<string, any[]>,
+      );
 
       colorsWithSizes = rawColors.map((c) => {
         const colorSizes = sizesByColor[c.id] || [];
-        const colorQty = colorSizes.reduce((sum, s) => sum + (Number(s.quantity) || 0), 0);
+        const colorQty = colorSizes.reduce(
+          (sum, s) => sum + (Number(s.quantity) || 0),
+          0,
+        );
         return {
           id: c.id,
           colorName: c.colorName,
@@ -1806,12 +1850,16 @@ export class PurchaseOrdersService {
       throw new NotFoundException(`Không tìm thấy PO #${poId}`);
     }
     if (po.status === PoStatus.CLOSED || po.status === PoStatus.CANCELLED) {
-      throw new BadRequestException('Đơn hàng PO đã khóa hoặc đã hủy, không thể thêm sản phẩm');
+      throw new BadRequestException(
+        'Đơn hàng PO đã khóa hoặc đã hủy, không thể thêm sản phẩm',
+      );
     }
 
     const rawCode = (dto.productCode || dto.styleCode || '').trim();
     if (!rawCode) {
-      throw new BadRequestException('Mã sản phẩm (productCode) không được để trống');
+      throw new BadRequestException(
+        'Mã sản phẩm (productCode) không được để trống',
+      );
     }
 
     // Kiểm tra trùng mã sản phẩm trong PO này
@@ -1827,16 +1875,25 @@ export class PurchaseOrdersService {
     const sourceStyleId = dto.sourceStyleId || dto.styleId || null;
     let sourceStyle: Style | null = null;
     if (sourceStyleId) {
-      sourceStyle = await this.styleRepo.findOne({ where: { id: sourceStyleId } });
+      sourceStyle = await this.styleRepo.findOne({
+        where: { id: sourceStyleId },
+      });
       if (!sourceStyle) {
-        throw new NotFoundException(`Không tìm thấy Style nguồn #${sourceStyleId}`);
+        throw new NotFoundException(
+          `Không tìm thấy Style nguồn #${sourceStyleId}`,
+        );
       }
     }
 
     const targetCategory = dto.category || sourceStyle?.category || undefined;
-    const targetName = (dto.productName || sourceStyle?.styleName || rawCode).trim();
+    const targetName = (
+      dto.productName ||
+      sourceStyle?.styleName ||
+      rawCode
+    ).trim();
     const targetDeadline = dto.deadline ? new Date(dto.deadline) : null;
-    const targetCmDays = dto.as3bCmBaseDays || sourceStyle?.as3bCmBaseDays || 30;
+    const targetCmDays =
+      dto.as3bCmBaseDays || sourceStyle?.as3bCmBaseDays || 30;
 
     return await this.dataSource.transaction(async (manager) => {
       // 1. Tạo PurchaseOrderProduct
@@ -1849,7 +1906,9 @@ export class PurchaseOrdersService {
         materialNote: dto.materialNote || dto.colorName || undefined,
         deadline: targetDeadline || undefined,
         structureImageVersionId:
-          dto.structureImageVersionId || sourceStyle?.baseImageVersionId || null,
+          dto.structureImageVersionId ||
+          sourceStyle?.baseImageVersionId ||
+          null,
         status: ProductStatus.DRAFT,
         as3bCmBaseDays: targetCmDays,
         importedAt: sourceStyleId ? new Date() : undefined,
@@ -2058,14 +2117,17 @@ export class PurchaseOrdersService {
         const poDocs = await manager.find(PurchaseOrderDocument, {
           where: { purchaseOrderId: poId, documentId: In(poDocIds) },
         });
-        const poDocMap = new Map(poDocs.map((pd) => [pd.documentId, pd.purpose]));
+        const poDocMap = new Map(
+          poDocs.map((pd) => [pd.documentId, pd.purpose]),
+        );
 
         const lineDocs = poDocIds.map((docId: string) => {
           const entity = new PurchaseOrderProductDocument();
           entity.productId = savedProduct.id;
           entity.documentId = docId;
           entity.sourcePoDocument = true;
-          entity.purpose = (poDocMap.get(docId) || DocumentPurpose.OTHER) as any;
+          entity.purpose = (poDocMap.get(docId) ||
+            DocumentPurpose.OTHER) as any;
           entity.linkedBy = userId || (null as any);
           entity.linkedAt = new Date();
           return entity;
@@ -2086,9 +2148,16 @@ export class PurchaseOrdersService {
             colorCode: cDto.colorCode || undefined,
             orderIndex: cIdx,
           });
-          const savedColor = await manager.save(PurchaseOrderProductColor, colorEntity);
+          const savedColor = await manager.save(
+            PurchaseOrderProductColor,
+            colorEntity,
+          );
 
-          if (cDto.sizes && Array.isArray(cDto.sizes) && cDto.sizes.length > 0) {
+          if (
+            cDto.sizes &&
+            Array.isArray(cDto.sizes) &&
+            cDto.sizes.length > 0
+          ) {
             const sizeEntities = cDto.sizes
               .map((sDto, sIdx) =>
                 manager.create(PurchaseOrderProductColorSize, {
@@ -2160,15 +2229,18 @@ export class PurchaseOrdersService {
     }
 
     if (dto.productName) product.productName = dto.productName.trim();
-    if (dto.category !== undefined) product.category = dto.category?.trim() || '';
+    if (dto.category !== undefined)
+      product.category = dto.category?.trim() || '';
     if (dto.materialNote !== undefined)
-      product.materialNote = dto.materialNote?.trim() || dto.colorName?.trim() || '';
+      product.materialNote =
+        dto.materialNote?.trim() || dto.colorName?.trim() || '';
     if (dto.deadline !== undefined)
       product.deadline = dto.deadline ? new Date(dto.deadline) : (null as any);
     if (dto.as3bCmBaseDays !== undefined)
       product.as3bCmBaseDays = Number(dto.as3bCmBaseDays);
     if (dto.structureImageVersionId !== undefined)
-      product.structureImageVersionId = dto.structureImageVersionId?.trim() || null;
+      product.structureImageVersionId =
+        dto.structureImageVersionId?.trim() || null;
 
     product.updatedBy = userId || product.updatedBy;
     product.updatedAt = new Date();
@@ -2204,9 +2276,16 @@ export class PurchaseOrdersService {
               colorCode: cDto.colorCode || undefined,
               orderIndex: cIdx,
             });
-            const savedColor = await manager.save(PurchaseOrderProductColor, newColor);
+            const savedColor = await manager.save(
+              PurchaseOrderProductColor,
+              newColor,
+            );
 
-            if (cDto.sizes && Array.isArray(cDto.sizes) && cDto.sizes.length > 0) {
+            if (
+              cDto.sizes &&
+              Array.isArray(cDto.sizes) &&
+              cDto.sizes.length > 0
+            ) {
               const sizeEntities = cDto.sizes
                 .map((sDto, sIdx) =>
                   manager.create(PurchaseOrderProductColorSize, {
@@ -2334,7 +2413,8 @@ export class PurchaseOrdersService {
       );
     }
 
-    const purposeToUse = targetPurpose || poDoc.purpose || DocumentPurpose.OTHER;
+    const purposeToUse =
+      targetPurpose || poDoc.purpose || DocumentPurpose.OTHER;
 
     const existing = await this.productDocRepo.findOne({
       where: { productId, documentId },
@@ -2732,7 +2812,7 @@ export class PurchaseOrdersService {
     });
 
     const roundIds = rounds.map((r) => r.id);
-    let imagesMap: Map<string, PurchaseOrderProductSampleImage[]> = new Map();
+    const imagesMap: Map<string, PurchaseOrderProductSampleImage[]> = new Map();
     if (roundIds.length > 0) {
       const images = await this.productSampleImageRepo.find({
         where: { sampleRoundId: In(roundIds) },
@@ -2756,7 +2836,9 @@ export class PurchaseOrdersService {
     dto: CreateProductSampleRoundDto,
     userId?: string,
   ) {
-    const product = await this.productRepo.findOne({ where: { id: productId } });
+    const product = await this.productRepo.findOne({
+      where: { id: productId },
+    });
     if (!product) {
       throw new NotFoundException(`Không tìm thấy sản phẩm #${productId}`);
     }
@@ -2814,7 +2896,9 @@ export class PurchaseOrdersService {
     let doc = await this.prodDocRepo.findOne({ where: { productId } });
 
     if (!doc) {
-      const product = await this.productRepo.findOne({ where: { id: productId } });
+      const product = await this.productRepo.findOne({
+        where: { id: productId },
+      });
       doc = this.prodDocRepo.create({
         productId,
         styleId: null,
@@ -2924,7 +3008,9 @@ export class PurchaseOrdersService {
 
     // Đối với Product chỉ có 2 trạng thái: Đang Xử Lý (DRAFT) và Khóa (CLOSED)
     const normalizedStatus =
-      status === ProductStatus.CLOSED ? ProductStatus.CLOSED : ProductStatus.DRAFT;
+      status === ProductStatus.CLOSED
+        ? ProductStatus.CLOSED
+        : ProductStatus.DRAFT;
 
     const oldStatus = product.status;
     product.previousStatus = oldStatus;
@@ -2938,7 +3024,8 @@ export class PurchaseOrdersService {
     log.productId = productId;
     log.oldStatus = oldStatus;
     log.newStatus = normalizedStatus;
-    log.action = normalizedStatus === ProductStatus.CLOSED ? 'locked' : 'unlocked';
+    log.action =
+      normalizedStatus === ProductStatus.CLOSED ? 'locked' : 'unlocked';
     log.reason =
       reason ||
       (normalizedStatus === ProductStatus.CLOSED
@@ -2951,4 +3038,3 @@ export class PurchaseOrdersService {
     return saved;
   }
 }
-
