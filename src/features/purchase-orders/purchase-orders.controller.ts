@@ -4,6 +4,7 @@ import {
   Get,
   Post,
   Patch,
+  Put,
   Delete,
   Param,
   Body,
@@ -26,7 +27,7 @@ import {
   ApiBearerAuth,
 } from '@nestjs/swagger';
 import { Auth } from '../../common/decorators/auth.decorator';
-import { DocumentPurpose } from '../../common/enums/database.enums';
+import { DocumentPurpose, ProductStatus } from '../../common/enums/database.enums';
 import {
   PurchaseOrdersService,
   PaginatedPoResult,
@@ -42,6 +43,8 @@ import {
   UpdatePoDocumentDto,
   CreatePoProductDto,
   UpdatePoProductDto,
+  SaveProductOperationStepsDto,
+  CreateProductSampleRoundDto,
 } from './dto';
 import { PurchaseOrder } from './entities/PurchaseOrder.entity';
 import { PurchaseOrderProduct } from './entities/PurchaseOrderProduct.entity';
@@ -147,6 +150,15 @@ export class PurchaseOrdersController {
     return this.service.findAll(query);
   }
 
+  @Get('import-fit-preview/:styleId')
+  @ApiOperation({ summary: 'Xem trước dữ liệu Fit sẽ import vào Product' })
+  @ApiResponse({ status: 200, description: 'Bản xem trước dữ liệu import' })
+  async getImportFitPreview(
+    @Param('styleId', ParseUUIDPipe) styleId: string,
+  ) {
+    return this.service.getImportFitPreview(styleId);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Lấy chi tiết đơn hàng PO theo ID' })
   @ApiResponse({ status: 200, description: 'Chi tiết đơn hàng PO' })
@@ -194,7 +206,7 @@ export class PurchaseOrdersController {
   @ApiResponse({ status: 200, description: 'Danh sách sản phẩm trong PO' })
   async getProducts(
     @Param('id', ParseUUIDPipe) id: string,
-  ): Promise<PurchaseOrderProduct[]> {
+  ) {
     return this.service.getProducts(id);
   }
 
@@ -214,6 +226,17 @@ export class PurchaseOrdersController {
   ): Promise<PurchaseOrderProduct> {
     const userId = req?.user?.id || req?.user?.sub;
     return this.service.addProduct(id, dto, userId);
+  }
+
+  @Get(':id/products/:productId')
+  @ApiOperation({ summary: 'Lấy chi tiết sản phẩm và toàn bộ dữ liệu con' })
+  @ApiResponse({ status: 200, description: 'Chi tiết sản phẩm' })
+  @ApiResponse({ status: 404, description: 'Không tìm thấy sản phẩm' })
+  async getProductDetail(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('productId', ParseUUIDPipe) productId: string,
+  ) {
+    return this.service.getProductDetail(id, productId);
   }
 
   @Patch(':id/products/:productId')
@@ -240,10 +263,194 @@ export class PurchaseOrdersController {
   async removeProduct(
     @Param('id', ParseUUIDPipe) id: string,
     @Param('productId', ParseUUIDPipe) productId: string,
-    @Req() req?: any,
   ): Promise<void> {
+    return this.service.removeProduct(id, productId);
+  }
+
+  @Patch(':id/products/:productId/status')
+  @ApiOperation({ summary: 'Cập nhật trạng thái sản phẩm PO' })
+  @ApiResponse({ status: 200, description: 'Đã cập nhật trạng thái sản phẩm' })
+  async updateProductStatus(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('productId', ParseUUIDPipe) productId: string,
+    @Body() body: { status: ProductStatus; reason?: string },
+    @Req() req?: any,
+  ) {
     const userId = req?.user?.id || req?.user?.sub;
-    return this.service.removeProduct(id, productId, userId);
+    return this.service.updateProductStatus(
+      id,
+      productId,
+      body.status,
+      body.reason,
+      userId,
+    );
+  }
+
+  // ─── Product Sub-resources Endpoints ────────────────────────────────────────
+
+  @Get(':id/products/:productId/operation-steps')
+  @ApiOperation({ summary: 'Lấy bảng công đoạn của sản phẩm' })
+  async getProductOperationSteps(
+    @Param('productId', ParseUUIDPipe) productId: string,
+  ) {
+    return this.service.getProductOperationSteps(productId);
+  }
+
+  @Put(':id/products/:productId/operation-steps')
+  @ApiOperation({ summary: 'Lưu bảng công đoạn của sản phẩm' })
+  async saveProductOperationSteps(
+    @Param('productId', ParseUUIDPipe) productId: string,
+    @Body() dto: SaveProductOperationStepsDto,
+    @Req() req?: any,
+  ) {
+    const userId = req?.user?.id || req?.user?.sub;
+    return this.service.saveProductOperationSteps(productId, dto, userId);
+  }
+
+  @Get(':id/products/:productId/sample-rounds')
+  @ApiOperation({ summary: 'Lấy danh sách đợt may mẫu của sản phẩm' })
+  async getProductSampleRounds(
+    @Param('productId', ParseUUIDPipe) productId: string,
+  ) {
+    return this.service.getProductSampleRounds(productId);
+  }
+
+  @Post(':id/products/:productId/sample-rounds')
+  @ApiOperation({ summary: 'Tạo đợt may mẫu mới cho sản phẩm' })
+  async createProductSampleRound(
+    @Param('productId', ParseUUIDPipe) productId: string,
+    @Body() dto: CreateProductSampleRoundDto,
+    @Req() req?: any,
+  ) {
+    const userId = req?.user?.id || req?.user?.sub;
+    return this.service.createProductSampleRound(productId, dto, userId);
+  }
+
+  @Get(':id/products/:productId/production-doc')
+  @ApiOperation({ summary: 'Lấy tài liệu sản xuất tiếng Việt của sản phẩm' })
+  async getProductProductionDoc(
+    @Param('productId', ParseUUIDPipe) productId: string,
+  ) {
+    return this.service.getProductProductionDoc(productId);
+  }
+
+  @Patch(':id/products/:productId/production-doc')
+  @ApiOperation({ summary: 'Cập nhật tài liệu sản xuất tiếng Việt của sản phẩm' })
+  async updateProductProductionDoc(
+    @Param('productId', ParseUUIDPipe) productId: string,
+    @Body() dto: any,
+    @Req() req?: any,
+  ) {
+    const userId = req?.user?.id || req?.user?.sub;
+    return this.service.updateProductProductionDoc(productId, dto, userId);
+  }
+
+  @Post(':id/products/:productId/documents/:documentId')
+  @ApiOperation({ summary: 'Gán tài liệu từ PO vào sản phẩm (kéo thả)' })
+  async linkProductDocument(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('productId', ParseUUIDPipe) productId: string,
+    @Param('documentId', ParseUUIDPipe) documentId: string,
+    @Query('purpose') purpose?: string,
+    @Body() body?: { purpose?: string },
+    @Req() req?: any,
+  ) {
+    const targetPurpose = (body?.purpose || purpose) as DocumentPurpose | undefined;
+    const userId = req?.user?.id || req?.user?.sub;
+    return this.service.linkProductDocument(
+      id,
+      productId,
+      documentId,
+      userId,
+      targetPurpose,
+    );
+  }
+
+  @Patch(':id/products/:productId/documents/:documentId/purpose')
+  @ApiOperation({ summary: 'Cập nhật mục (PO Chi Tiết, TechPack, Khác) của tài liệu sản phẩm' })
+  async updateProductDocumentPurpose(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('productId', ParseUUIDPipe) productId: string,
+    @Param('documentId', ParseUUIDPipe) documentId: string,
+    @Body('purpose') purpose: string,
+  ) {
+    return this.service.updateProductDocumentPurpose(
+      id,
+      productId,
+      documentId,
+      purpose as DocumentPurpose,
+    );
+  }
+
+  @Delete(':id/products/:productId/documents/:documentId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Hủy gán tài liệu khỏi sản phẩm' })
+  async unlinkProductDocument(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('productId', ParseUUIDPipe) productId: string,
+    @Param('documentId', ParseUUIDPipe) documentId: string,
+  ) {
+    return this.service.unlinkProductDocument(id, productId, documentId);
+  }
+
+  @Post(':id/products/:productId/documents/upload')
+  @ApiOperation({ summary: 'Tải lên tài liệu đính kèm trực tiếp cho sản phẩm' })
+  @ApiConsumes('multipart/form-data')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: { fileSize: 25 * 1024 * 1024 },
+      fileFilter: poDocumentFileFilter,
+    }),
+  )
+  async uploadProductDocument(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('productId', ParseUUIDPipe) productId: string,
+    @UploadedFile() file?: any,
+    @Query('purpose') purpose: string = 'other',
+    @Req() req?: any,
+  ) {
+    if (!file) {
+      throw new BadRequestException('Vui lòng chọn tệp để tải lên');
+    }
+    const userId = req?.user?.id || req?.user?.sub;
+    return this.service.uploadProductDocument(
+      id,
+      productId,
+      file,
+      purpose,
+      userId,
+    );
+  }
+
+  @Post(':id/products/:productId/documents/:documentId/versions')
+  @ApiOperation({ summary: 'Cập nhật phiên bản mới cho tài liệu của sản phẩm' })
+  @ApiConsumes('multipart/form-data')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: { fileSize: 25 * 1024 * 1024 },
+      fileFilter: poDocumentFileFilter,
+    }),
+  )
+  async uploadProductDocumentVersion(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('productId', ParseUUIDPipe) productId: string,
+    @Param('documentId', ParseUUIDPipe) documentId: string,
+    @UploadedFile() file?: any,
+    @Body('changeReason') changeReason?: string,
+    @Req() req?: any,
+  ) {
+    if (!file) {
+      throw new BadRequestException('Vui lòng chọn tệp để tải lên');
+    }
+    const userId = req?.user?.id || req?.user?.sub;
+    return this.service.uploadDocumentVersion(
+      id,
+      productId,
+      documentId,
+      file,
+      changeReason,
+      userId,
+    );
   }
 
   // ─── Documents & History Endpoints ──────────────────────────────────────────
@@ -383,7 +590,8 @@ export class PurchaseOrdersController {
   async previewDocument(
     @Param('id', ParseUUIDPipe) id: string,
     @Param('documentId', ParseUUIDPipe) documentId: string,
+    @Query('versionId') versionId?: string,
   ): Promise<PoDocumentPreviewResponse> {
-    return this.service.previewDocument(id, documentId);
+    return this.service.previewDocument(id, documentId, versionId);
   }
 }
