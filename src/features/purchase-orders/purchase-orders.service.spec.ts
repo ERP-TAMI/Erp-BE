@@ -1,6 +1,6 @@
-import * as JSZip from 'jszip';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
+import { DataSource } from 'typeorm';
 import { ConflictException, BadRequestException } from '@nestjs/common';
 import { PurchaseOrdersService } from './purchase-orders.service';
 import { PurchaseOrder } from './entities/PurchaseOrder.entity';
@@ -15,7 +15,7 @@ import {
   ProductStatus,
   DocumentPurpose,
 } from '../../common/enums/database.enums';
-import { poDocumentFileFilter } from './purchase-orders.controller';
+import { STORAGE_SERVICE, StorageService } from '../storage/storage.interface';
 
 describe('PurchaseOrdersService', () => {
   let service: PurchaseOrdersService;
@@ -71,8 +71,50 @@ describe('PurchaseOrdersService', () => {
     save: jest.fn(),
   };
 
+  let storageMock: jest.Mocked<StorageService>;
+  let txDocRepoMock: { create: jest.Mock; save: jest.Mock };
+  let txVersionRepoMock: { create: jest.Mock; save: jest.Mock };
+  let txPoDocRepoMock: { create: jest.Mock; save: jest.Mock };
+
   beforeEach(async () => {
     jest.clearAllMocks();
+
+    storageMock = {
+      getPresignedPutUrl: jest.fn().mockResolvedValue('https://s3.example/put'),
+      getPresignedGetUrl: jest.fn().mockResolvedValue('https://s3.example/get'),
+      deleteObject: jest.fn(),
+      headObject: jest.fn().mockResolvedValue({ exists: true }),
+      getObjectBuffer: jest
+        .fn()
+        .mockResolvedValue(Buffer.from('%PDF-1.5 test')),
+    };
+
+    txDocRepoMock = {
+      create: jest.fn().mockImplementation((v) => v),
+      save: jest.fn().mockImplementation((v) => ({ id: 'doc-1', ...v })),
+    };
+    txVersionRepoMock = {
+      create: jest.fn().mockImplementation((v) => v),
+      save: jest.fn().mockImplementation((v) => ({ id: 'version-1', ...v })),
+    };
+    txPoDocRepoMock = {
+      create: jest.fn().mockImplementation((v) => v),
+      save: jest.fn().mockResolvedValue(undefined),
+    };
+
+    const dataSourceMock = {
+      transaction: jest.fn().mockImplementation((cb: any) => {
+        const manager = {
+          getRepository: (entity: any) => {
+            if (entity === Document) return txDocRepoMock;
+            if (entity === DocumentVersion) return txVersionRepoMock;
+            if (entity === PurchaseOrderDocument) return txPoDocRepoMock;
+            throw new Error(`No mock repository for entity ${entity?.name}`);
+          },
+        };
+        return cb(manager);
+      }),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -105,6 +147,8 @@ describe('PurchaseOrdersService', () => {
           provide: getRepositoryToken(Customer),
           useValue: mockCustomerRepo,
         },
+        { provide: STORAGE_SERVICE, useValue: storageMock },
+        { provide: DataSource, useValue: dataSourceMock },
       ],
     }).compile();
 
@@ -570,181 +614,141 @@ describe('PurchaseOrdersService', () => {
       ).rejects.toThrow('Đơn hàng PO đã hủy, không thể thêm sản phẩm mới.');
     });
 
-    it('should block uploading document if PO is CANCELLED', async () => {
+    it('should block presigning a document upload if PO is CANCELLED', async () => {
       mockPoRepo.findOne.mockResolvedValueOnce({
         id: 'po-1',
         status: PoStatus.CANCELLED,
       });
 
       await expect(
-        service.uploadDocument('po-1', {
-          originalname: 'test.pdf',
-          mimetype: 'application/pdf',
-          size: 4,
-          buffer: Buffer.from('test'),
+        service.presignDocument('po-1', {
+          fileName: 'test.pdf',
+          mimeType: 'application/pdf',
+          sizeBytes: 4,
+          purpose: DocumentPurpose.OTHER,
         }),
       ).rejects.toThrow('Đơn hàng PO đã hủy, không thể tải lên tài liệu mới.');
     });
 
-    it('should block uploading multiple documents if PO is CANCELLED', async () => {
+    it('should block confirming a document upload if PO is CANCELLED', async () => {
       mockPoRepo.findOne.mockResolvedValueOnce({
         id: 'po-1',
         status: PoStatus.CANCELLED,
       });
 
       await expect(
-        service.uploadMultipleDocuments('po-1', [
-          {
-            originalname: 'test1.pdf',
-            mimetype: 'application/pdf',
-            size: 5,
-            buffer: Buffer.from('test1'),
-          },
-        ]),
+        service.confirmDocument('po-1', 'user-1', {
+          objectKey: 'purchase-orders/po-1/documents/other/x.pdf',
+          fileName: 'test.pdf',
+          mimeType: 'application/pdf',
+          sizeBytes: 4,
+          purpose: DocumentPurpose.OTHER,
+        }),
       ).rejects.toThrow('Đơn hàng PO đã hủy, không thể tải lên tài liệu mới.');
     });
   });
 
-  describe('uploadDocument disk cleanup on DB failure', () => {
-    it('should delete uploaded file from disk if docRepo.save fails', async () => {
+  describe('presignDocument', () => {
+    it('rejects a file whose extension is not in the PO allowlist', async () => {
       mockPoRepo.findOne.mockResolvedValueOnce({
         id: 'po-1',
         status: PoStatus.DRAFT,
       });
-      mockDocRepo.create.mockReturnValue({ id: 'temp-doc' });
-      mockDocRepo.save.mockRejectedValueOnce(new Error('DB Connection Failed'));
 
       await expect(
-        service.uploadDocument('po-1', {
-          originalname: 'cleanup-test.pdf',
-          mimetype: 'application/pdf',
-          size: 10,
-          buffer: Buffer.from('%PDF-1.4 test content'),
+        service.presignDocument('po-1', {
+          fileName: 'payload.exe',
+          mimeType: 'application/pdf',
+          sizeBytes: 4,
+          purpose: DocumentPurpose.OTHER,
         }),
-      ).rejects.toThrow('DB Connection Failed');
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('builds an object key scoped to the PO and purpose, and returns the presigned PUT url', async () => {
+      mockPoRepo.findOne.mockResolvedValueOnce({
+        id: 'po-1',
+        status: PoStatus.DRAFT,
+      });
+
+      const result = await service.presignDocument('po-1', {
+        fileName: 'contract.pdf',
+        mimeType: 'application/pdf',
+        sizeBytes: 1024,
+        purpose: DocumentPurpose.PO_ORIGINAL,
+      });
+
+      expect(result.objectKey).toMatch(
+        /^purchase-orders\/po-1\/documents\/po_original\/[0-9a-f-]+\.pdf$/,
+      );
+      expect(result.uploadUrl).toBe('https://s3.example/put');
+      expect(storageMock.getPresignedPutUrl).toHaveBeenCalledWith(
+        result.objectKey,
+        'application/pdf',
+        expect.any(Number),
+      );
     });
   });
 
-  describe('escapeHtml in parseDocxToHtml', () => {
-    it('should escape malicious script and img tags in docx text', async () => {
-      const escapeFn = (service as any).escapeHtml.bind(service);
-      const malicious =
-        '<script>alert("xss")</script>&<img src="x" onerror="evil()"/>';
-      const safe = escapeFn(malicious);
+  describe('confirmDocument', () => {
+    const confirmDto = {
+      objectKey: 'purchase-orders/po-1/documents/other/x.pdf',
+      fileName: 'x.pdf',
+      mimeType: 'application/pdf',
+      sizeBytes: 13,
+      purpose: DocumentPurpose.OTHER,
+    };
 
-      expect(safe).not.toContain('<script>');
-      expect(safe).not.toContain('</script>');
-      expect(safe).toContain('&lt;script&gt;');
-      expect(safe).toContain('&lt;img');
-      expect(safe).toContain('&amp;');
+    it('throws if the object was not actually uploaded to S3', async () => {
+      mockPoRepo.findOne.mockResolvedValueOnce({
+        id: 'po-1',
+        status: PoStatus.DRAFT,
+      });
+      storageMock.headObject.mockResolvedValueOnce({ exists: false });
+
+      await expect(
+        service.confirmDocument('po-1', 'user-1', confirmDto),
+      ).rejects.toThrow(BadRequestException);
     });
 
-    it('should parse docx buffer and escape malicious script and markup in paragraphs and tables', async () => {
-      const zip = new JSZip();
-      zip.file(
-        'word/document.xml',
-        `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-        <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
-          <w:body>
-            <w:p>
-              <w:r><w:t><script>alert("xss")</script></w:t></w:r>
-            </w:p>
-            <w:tbl>
-              <w:tr>
-                <w:tc>
-                  <w:p><w:r><w:t><img src=x onerror=alert(1) /></w:t></w:r></w:p>
-                </w:tc>
-              </w:tr>
-            </w:tbl>
-          </w:body>
-        </w:document>`,
-      );
-      const buffer = await zip.generateAsync({ type: 'nodebuffer' });
-      const html = await (service as any).parseDocxToHtml(buffer);
-
-      expect(html).not.toContain('<script>');
-      expect(html).not.toContain('</script>');
-      expect(html).not.toContain('<img');
-      expect(html).toContain('&lt;script&gt;');
-      expect(html).toContain('&lt;img');
-    });
-  });
-
-  describe('poDocumentFileFilter (MIME & extension mapping)', () => {
-    it('should reject payload.html even with Content-Type: application/pdf', () => {
-      const callback = jest.fn();
-      poDocumentFileFilter(
-        {},
-        { originalname: 'payload.html', mimetype: 'application/pdf' },
-        callback,
+    it('throws if the uploaded bytes fail the magic-bytes check for the declared extension', async () => {
+      mockPoRepo.findOne.mockResolvedValueOnce({
+        id: 'po-1',
+        status: PoStatus.DRAFT,
+      });
+      storageMock.getObjectBuffer.mockResolvedValueOnce(
+        Buffer.from('not actually a pdf'),
       );
 
-      expect(callback).toHaveBeenCalledWith(
-        expect.any(BadRequestException),
-        false,
-      );
-      const error = callback.mock.calls[0][0];
-      expect(error.message).toContain(
-        'Định dạng phần mở rộng ".html" không được hỗ trợ',
-      );
+      await expect(
+        service.confirmDocument('po-1', 'user-1', confirmDto),
+      ).rejects.toThrow(BadRequestException);
+      expect(txDocRepoMock.save).not.toHaveBeenCalled();
     });
 
-    it('should reject payload.exe even with Content-Type: application/pdf', () => {
-      const callback = jest.fn();
-      poDocumentFileFilter(
-        {},
-        { originalname: 'payload.exe', mimetype: 'application/pdf' },
-        callback,
+    it('creates document, version and PO link inside one transaction, resolving a fresh presigned URL', async () => {
+      mockPoRepo.findOne.mockResolvedValueOnce({
+        id: 'po-1',
+        status: PoStatus.DRAFT,
+      });
+
+      const result = await service.confirmDocument(
+        'po-1',
+        'user-1',
+        confirmDto,
       );
 
-      expect(callback).toHaveBeenCalledWith(
-        expect.any(BadRequestException),
-        false,
+      expect(txDocRepoMock.save).toHaveBeenCalled();
+      expect(txVersionRepoMock.save).toHaveBeenCalledWith(
+        expect.objectContaining({ storageKey: confirmDto.objectKey }),
       );
-      const error = callback.mock.calls[0][0];
-      expect(error.message).toContain(
-        'Định dạng phần mở rộng ".exe" không được hỗ trợ',
+      expect(txPoDocRepoMock.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          purchaseOrderId: 'po-1',
+          purpose: DocumentPurpose.OTHER,
+        }),
       );
-    });
-
-    it('should reject document.pdf with mismatched Content-Type: text/html', () => {
-      const callback = jest.fn();
-      poDocumentFileFilter(
-        {},
-        { originalname: 'document.pdf', mimetype: 'text/html' },
-        callback,
-      );
-
-      expect(callback).toHaveBeenCalledWith(
-        expect.any(BadRequestException),
-        false,
-      );
-      const error = callback.mock.calls[0][0];
-      expect(error.message).toContain(
-        'Loại MIME "text/html" không hợp lệ cho tệp ".pdf"',
-      );
-    });
-
-    it('should accept valid PDF with application/pdf', () => {
-      const callback = jest.fn();
-      poDocumentFileFilter(
-        {},
-        { originalname: 'document.pdf', mimetype: 'application/pdf' },
-        callback,
-      );
-
-      expect(callback).toHaveBeenCalledWith(null, true);
-    });
-
-    it('should accept valid TXT with Content-Type containing charset', () => {
-      const callback = jest.fn();
-      poDocumentFileFilter(
-        {},
-        { originalname: 'notes.txt', mimetype: 'text/plain; charset=utf-8' },
-        callback,
-      );
-
-      expect(callback).toHaveBeenCalledWith(null, true);
+      expect(result.fileUrl).toBe('https://s3.example/get');
     });
   });
 

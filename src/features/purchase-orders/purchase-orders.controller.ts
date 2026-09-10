@@ -1,4 +1,3 @@
-import * as path from 'path';
 import {
   Controller,
   Get,
@@ -12,26 +11,18 @@ import {
   HttpCode,
   HttpStatus,
   Req,
-  UploadedFile,
-  UploadedFiles,
-  UseInterceptors,
-  BadRequestException,
 } from '@nestjs/common';
-import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
 import {
   ApiTags,
   ApiOperation,
   ApiResponse,
-  ApiConsumes,
   ApiBearerAuth,
 } from '@nestjs/swagger';
 import { Auth } from '../../common/decorators/auth.decorator';
-import { DocumentPurpose } from '../../common/enums/database.enums';
 import {
   PurchaseOrdersService,
   PaginatedPoResult,
   PurchaseOrderDetailResponse,
-  PoDocumentPreviewResponse,
 } from './purchase-orders.service';
 import {
   CreatePurchaseOrderDto,
@@ -42,74 +33,12 @@ import {
   UpdatePoDocumentDto,
   CreatePoProductDto,
   UpdatePoProductDto,
+  PresignPoDocumentDto,
+  ConfirmPoDocumentDto,
 } from './dto';
 import { PurchaseOrder } from './entities/PurchaseOrder.entity';
 import { PurchaseOrderProduct } from './entities/PurchaseOrderProduct.entity';
 import { PurchaseOrderStatusHistory } from './entities/PurchaseOrderStatusHistory.entity';
-
-export const ALLOWED_PO_MIME_BY_EXTENSION: Record<string, string[]> = {
-  '.pdf': ['application/pdf'],
-  '.docx': [
-    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    'application/zip',
-    'application/octet-stream',
-    'application/x-zip-compressed',
-  ],
-  '.doc': ['application/msword'],
-  '.xlsx': [
-    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    'application/zip',
-    'application/octet-stream',
-    'application/x-zip-compressed',
-  ],
-  '.xls': ['application/vnd.ms-excel'],
-  '.csv': [
-    'text/csv',
-    'text/plain',
-    'application/vnd.ms-excel',
-    'application/csv',
-    'text/x-csv',
-  ],
-  '.txt': ['text/plain'],
-  '.png': ['image/png'],
-  '.jpg': ['image/jpeg'],
-  '.jpeg': ['image/jpeg'],
-  '.webp': ['image/webp'],
-  '.gif': ['image/gif'],
-};
-
-export const poDocumentFileFilter = (
-  _req: any,
-  file: any,
-  callback: (error: Error | null, acceptFile: boolean) => void,
-) => {
-  const ext = (
-    file?.originalname ? path.extname(file.originalname) : ''
-  ).toLowerCase();
-  const rawMime = (file?.mimetype || '').toLowerCase();
-  const cleanMime = rawMime.split(';')[0].trim();
-
-  const allowedMimes = ALLOWED_PO_MIME_BY_EXTENSION[ext];
-  if (!allowedMimes) {
-    return callback(
-      new BadRequestException(
-        `Định dạng phần mở rộng "${ext || 'không có'}" không được hỗ trợ. Chỉ chấp nhận các định dạng: ${Object.keys(ALLOWED_PO_MIME_BY_EXTENSION).join(', ')}.`,
-      ),
-      false,
-    );
-  }
-
-  if (!allowedMimes.includes(cleanMime)) {
-    return callback(
-      new BadRequestException(
-        `Loại MIME "${rawMime}" không hợp lệ cho tệp "${ext}". Chỉ chấp nhận: ${allowedMimes.join(', ')}.`,
-      ),
-      false,
-    );
-  }
-
-  callback(null, true);
-};
 
 @ApiTags('purchase-orders')
 @ApiBearerAuth()
@@ -304,86 +233,36 @@ export class PurchaseOrdersController {
     return this.service.unlinkDocument(id, documentId);
   }
 
-  @Post(':id/documents/upload')
-  @ApiOperation({ summary: 'Tải lên và đính kèm tệp tài liệu vào PO' })
-  @ApiConsumes('multipart/form-data')
+  @Post(':id/documents/presign')
+  @ApiOperation({ summary: 'Xin presigned URL để tải tài liệu lên PO' })
   @ApiResponse({
     status: 201,
-    description: 'Đã tải lên và đính kèm tài liệu vào PO',
+    description: 'Presigned URL để PUT thẳng lên S3',
   })
-  @ApiResponse({ status: 400, description: 'PO đã khóa hoặc thiếu tệp' })
-  @UseInterceptors(
-    FileInterceptor('file', {
-      limits: { fileSize: 25 * 1024 * 1024 },
-      fileFilter: poDocumentFileFilter,
-    }),
-  )
-  async uploadDocument(
+  @ApiResponse({ status: 400, description: 'PO đã khóa hoặc tệp không hợp lệ' })
+  async presignDocument(
     @Param('id', ParseUUIDPipe) id: string,
-    @UploadedFile() file?: any,
-    @Query('purpose') purpose: string = 'other',
-    @Req() req?: any,
+    @Body() dto: PresignPoDocumentDto,
   ) {
-    if (!file) {
-      throw new BadRequestException('Vui lòng chọn tệp để tải lên');
-    }
-    const validPurposes = Object.values(DocumentPurpose);
-    const targetPurpose = (purpose || DocumentPurpose.OTHER) as DocumentPurpose;
-    if (!validPurposes.includes(targetPurpose)) {
-      throw new BadRequestException(
-        `Mục đích sử dụng tài liệu không hợp lệ. Các giá trị hợp lệ: ${validPurposes.join(', ')}`,
-      );
-    }
-    const userId = req?.user?.id || req?.user?.sub;
-    return this.service.uploadDocument(id, file, targetPurpose, userId);
+    return this.service.presignDocument(id, dto);
   }
 
-  @Post(':id/documents/upload-multiple')
-  @ApiOperation({ summary: 'Tải lên nhiều tệp tài liệu cùng lúc vào PO' })
-  @ApiConsumes('multipart/form-data')
+  @Post(':id/documents/confirm')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary: 'Xác nhận đã tải lên xong, ghi tài liệu vào PO',
+  })
   @ApiResponse({
     status: 201,
-    description: 'Đã tải lên danh sách tài liệu vào PO',
+    description: 'Đã đính kèm tài liệu vào PO',
   })
-  @ApiResponse({ status: 400, description: 'PO đã khóa hoặc thiếu tệp' })
-  @UseInterceptors(
-    FilesInterceptor('files', 20, {
-      limits: { fileSize: 25 * 1024 * 1024, files: 20 },
-      fileFilter: poDocumentFileFilter,
-    }),
-  )
-  async uploadMultipleDocuments(
+  @ApiResponse({ status: 400, description: 'PO đã khóa hoặc tệp không hợp lệ' })
+  async confirmDocument(
     @Param('id', ParseUUIDPipe) id: string,
-    @UploadedFiles() files?: any[],
-    @Query('purpose') purpose: string = 'other',
+    @Body() dto: ConfirmPoDocumentDto,
     @Req() req?: any,
   ) {
-    if (!files || files.length === 0) {
-      throw new BadRequestException('Vui lòng chọn ít nhất một tệp để tải lên');
-    }
-    const validPurposes = Object.values(DocumentPurpose);
-    const targetPurpose = (purpose || DocumentPurpose.OTHER) as DocumentPurpose;
-    if (!validPurposes.includes(targetPurpose)) {
-      throw new BadRequestException(
-        `Mục đích sử dụng tài liệu không hợp lệ. Các giá trị hợp lệ: ${validPurposes.join(', ')}`,
-      );
-    }
     const userId = req?.user?.id || req?.user?.sub;
-    return this.service.uploadMultipleDocuments(
-      id,
-      files,
-      targetPurpose,
-      userId,
-    );
-  }
-
-  @Get(':id/documents/:documentId/preview')
-  @ApiOperation({ summary: 'Xem trước nội dung tài liệu đính kèm PO' })
-  @ApiResponse({ status: 200, description: 'Nội dung xem trước của tài liệu' })
-  async previewDocument(
-    @Param('id', ParseUUIDPipe) id: string,
-    @Param('documentId', ParseUUIDPipe) documentId: string,
-  ): Promise<PoDocumentPreviewResponse> {
-    return this.service.previewDocument(id, documentId);
+    return this.service.confirmDocument(id, userId, dto);
   }
 }
