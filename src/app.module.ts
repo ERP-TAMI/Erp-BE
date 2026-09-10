@@ -24,6 +24,7 @@ import { AuditModule } from './features/audit/audit.module';
 import { PlatformModule } from './features/platform/platform.module';
 import { UploadsModule } from './features/uploads/uploads.module';
 import { AppLoggerModule } from './common/logger/logger.module';
+import { ManagementDashboardModule } from './features/management-dashboard/management-dashboard.module';
 
 const imports = [
   ConfigModule.forRoot({ isGlobal: true }),
@@ -48,6 +49,7 @@ const imports = [
   NotificationsModule,
   AuditModule,
   PlatformModule,
+  ManagementDashboardModule,
 ];
 
 @Module({
