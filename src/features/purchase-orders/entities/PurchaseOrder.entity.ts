@@ -15,10 +15,10 @@ export class PurchaseOrder {
     nullable: true,
     name: 'customer_po_code',
   })
-  customerPoCode: string;
+  customerPoCode: string | null;
 
-  @Column({ type: 'uuid', name: 'customer_id' })
-  customerId: string;
+  @Column({ type: 'uuid', name: 'customer_id', nullable: true })
+  customerId: string | null;
 
   @Column({ type: 'varchar', length: 255, name: 'customer_name_snapshot' })
   customerNameSnapshot: string;
@@ -27,35 +27,35 @@ export class PurchaseOrder {
   receivedDate: Date;
 
   @Column({ type: 'text', nullable: true })
-  note: string;
+  note: string | null;
 
   @Column({ type: 'enum', enum: PoStatus, enumName: 'po_status' })
   status: PoStatus;
 
   @Column({ type: 'text', nullable: true, name: 'cancellation_reason' })
-  cancellationReason: string;
+  cancellationReason: string | null;
 
   @Column({ type: 'timestamptz', nullable: true, name: 'closed_at' })
-  closedAt: Date;
+  closedAt: Date | null;
 
   @Column({ type: 'uuid', nullable: true, name: 'closed_by' })
-  closedBy: string;
+  closedBy: string | null;
 
   @Column({ type: 'bigint', default: 1, name: 'row_version' })
   rowVersion: number;
 
   @Column({ type: 'uuid', nullable: true, name: 'created_by' })
-  createdBy: string;
+  createdBy: string | null;
 
   @Column({ type: 'timestamptz', name: 'created_at' })
   createdAt: Date;
 
   @Column({ type: 'uuid', nullable: true, name: 'updated_by' })
-  updatedBy: string;
+  updatedBy: string | null;
 
   @Column({ type: 'timestamptz', name: 'updated_at' })
   updatedAt: Date;
 
   @Column({ type: 'timestamptz', nullable: true, name: 'archived_at' })
-  archivedAt: Date;
+  archivedAt: Date | null;
 }
