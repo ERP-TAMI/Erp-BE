@@ -1849,7 +1849,12 @@ export class PurchaseOrdersService {
     if (!po) {
       throw new NotFoundException(`Không tìm thấy PO #${poId}`);
     }
-    if (po.status === PoStatus.CLOSED || po.status === PoStatus.CANCELLED) {
+    if (po.status === PoStatus.CANCELLED) {
+      throw new BadRequestException(
+        'Đơn hàng PO đã hủy, không thể thêm sản phẩm mới.',
+      );
+    }
+    if (po.status === PoStatus.CLOSED) {
       throw new BadRequestException(
         'Đơn hàng PO đã khóa hoặc đã hủy, không thể thêm sản phẩm',
       );

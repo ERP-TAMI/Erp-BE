@@ -3,10 +3,27 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { ConflictException, BadRequestException } from '@nestjs/common';
 import { PurchaseOrdersService } from './purchase-orders.service';
+import { DataSource } from 'typeorm';
 import { PurchaseOrder } from './entities/PurchaseOrder.entity';
 import { PurchaseOrderStatusHistory } from './entities/PurchaseOrderStatusHistory.entity';
 import { PurchaseOrderDocument } from './entities/PurchaseOrderDocument.entity';
 import { PurchaseOrderProduct } from './entities/PurchaseOrderProduct.entity';
+import { PurchaseOrderProductOperationStep } from './entities/PurchaseOrderProductOperationStep.entity';
+import { PurchaseOrderProductSampleRound } from './entities/PurchaseOrderProductSampleRound.entity';
+import { PurchaseOrderProductSampleImage } from './entities/PurchaseOrderProductSampleImage.entity';
+import { PurchaseOrderProductDocument } from './entities/PurchaseOrderProductDocument.entity';
+import { PurchaseOrderProductStatusHistory } from './entities/PurchaseOrderProductStatusHistory.entity';
+import { PurchaseOrderProductColor } from './entities/PurchaseOrderProductColor.entity';
+import { PurchaseOrderProductColorSize } from './entities/PurchaseOrderProductColorSize.entity';
+import { Style } from '../styles/entities/Style.entity';
+import { StyleOperationStep } from '../styles/entities/StyleOperationStep.entity';
+import { StyleSampleRound } from '../styles/entities/StyleSampleRound.entity';
+import { StyleSampleImage } from '../styles/entities/StyleSampleImage.entity';
+import { StyleDocument } from '../styles/entities/StyleDocument.entity';
+import { ProductionDocument } from '../production/entities/ProductionDocument.entity';
+import { ProductionDocumentSizeRow } from '../production/entities/ProductionDocumentSizeRow.entity';
+import { ProductionDocumentSection } from '../production/entities/ProductionDocumentSection.entity';
+import { ProductionDocumentImage } from '../production/entities/ProductionDocumentImage.entity';
 import { Document } from '../documents/entities/Document.entity';
 import { DocumentVersion } from '../documents/entities/DocumentVersion.entity';
 import { Customer } from '../master-data/entities/Customer.entity';
@@ -71,12 +88,83 @@ describe('PurchaseOrdersService', () => {
     save: jest.fn(),
   };
 
+  const mockStyleRepo = {
+    find: jest.fn().mockResolvedValue([]),
+    findOne: jest.fn().mockImplementation((opts: any) => {
+      const id = opts?.where?.id || 'd9b2d63d-a233-4f9e-a89e-2938804918e7';
+      return Promise.resolve({
+        id,
+        styleCode: 'STYLE-002',
+        styleName: 'Áo T-Shirt',
+      });
+    }),
+    create: jest.fn().mockImplementation((dto: any) => dto),
+    save: jest
+      .fn()
+      .mockImplementation((entity: any) => Promise.resolve(entity)),
+  };
+
+  const mockGenericRepo = {
+    find: jest.fn().mockResolvedValue([]),
+    findOne: jest.fn().mockResolvedValue(null),
+    create: jest.fn().mockImplementation((dto: any) => dto),
+    save: jest
+      .fn()
+      .mockImplementation((entity: any) =>
+        Promise.resolve({ id: 'mock-id', ...entity }),
+      ),
+    remove: jest.fn().mockResolvedValue(undefined),
+    delete: jest.fn().mockResolvedValue({ affected: 1 }),
+    createQueryBuilder: jest.fn(),
+  };
+
+  const mockDataSource = {
+    transaction: jest.fn().mockImplementation((cb: any) => {
+      const manager = {
+        findOne: jest.fn().mockImplementation((entity: any, options: any) => {
+          if (entity === Style) {
+            return Promise.resolve({
+              id: options?.where?.id || 'd9b2d63d-a233-4f9e-a89e-2938804918e7',
+              styleCode: 'STYLE-002',
+              styleName: 'Áo T-Shirt',
+            });
+          }
+          return Promise.resolve(null);
+        }),
+        find: jest.fn().mockResolvedValue([]),
+        create: jest.fn().mockImplementation((entity: any, dto: any) => {
+          if (entity === PurchaseOrderProduct) {
+            return mockProductRepo.create(dto);
+          }
+          return dto;
+        }),
+        save: jest
+          .fn()
+          .mockImplementation((entityOrTarget: any, maybeEntity: any) => {
+            const target = maybeEntity || entityOrTarget;
+            if (entityOrTarget === PurchaseOrderProduct || !maybeEntity) {
+              mockProductRepo.save(target);
+            }
+            return Promise.resolve(target);
+          }),
+        delete: jest.fn().mockResolvedValue({ affected: 1 }),
+        remove: jest.fn().mockResolvedValue(undefined),
+        getRepository: jest.fn().mockReturnValue(mockGenericRepo),
+      };
+      return cb(manager);
+    }),
+  };
+
   beforeEach(async () => {
     jest.clearAllMocks();
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         PurchaseOrdersService,
+        {
+          provide: DataSource,
+          useValue: mockDataSource,
+        },
         {
           provide: getRepositoryToken(PurchaseOrder),
           useValue: mockPoRepo,
@@ -92,6 +180,70 @@ describe('PurchaseOrdersService', () => {
         {
           provide: getRepositoryToken(PurchaseOrderProduct),
           useValue: mockProductRepo,
+        },
+        {
+          provide: getRepositoryToken(PurchaseOrderProductOperationStep),
+          useValue: mockGenericRepo,
+        },
+        {
+          provide: getRepositoryToken(PurchaseOrderProductSampleRound),
+          useValue: mockGenericRepo,
+        },
+        {
+          provide: getRepositoryToken(PurchaseOrderProductSampleImage),
+          useValue: mockGenericRepo,
+        },
+        {
+          provide: getRepositoryToken(PurchaseOrderProductDocument),
+          useValue: mockGenericRepo,
+        },
+        {
+          provide: getRepositoryToken(PurchaseOrderProductStatusHistory),
+          useValue: mockGenericRepo,
+        },
+        {
+          provide: getRepositoryToken(PurchaseOrderProductColor),
+          useValue: mockGenericRepo,
+        },
+        {
+          provide: getRepositoryToken(PurchaseOrderProductColorSize),
+          useValue: mockGenericRepo,
+        },
+        {
+          provide: getRepositoryToken(Style),
+          useValue: mockStyleRepo,
+        },
+        {
+          provide: getRepositoryToken(StyleOperationStep),
+          useValue: mockGenericRepo,
+        },
+        {
+          provide: getRepositoryToken(StyleSampleRound),
+          useValue: mockGenericRepo,
+        },
+        {
+          provide: getRepositoryToken(StyleSampleImage),
+          useValue: mockGenericRepo,
+        },
+        {
+          provide: getRepositoryToken(StyleDocument),
+          useValue: mockGenericRepo,
+        },
+        {
+          provide: getRepositoryToken(ProductionDocument),
+          useValue: mockGenericRepo,
+        },
+        {
+          provide: getRepositoryToken(ProductionDocumentSizeRow),
+          useValue: mockGenericRepo,
+        },
+        {
+          provide: getRepositoryToken(ProductionDocumentSection),
+          useValue: mockGenericRepo,
+        },
+        {
+          provide: getRepositoryToken(ProductionDocumentImage),
+          useValue: mockGenericRepo,
         },
         {
           provide: getRepositoryToken(Document),
