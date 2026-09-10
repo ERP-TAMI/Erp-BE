@@ -442,6 +442,12 @@ export class PurchaseOrdersService {
 
     this.checkPoNotLocked(po, 'chỉnh sửa thông tin');
 
+    if (dto.deadline !== undefined && !dto.deadline) {
+      throw new BadRequestException(
+        'Hạn hoàn thành (deadline) không được để trống hoặc mang giá trị null.',
+      );
+    }
+
     const newDeadlineStr =
       dto.deadline !== undefined ? toYmdString(dto.deadline) : null;
     const targetReceivedDate = dto.receivedDate || po.receivedDate;
@@ -480,7 +486,7 @@ export class PurchaseOrdersService {
       po.receivedDate = new Date(dto.receivedDate);
     }
     if (dto.deadline !== undefined) {
-      po.deadline = dto.deadline ? new Date(dto.deadline) : null;
+      po.deadline = new Date(dto.deadline);
     }
     if (dto.note !== undefined) {
       po.note = dto.note || null;

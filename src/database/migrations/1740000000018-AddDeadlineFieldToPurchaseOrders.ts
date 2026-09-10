@@ -1,7 +1,7 @@
 import { MigrationInterface, QueryRunner } from 'typeorm';
 
-export class AddDeadlineFieldToPurchaseOrders1740000000017 implements MigrationInterface {
-  name = 'AddDeadlineFieldToPurchaseOrders1740000000017';
+export class AddDeadlineFieldToPurchaseOrders1740000000018 implements MigrationInterface {
+  name = 'AddDeadlineFieldToPurchaseOrders1740000000018';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.query(`

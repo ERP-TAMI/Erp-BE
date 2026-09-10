@@ -4,6 +4,8 @@ import {
   IsUUID,
   IsDateString,
   MaxLength,
+  ValidateIf,
+  IsNotEmpty,
 } from 'class-validator';
 
 export class UpdatePurchaseOrderDto {
@@ -28,11 +30,15 @@ export class UpdatePurchaseOrderDto {
   @IsOptional()
   receivedDate?: string;
 
+  @ValidateIf((_obj, value) => value !== undefined)
+  @IsNotEmpty({
+    message:
+      'Hạn hoàn thành (deadline) không được để trống hoặc mang giá trị null',
+  })
   @IsDateString(
     {},
     { message: 'Hạn hoàn thành (deadline) phải là ngày hợp lệ (YYYY-MM-DD)' },
   )
-  @IsOptional()
   deadline?: string;
 
   @IsString()

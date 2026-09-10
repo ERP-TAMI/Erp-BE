@@ -340,6 +340,22 @@ describe('PurchaseOrdersService', () => {
       ).rejects.toThrow('PO đã ở trạng thái Đã khóa');
     });
 
+    it('should throw BadRequestException if update deadline is null or empty', async () => {
+      mockPoRepo.findOne.mockResolvedValueOnce({
+        id: 'po-1',
+        poCode: 'PO-001',
+        status: PoStatus.DRAFT,
+        receivedDate: '2026-09-10',
+        deadline: new Date('2026-10-01'),
+      });
+
+      await expect(
+        service.update('po-1', { deadline: null as any }),
+      ).rejects.toThrow(
+        'Hạn hoàn thành (deadline) không được để trống hoặc mang giá trị null.',
+      );
+    });
+
     it('should throw BadRequestException if update deadline is on or before receivedDate', async () => {
       mockPoRepo.findOne.mockResolvedValueOnce({
         id: 'po-1',
