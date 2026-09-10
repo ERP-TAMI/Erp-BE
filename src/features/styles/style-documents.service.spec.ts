@@ -111,7 +111,9 @@ describe('StyleDocumentsService', () => {
       });
 
       expect(result.objectKey).toMatch(
-        new RegExp(`^styles/${STYLE_ID}/documents/fit_attachment/[0-9a-f-]+\\.pdf$`),
+        new RegExp(
+          `^styles/${STYLE_ID}/documents/fit_attachment/[0-9a-f-]+\\.pdf$`,
+        ),
       );
       expect(storageMock.getPresignedPutUrl).toHaveBeenCalledWith(
         result.objectKey,

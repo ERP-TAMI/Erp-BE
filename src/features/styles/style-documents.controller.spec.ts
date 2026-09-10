@@ -29,9 +29,7 @@ describe('StyleDocumentsController', () => {
       providers: [{ provide: StyleDocumentsService, useValue: service }],
     }).compile();
 
-    controller = module.get<StyleDocumentsController>(
-      StyleDocumentsController,
-    );
+    controller = module.get<StyleDocumentsController>(StyleDocumentsController);
   });
 
   it('delegates presign to the service with the styleId param', async () => {
