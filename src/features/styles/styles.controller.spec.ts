@@ -27,6 +27,7 @@ describe('StylesController', () => {
         .fn()
         .mockResolvedValue({ ...mockStyle, status: StyleStatus.ACTIVE }),
       remove: jest.fn().mockResolvedValue(undefined),
+      withResolvedBaseImage: jest.fn().mockImplementation((s) => s),
     };
 
     const module: TestingModule = await Test.createTestingModule({
