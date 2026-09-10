@@ -142,7 +142,9 @@ describe('PurchaseOrdersService', () => {
           receivedDate: '2020-01-01',
           deadline: '2020-01-05',
         }),
-      ).rejects.toThrow('Hạn hoàn thành (deadline) không được ở trong quá khứ.');
+      ).rejects.toThrow(
+        'Hạn hoàn thành (deadline) không được ở trong quá khứ.',
+      );
     });
 
     it('should throw BadRequestException if deadline is on or before receivedDate', async () => {
@@ -362,7 +364,10 @@ describe('PurchaseOrdersService', () => {
       mockPoRepo.findOne
         .mockResolvedValueOnce(mockPo)
         .mockResolvedValueOnce({ ...mockPo, deadline: new Date('2026-10-01') });
-      mockPoRepo.save.mockResolvedValueOnce({ ...mockPo, deadline: new Date('2026-10-01') });
+      mockPoRepo.save.mockResolvedValueOnce({
+        ...mockPo,
+        deadline: new Date('2026-10-01'),
+      });
       mockPoDocRepo.find.mockResolvedValue([]);
       mockProductRepo.find.mockResolvedValue([]);
       mockHistoryRepo.find.mockResolvedValue([]);
