@@ -52,6 +52,7 @@ export enum DocumentPurpose {
   COLOR_CARD = 'color_card',
   PRODUCTION_DOC = 'production_doc',
   AVATAR = 'avatar',
+  FIT_ATTACHMENT = 'fit_attachment',
   OTHER = 'other',
 }
 
