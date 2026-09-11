@@ -93,6 +93,14 @@ export class S3StorageService implements StorageService {
     }
   }
 
+  async getObjectBuffer(objectKey: string): Promise<Buffer> {
+    const result = await this.client.send(
+      new GetObjectCommand({ Bucket: this.bucket, Key: objectKey }),
+    );
+    const bytes = await result.Body?.transformToByteArray();
+    return Buffer.from(bytes ?? []);
+  }
+
   private parseTotalSizeFromContentRange(
     contentRange?: string,
   ): number | undefined {

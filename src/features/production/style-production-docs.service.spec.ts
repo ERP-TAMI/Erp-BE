@@ -11,6 +11,7 @@ import { Document } from '../documents/entities/Document.entity';
 import { BillOfMaterials } from '../boms/entities/BillOfMaterials.entity';
 import { BillOfMaterialLine } from '../boms/entities/BillOfMaterialLine.entity';
 import { ProductionDocStatus } from '../../common/enums/database.enums';
+import { STORAGE_SERVICE } from '../storage/storage.interface';
 
 describe('StyleProductionDocsService', () => {
   let service: StyleProductionDocsService;
@@ -138,6 +139,18 @@ describe('StyleProductionDocsService', () => {
           useValue: bomLineRepoMock,
         },
         { provide: DataSource, useValue: dataSourceMock },
+        {
+          provide: STORAGE_SERVICE,
+          useValue: {
+            getPresignedPutUrl: jest.fn(),
+            getPresignedGetUrl: jest
+              .fn()
+              .mockResolvedValue('https://s3.example/get'),
+            deleteObject: jest.fn(),
+            headObject: jest.fn(),
+            getObjectBuffer: jest.fn(),
+          },
+        },
       ],
     }).compile();
 
@@ -164,12 +177,18 @@ describe('StyleProductionDocsService', () => {
 
     it('should save sizeData from dto.sizeData, not from dto.sizeRows', async () => {
       prodDocRepoMock.findOne.mockResolvedValueOnce(null);
-      const sizeData = [{ imageUrl: '/uploads/img-1.png' }];
+      const sizeData = [
+        {
+          imageUrl:
+            'styles/style-uuid-1/documents/production_doc_image/img-1.png',
+        },
+      ];
       const sizeRows = [
         {
           sizeLabel: 'M',
           measurementName: 'Chest',
-          imageUrl: '/uploads/img-2.png',
+          imageUrl:
+            'styles/style-uuid-1/documents/production_doc_image/img-2.png',
         },
       ];
 
@@ -210,7 +229,12 @@ describe('StyleProductionDocsService', () => {
 
     it('should persist sizeData from the input, not derive it from sizeRows', async () => {
       prodDocRepoMock.findOne.mockResolvedValueOnce({ ...mockDoc });
-      const sizeData = [{ imageUrl: '/uploads/img-1.png' }];
+      const sizeData = [
+        {
+          imageUrl:
+            'styles/style-uuid-1/documents/production_doc_image/img-1.png',
+        },
+      ];
 
       await service.update('doc-uuid-1', { sizeData } as any);
 

@@ -24,4 +24,9 @@ export interface StorageService {
   deleteObject(objectKey: string): Promise<void>;
 
   headObject(objectKey: string): Promise<HeadObjectResult>;
+
+  /** Downloads the full object into memory. Only for server-side processing
+   * (embedding images into a generated file) — never for serving a file to a
+   * client, use getPresignedGetUrl for that. */
+  getObjectBuffer(objectKey: string): Promise<Buffer>;
 }
