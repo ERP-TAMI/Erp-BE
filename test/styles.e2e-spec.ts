@@ -42,6 +42,7 @@ describe('Styles API (e2e)', () => {
         Promise.resolve({ ...mockStyle, ...dto }),
       ),
     remove: jest.fn().mockResolvedValue(undefined),
+    withResolvedBaseImage: jest.fn().mockImplementation((s) => s),
   };
 
   beforeAll(async () => {

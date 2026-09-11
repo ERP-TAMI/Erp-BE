@@ -6,6 +6,7 @@ import { PRODUCTION_ENTITIES } from '../production/entities';
 import { Document } from '../documents/entities/Document.entity';
 import { DocumentVersion } from '../documents/entities/DocumentVersion.entity';
 import { Customer } from '../master-data/entities/Customer.entity';
+import { StorageModule } from '../storage/storage.module';
 import { PurchaseOrdersController } from './purchase-orders.controller';
 import { PurchaseOrdersService } from './purchase-orders.service';
 
@@ -19,6 +20,7 @@ import { PurchaseOrdersService } from './purchase-orders.service';
       DocumentVersion,
       Customer,
     ]),
+    StorageModule,
   ],
   controllers: [PurchaseOrdersController],
   providers: [PurchaseOrdersService],

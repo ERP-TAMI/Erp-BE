@@ -26,6 +26,9 @@ export class PurchaseOrder {
   @Column({ type: 'date', name: 'received_date' })
   receivedDate: Date;
 
+  @Column({ type: 'date', nullable: true })
+  deadline: Date | null;
+
   @Column({ type: 'text', nullable: true })
   note: string | null;
 

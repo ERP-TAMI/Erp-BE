@@ -84,7 +84,7 @@ CREATE TABLE draft_bom_lines (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), ver
 CREATE TABLE purchase_orders (
  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), po_code varchar(50) NOT NULL UNIQUE, customer_po_code varchar(100),
  customer_id uuid NOT NULL REFERENCES customers(id) ON DELETE RESTRICT, customer_name_snapshot varchar(255) NOT NULL,
- received_date date NOT NULL, note text, status po_status NOT NULL DEFAULT 'draft', cancellation_reason text,
+ received_date date NOT NULL, deadline date, note text, status po_status NOT NULL DEFAULT 'draft', cancellation_reason text,
  closed_at timestamptz, closed_by uuid REFERENCES users(id) ON DELETE SET NULL, row_version bigint NOT NULL DEFAULT 1,
  created_by uuid REFERENCES users(id) ON DELETE SET NULL, created_at timestamptz NOT NULL DEFAULT now(), updated_by uuid REFERENCES users(id) ON DELETE SET NULL, updated_at timestamptz NOT NULL DEFAULT now(), archived_at timestamptz,
  CONSTRAINT ck_po_terminal_data CHECK((status='closed' AND closed_at IS NOT NULL) OR status<>'closed'),

@@ -23,7 +23,9 @@ export class ProductionDocumentSection {
   @Column({ type: 'boolean', default: false, name: 'is_fixed' })
   isFixed: boolean;
 
-  // Local uploaded image URLs are persisted here as JSON.
+  // Despite the field name, each entry is an S3 object key, never a URL — a
+  // presigned URL expires (PRESIGN_GET_EXPIRY_SECONDS), so it must be
+  // resolved fresh on every read instead of being persisted here.
   @Column({ type: 'jsonb', nullable: true, name: 'image_groups' })
   imageGroups:
     | {

@@ -1,9 +1,10 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import * as ExcelJS from 'exceljs';
 import axios from 'axios';
 import * as fs from 'fs';
 import * as path from 'path';
 import { StyleOperationStep } from './entities/StyleOperationStep.entity';
+import { STORAGE_SERVICE, StorageService } from '../storage/storage.interface';
 
 export type OperationStepExportInput = {
   styleCode: string;
@@ -17,6 +18,11 @@ export type OperationStepExportInput = {
 
 @Injectable()
 export class StyleOperationStepsExportService {
+  constructor(
+    @Inject(STORAGE_SERVICE)
+    private readonly storage: StorageService,
+  ) {}
+
   async buildExcelBuffer(input: OperationStepExportInput): Promise<Buffer> {
     const templatePath = this.resolveTemplatePath();
     const WorkbookClass =
@@ -356,21 +362,7 @@ export class StyleOperationStepsExportService {
     let extension: 'png' | 'jpeg' = 'png';
 
     try {
-      if (imageUrl.startsWith('/uploads/') || imageUrl.startsWith('uploads/')) {
-        const relativePath = imageUrl.startsWith('/')
-          ? imageUrl.slice(1)
-          : imageUrl;
-        const localPath = path.join(process.cwd(), relativePath);
-        if (fs.existsSync(localPath)) {
-          imageBuffer = fs.readFileSync(localPath);
-          const ext = path.extname(localPath).toLowerCase();
-          extension =
-            ext.includes('jpg') || ext.includes('jpeg') ? 'jpeg' : 'png';
-        }
-      } else if (
-        imageUrl.startsWith('http://') ||
-        imageUrl.startsWith('https://')
-      ) {
+      if (imageUrl.startsWith('http://') || imageUrl.startsWith('https://')) {
         const response = await axios.get<ArrayBuffer>(imageUrl, {
           responseType: 'arraybuffer',
           timeout: 10000,
@@ -380,6 +372,12 @@ export class StyleOperationStepsExportService {
         ).toLowerCase();
         extension = contentType.includes('png') ? 'png' : 'jpeg';
         imageBuffer = Buffer.from(response.data);
+      } else {
+        // Anything else is an S3 object key.
+        imageBuffer = await this.storage.getObjectBuffer(imageUrl);
+        const ext = path.extname(imageUrl).toLowerCase();
+        extension =
+          ext.includes('jpg') || ext.includes('jpeg') ? 'jpeg' : 'png';
       }
 
       if (!imageBuffer) return;

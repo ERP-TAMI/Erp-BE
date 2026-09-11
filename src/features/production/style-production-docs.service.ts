@@ -1,4 +1,5 @@
 import {
+  Inject,
   Injectable,
   NotFoundException,
   BadRequestException,
@@ -10,8 +11,7 @@ import { DataSource, In, Repository } from 'typeorm';
 import * as ExcelJS from 'exceljs';
 import axios from 'axios';
 import { imageSize } from 'image-size';
-import * as fs from 'fs';
-import * as path from 'path';
+import { STORAGE_SERVICE, StorageService } from '../storage/storage.interface';
 import { ProductionDocument } from './entities/ProductionDocument.entity';
 import { ProductionDocumentSection } from './entities/ProductionDocumentSection.entity';
 import { ProductionDocumentSizeRow } from './entities/ProductionDocumentSizeRow.entity';
@@ -99,6 +99,8 @@ export class StyleProductionDocsService {
     private readonly bomRepo: Repository<BillOfMaterials>,
     @InjectRepository(BillOfMaterialLine)
     private readonly bomLineRepo: Repository<BillOfMaterialLine>,
+    @Inject(STORAGE_SERVICE)
+    private readonly storage: StorageService,
     private readonly dataSource: DataSource,
   ) {}
 
@@ -219,7 +221,7 @@ export class StyleProductionDocsService {
     }
 
     const section1ImageUrl =
-      dto.section1ImageUrl?.trim() || style.baseImageVersionId || null;
+      dto.section1ImageUrl?.trim() || style.baseImageKey || null;
     const section1Description =
       dto.section1Description?.trim() || style.description || null;
 
@@ -360,7 +362,7 @@ export class StyleProductionDocsService {
     const sectionsToSync = options?.sections ?? ['section1', 'section2'];
 
     if (sectionsToSync.includes('section1')) {
-      doc.section1ImageUrl = style.baseImageVersionId ?? null;
+      doc.section1ImageUrl = style.baseImageKey ?? null;
       doc.section1Description = style.description
         ? style.description.slice(0, 10000)
         : null;
@@ -1026,7 +1028,7 @@ export class StyleProductionDocsService {
     }
     const areaEnd = areaStart + areaRows - 1;
 
-    const sketchImgUrl = doc.section1ImageUrl || style.baseImageVersionId;
+    const sketchImgUrl = doc.section1ImageUrl || style.baseImageKey;
     if (sketchImgUrl) {
       const imgRes = await this.getImageBuffer(sketchImgUrl);
       if (imgRes) {
@@ -1397,36 +1399,39 @@ export class StyleProductionDocsService {
     return Buffer.from(buffer);
   }
 
+  /** Resolves whatever is stored as an image reference (an S3 object key, or
+   * a plain external http(s) URL) to a URL usable right now. Object keys
+   * never get cached as a URL — a presigned URL expires after
+   * PRESIGN_GET_EXPIRY_SECONDS, so it must be resolved fresh on every read. */
+  private async resolveMaybeKey(value?: string | null): Promise<string | null> {
+    if (!value) return null;
+    if (value.startsWith('http://') || value.startsWith('https://')) {
+      return value;
+    }
+    return this.storage.getPresignedGetUrl(value);
+  }
+
   private async getImageBuffer(
-    imageUrl?: string | null,
+    imageRef?: string | null,
   ): Promise<{ buffer: Buffer; extension: 'png' | 'jpeg' } | null> {
-    if (!imageUrl) return null;
+    if (!imageRef) return null;
     try {
-      const cleanUrl = imageUrl.split('?')[0];
+      const cleanUrl = imageRef.split('?')[0];
       const ext = (cleanUrl.split('.').pop() ?? 'jpeg').toLowerCase();
       const extension: 'png' | 'jpeg' = ext === 'png' ? 'png' : 'jpeg';
 
-      if (imageUrl.includes('/uploads/')) {
-        // path.basename() chặn "../" — chỉ giữ tên file cuối cùng, không cho thoát khỏi thư mục uploads.
-        const filename = path.basename(imageUrl.split('/uploads/').pop() ?? '');
-        if (filename) {
-          const localPath = path.join(process.cwd(), 'uploads', filename);
-          if (fs.existsSync(localPath)) {
-            const buffer = fs.readFileSync(localPath);
-            return { buffer, extension };
-          }
-        }
-      }
-
-      if (imageUrl.startsWith('http://') || imageUrl.startsWith('https://')) {
-        const resp = await axios.get<ArrayBuffer>(imageUrl, {
+      if (imageRef.startsWith('http://') || imageRef.startsWith('https://')) {
+        const resp = await axios.get<ArrayBuffer>(imageRef, {
           responseType: 'arraybuffer',
           timeout: 8000,
         });
         return { buffer: Buffer.from(resp.data), extension };
       }
 
-      return null;
+      // Anything else is an S3 object key — read it directly, no presigned
+      // URL round-trip needed for a server-side buffer read.
+      const buffer = await this.storage.getObjectBuffer(imageRef);
+      return { buffer, extension };
     } catch {
       return null;
     }
@@ -1465,6 +1470,42 @@ export class StyleProductionDocsService {
       }
     }
 
+    // Resolved fresh on every read — section1ImageUrl / sizeData[].imageUrl /
+    // imageGroups[].imageUrls may hold S3 object keys (see getImageBuffer),
+    // never persist a resolved presigned URL, it expires.
+    const section1ImageUrl = await this.resolveMaybeKey(doc.section1ImageUrl);
+
+    const sizeData = Array.isArray(doc.sizeData)
+      ? await Promise.all(
+          doc.sizeData.map(async (item: any) =>
+            item &&
+            typeof item === 'object' &&
+            typeof item.imageUrl === 'string'
+              ? { ...item, imageUrl: await this.resolveMaybeKey(item.imageUrl) }
+              : item,
+          ),
+        )
+      : doc.sizeData;
+
+    const resolvedSections = await Promise.all(
+      sections.map(async (s) => ({
+        id: s.id,
+        sectionCode: s.sectionCode,
+        title: s.title,
+        content: s.content,
+        imageGroups: await Promise.all(
+          (s.imageGroups ?? []).map(async (group) => ({
+            ...group,
+            imageUrls: await Promise.all(
+              (group.imageUrls ?? []).map((key) => this.resolveMaybeKey(key)),
+            ),
+          })),
+        ),
+        orderIndex: s.orderIndex,
+        isFixed: s.isFixed,
+      })),
+    );
+
     return {
       id: doc.id,
       styleId: doc.styleId,
@@ -1472,24 +1513,17 @@ export class StyleProductionDocsService {
       description: doc.description,
       status: doc.status,
       section1Description: doc.section1Description,
-      section1ImageUrl: doc.section1ImageUrl,
+      section1ImageUrl,
       section2Accessories: doc.section2Accessories,
       section3Notes: doc.section3Notes,
       section4CustomerFeedback: doc.section4CustomerFeedback,
-      sizeData: doc.sizeData,
+      sizeData,
       copiedFromStyleId: doc.copiedFromStyleId,
       copiedAt: doc.copiedAt,
       createdAt: doc.createdAt,
       updatedAt: doc.updatedAt,
-      sections: sections.map((s) => ({
-        id: s.id,
-        sectionCode: s.sectionCode,
-        title: s.title,
-        content: s.content,
-        imageGroups: s.imageGroups ?? [],
-        orderIndex: s.orderIndex,
-        isFixed: s.isFixed,
-      })),
+      sections:
+        resolvedSections as StyleProductionDocDetailResponse['sections'],
       sizeRows: sizeRows.map((sr) => ({
         id: sr.id,
         sizeLabel: sr.sizeLabel,

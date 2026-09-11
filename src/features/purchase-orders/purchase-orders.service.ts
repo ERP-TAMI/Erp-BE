@@ -5,6 +5,7 @@ import { randomUUID } from 'crypto';
 import * as ExcelJS from 'exceljs';
 import * as JSZip from 'jszip';
 import {
+  Inject,
   Injectable,
   NotFoundException,
   ConflictException,
@@ -12,6 +13,13 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In, DataSource } from 'typeorm';
+import { assertAllowedFile } from '../../common/utils/file-validation';
+import {
+  PRESIGN_GET_EXPIRY_SECONDS,
+  PRESIGN_PUT_EXPIRY_SECONDS,
+  STORAGE_SERVICE,
+  StorageService,
+} from '../storage/storage.interface';
 import { PurchaseOrder } from './entities/PurchaseOrder.entity';
 import { PurchaseOrderStatusHistory } from './entities/PurchaseOrderStatusHistory.entity';
 import { PurchaseOrderDocument } from './entities/PurchaseOrderDocument.entity';
@@ -59,7 +67,42 @@ import {
   UpdatePoProductDto,
   SaveProductOperationStepsDto,
   CreateProductSampleRoundDto,
+  PresignPoDocumentDto,
+  ConfirmPoDocumentDto,
 } from './dto';
+
+export const ALLOWED_PO_MIME_BY_EXTENSION: Record<string, string[]> = {
+  '.pdf': ['application/pdf'],
+  '.docx': [
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/zip',
+    'application/octet-stream',
+    'application/x-zip-compressed',
+  ],
+  '.doc': ['application/msword'],
+  '.xlsx': [
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'application/zip',
+    'application/octet-stream',
+    'application/x-zip-compressed',
+  ],
+  '.xls': ['application/vnd.ms-excel'],
+  '.csv': [
+    'text/csv',
+    'text/plain',
+    'application/vnd.ms-excel',
+    'application/csv',
+    'text/x-csv',
+  ],
+  '.txt': ['text/plain'],
+  '.png': ['image/png'],
+  '.jpg': ['image/jpeg'],
+  '.jpeg': ['image/jpeg'],
+  '.webp': ['image/webp'],
+  '.gif': ['image/gif'],
+};
+
+const PO_DOCUMENT_MAX_SIZE_BYTES = 25 * 1024 * 1024;
 
 export interface PaginatedPoResult<T> {
   items: T[];
@@ -105,6 +148,7 @@ export interface PurchaseOrderDetailResponse {
   customerId: string | null;
   customerNameSnapshot: string;
   receivedDate: Date;
+  deadline: Date | null;
   note: string | null;
   status: PoStatus;
   cancellationReason: string | null;
@@ -133,6 +177,17 @@ export interface PurchaseOrderDetailResponse {
     changedBy: string | null;
     changedAt: Date;
   }[];
+}
+
+function toYmdString(val: string | Date): string {
+  if (!val) return '';
+  if (val instanceof Date) {
+    const y = val.getFullYear();
+    const m = String(val.getMonth() + 1).padStart(2, '0');
+    const d = String(val.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  return String(val).slice(0, 10);
 }
 
 @Injectable()
@@ -185,6 +240,8 @@ export class PurchaseOrdersService {
     private readonly docVersionRepo: Repository<DocumentVersion>,
     @InjectRepository(Customer)
     private readonly customerRepo: Repository<Customer>,
+    @Inject(STORAGE_SERVICE)
+    private readonly storage: StorageService,
   ) {}
 
   async create(
@@ -219,6 +276,23 @@ export class PurchaseOrdersService {
       }
     }
 
+    const today = new Date();
+    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+    const deadlineStr = toYmdString(dto.deadline);
+    const receivedDateStr = toYmdString(dto.receivedDate);
+
+    if (deadlineStr < todayStr) {
+      throw new BadRequestException(
+        'Hạn hoàn thành (deadline) không được ở trong quá khứ.',
+      );
+    }
+
+    if (deadlineStr <= receivedDateStr) {
+      throw new BadRequestException(
+        'Hạn hoàn thành (deadline) phải sau ngày nhận PO.',
+      );
+    }
+
     const now = new Date();
     const poEntity = this.poRepo.create({
       poCode: dto.poCode,
@@ -226,6 +300,7 @@ export class PurchaseOrdersService {
       customerId: customerId || null,
       customerNameSnapshot: dto.customerNameSnapshot,
       receivedDate: new Date(dto.receivedDate),
+      deadline: dto.deadline ? new Date(dto.deadline) : null,
       note: dto.note || null,
       status: PoStatus.DRAFT,
       createdBy: userId || null,
@@ -301,6 +376,7 @@ export class PurchaseOrdersService {
       createdAt: 'po.createdAt',
       poCode: 'po.poCode',
       receivedDate: 'po.receivedDate',
+      deadline: 'po.deadline',
       customerNameSnapshot: 'po.customerNameSnapshot',
       status: 'po.status',
     };
@@ -379,22 +455,28 @@ export class PurchaseOrdersService {
       }
     }
 
-    const formattedDocs = poDocs.map((pd) => {
-      const masterDoc = docsMap.get(pd.documentId);
-      const version = masterDoc?.currentVersionId
-        ? docVersionsMap.get(masterDoc.currentVersionId)
-        : null;
-      return {
-        documentId: pd.documentId,
-        documentCode: masterDoc?.documentCode || null,
-        title: masterDoc?.title || 'Tài liệu PO',
-        purpose: pd.purpose,
-        linkedAt: pd.linkedAt,
-        fileUrl: version?.storageKey || null,
-        fileName: version?.originalFileName || masterDoc?.title || null,
-        fileSize: version?.byteSize ? Number(version.byteSize) : null,
-      };
-    });
+    // Resolved fresh on every read — never persist a presigned URL, it expires
+    // after PRESIGN_GET_EXPIRY_SECONDS.
+    const formattedDocs = await Promise.all(
+      poDocs.map(async (pd) => {
+        const masterDoc = docsMap.get(pd.documentId);
+        const version = masterDoc?.currentVersionId
+          ? docVersionsMap.get(masterDoc.currentVersionId)
+          : null;
+        return {
+          documentId: pd.documentId,
+          documentCode: masterDoc?.documentCode || null,
+          title: masterDoc?.title || 'Tài liệu PO',
+          purpose: pd.purpose,
+          linkedAt: pd.linkedAt,
+          fileUrl: version?.storageKey
+            ? await this.storage.getPresignedGetUrl(version.storageKey)
+            : null,
+          fileName: version?.originalFileName || masterDoc?.title || null,
+          fileSize: version?.byteSize ? Number(version.byteSize) : null,
+        };
+      }),
+    );
 
     const products = await this.productRepo.find({
       where: { purchaseOrderId: id },
@@ -413,6 +495,7 @@ export class PurchaseOrdersService {
       customerId: po.customerId,
       customerNameSnapshot: po.customerNameSnapshot,
       receivedDate: po.receivedDate,
+      deadline: po.deadline || null,
       note: po.note,
       status: po.status,
       cancellationReason: po.cancellationReason,
@@ -469,6 +552,37 @@ export class PurchaseOrdersService {
 
     this.checkPoNotLocked(po, 'chỉnh sửa thông tin');
 
+    if (dto.deadline !== undefined && !dto.deadline) {
+      throw new BadRequestException(
+        'Hạn hoàn thành (deadline) không được để trống hoặc mang giá trị null.',
+      );
+    }
+
+    const newDeadlineStr =
+      dto.deadline !== undefined ? toYmdString(dto.deadline) : null;
+    const targetReceivedDate = dto.receivedDate || po.receivedDate;
+    const targetReceivedDateStr = targetReceivedDate
+      ? toYmdString(targetReceivedDate)
+      : '';
+
+    if (newDeadlineStr) {
+      if (targetReceivedDateStr && newDeadlineStr <= targetReceivedDateStr) {
+        throw new BadRequestException(
+          'Hạn hoàn thành (deadline) phải sau ngày nhận PO.',
+        );
+      }
+    } else if (dto.receivedDate && po.deadline && dto.deadline === undefined) {
+      const currentDeadlineStr = toYmdString(po.deadline);
+      if (
+        currentDeadlineStr &&
+        currentDeadlineStr <= toYmdString(dto.receivedDate)
+      ) {
+        throw new BadRequestException(
+          'Hạn hoàn thành (deadline) phải sau ngày nhận PO.',
+        );
+      }
+    }
+
     if (dto.customerPoCode !== undefined) {
       po.customerPoCode = dto.customerPoCode || null;
     }
@@ -480,6 +594,9 @@ export class PurchaseOrdersService {
     }
     if (dto.receivedDate) {
       po.receivedDate = new Date(dto.receivedDate);
+    }
+    if (dto.deadline !== undefined) {
+      po.deadline = new Date(dto.deadline);
     }
     if (dto.note !== undefined) {
       po.note = dto.note || null;
@@ -809,6 +926,126 @@ export class PurchaseOrdersService {
           `Định dạng tệp "${normalizedExt}" không được hỗ trợ để tải lên.`,
         );
     }
+  }
+
+  async presignDocument(
+    poId: string,
+    dto: PresignPoDocumentDto,
+  ): Promise<{ objectKey: string; uploadUrl: string; expiresIn: number }> {
+    const po = await this.poRepo.findOne({ where: { id: poId } });
+    if (!po) {
+      throw new NotFoundException(`Không tìm thấy đơn hàng PO với ID: ${poId}`);
+    }
+    this.checkPoNotLocked(po, 'tải lên tài liệu mới');
+
+    assertAllowedFile(dto.fileName, dto.mimeType, dto.sizeBytes, {
+      allowlist: ALLOWED_PO_MIME_BY_EXTENSION,
+      maxSizeBytes: PO_DOCUMENT_MAX_SIZE_BYTES,
+    });
+
+    const ext = path.extname(dto.fileName).toLowerCase();
+    const objectKey = `purchase-orders/${poId}/documents/${dto.purpose}/${randomUUID()}${ext}`;
+
+    const uploadUrl = await this.storage.getPresignedPutUrl(
+      objectKey,
+      dto.mimeType,
+      PRESIGN_PUT_EXPIRY_SECONDS,
+    );
+
+    return { objectKey, uploadUrl, expiresIn: PRESIGN_PUT_EXPIRY_SECONDS };
+  }
+
+  async confirmDocument(
+    poId: string,
+    userId: string | undefined,
+    dto: ConfirmPoDocumentDto,
+  ): Promise<{
+    documentId: string;
+    documentCode: string | null;
+    title: string;
+    purpose: string;
+    linkedAt: Date;
+    fileUrl: string;
+    fileName: string;
+    fileSize: number;
+  }> {
+    const po = await this.poRepo.findOne({ where: { id: poId } });
+    if (!po) {
+      throw new NotFoundException(`Không tìm thấy đơn hàng PO với ID: ${poId}`);
+    }
+    this.checkPoNotLocked(po, 'tải lên tài liệu mới');
+
+    const head = await this.storage.headObject(dto.objectKey);
+    if (!head.exists) {
+      throw new BadRequestException(
+        'Tệp chưa được tải lên thành công, vui lòng thử upload lại.',
+      );
+    }
+
+    // Server never receives the raw upload (client PUTs straight to S3 with a
+    // presigned URL), so the magic-bytes check that used to run on the multer
+    // buffer must run here instead, against the bytes actually stored on S3.
+    const ext = path.extname(dto.fileName) || '';
+    const buffer = await this.storage.getObjectBuffer(dto.objectKey);
+    this.validateFileMagicBytes(ext, buffer);
+
+    const now = new Date();
+
+    return this.dataSource.transaction(async (manager) => {
+      const docRepo = manager.getRepository(Document);
+      const versionRepo = manager.getRepository(DocumentVersion);
+      const poDocRepo = manager.getRepository(PurchaseOrderDocument);
+
+      const doc = await docRepo.save(
+        docRepo.create({
+          documentCode: `DOC-PO-${Date.now().toString().slice(-6)}`,
+          title: dto.fileName,
+          createdBy: userId || (null as any),
+          createdAt: now,
+        }),
+      );
+
+      const version = await versionRepo.save(
+        versionRepo.create({
+          documentId: doc.id,
+          versionNo: 1,
+          originalFileName: dto.fileName,
+          storageKey: dto.objectKey,
+          mimeType: dto.mimeType,
+          byteSize: dto.sizeBytes,
+          status: UploadStatus.READY,
+          uploadedBy: userId || (null as any),
+          uploadedAt: now,
+        }),
+      );
+
+      doc.currentVersionId = version.id;
+      await docRepo.save(doc);
+
+      await poDocRepo.save(
+        poDocRepo.create({
+          purchaseOrderId: poId,
+          documentId: doc.id,
+          purpose: dto.purpose,
+          linkedBy: userId || (null as any),
+          linkedAt: now,
+        }),
+      );
+
+      return {
+        documentId: doc.id,
+        documentCode: doc.documentCode,
+        title: doc.title,
+        purpose: String(dto.purpose),
+        linkedAt: now,
+        fileUrl: await this.storage.getPresignedGetUrl(
+          dto.objectKey,
+          PRESIGN_GET_EXPIRY_SECONDS,
+        ),
+        fileName: dto.fileName,
+        fileSize: dto.sizeBytes,
+      };
+    });
   }
 
   async uploadDocument(
@@ -1446,7 +1683,7 @@ export class PurchaseOrdersService {
         styleName: style.styleName,
         category: style.category,
         as3bCmBaseDays: style.as3bCmBaseDays,
-        baseImageVersionId: style.baseImageVersionId,
+        baseImageVersionId: style.baseImageKey,
       },
       operationSteps: operationSteps.map((step) => ({
         id: step.id,
@@ -1912,7 +2149,7 @@ export class PurchaseOrdersService {
         deadline: targetDeadline || undefined,
         structureImageVersionId:
           dto.structureImageVersionId ||
-          sourceStyle?.baseImageVersionId ||
+          sourceStyle?.baseImageKey ||
           null,
         status: ProductStatus.DRAFT,
         as3bCmBaseDays: targetCmDays,

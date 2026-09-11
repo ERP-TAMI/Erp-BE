@@ -48,6 +48,8 @@ import {
   UpdatePoProductDto,
   SaveProductOperationStepsDto,
   CreateProductSampleRoundDto,
+  PresignPoDocumentDto,
+  ConfirmPoDocumentDto,
 } from './dto';
 import { PurchaseOrder } from './entities/PurchaseOrder.entity';
 import { PurchaseOrderProduct } from './entities/PurchaseOrderProduct.entity';
@@ -513,6 +515,39 @@ export class PurchaseOrdersController {
     @Param('documentId', ParseUUIDPipe) documentId: string,
   ): Promise<void> {
     return this.service.unlinkDocument(id, documentId);
+  }
+
+  @Post(':id/documents/presign')
+  @ApiOperation({ summary: 'Xin presigned URL để tải tài liệu lên PO' })
+  @ApiResponse({
+    status: 201,
+    description: 'Presigned URL để PUT thẳng lên S3',
+  })
+  @ApiResponse({ status: 400, description: 'PO đã khóa hoặc tệp không hợp lệ' })
+  async presignDocument(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: PresignPoDocumentDto,
+  ) {
+    return this.service.presignDocument(id, dto);
+  }
+
+  @Post(':id/documents/confirm')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary: 'Xác nhận đã tải lên xong, ghi tài liệu vào PO',
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'Đã đính kèm tài liệu vào PO',
+  })
+  @ApiResponse({ status: 400, description: 'PO đã khóa hoặc tệp không hợp lệ' })
+  async confirmDocument(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: ConfirmPoDocumentDto,
+    @Req() req?: any,
+  ) {
+    const userId = req?.user?.id || req?.user?.sub;
+    return this.service.confirmDocument(id, userId, dto);
   }
 
   @Post(':id/documents/upload')
