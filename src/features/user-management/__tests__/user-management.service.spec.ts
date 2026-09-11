@@ -70,7 +70,7 @@ describe('UserManagementService', () => {
     await service.findAll({ role: UserRoleCode.IT, page: 1, limit: 10 });
 
     expect(queryBuilder.andWhere).toHaveBeenCalledWith(
-      expect.stringContaining('EXISTS'),
+      expect.stringContaining('WHERE filter_user_role.user_id = "user"."id"'),
       { role: 'IT' },
     );
   });

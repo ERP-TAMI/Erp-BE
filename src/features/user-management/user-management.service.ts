@@ -68,7 +68,7 @@ export class UserManagementService {
           SELECT 1
           FROM user_roles filter_user_role
           JOIN roles filter_role ON filter_role.id = filter_user_role.role_id
-          WHERE filter_user_role.user_id = user.id AND filter_role.code = :role
+          WHERE filter_user_role.user_id = "user"."id" AND filter_role.code = :role
         )`,
         { role: query.role },
       );
