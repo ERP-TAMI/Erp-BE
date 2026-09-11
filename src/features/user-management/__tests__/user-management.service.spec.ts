@@ -28,13 +28,14 @@ describe('UserManagementService', () => {
           roleCode: 'IT',
           roleName: 'Công nghệ thông tin',
           accountStatus: UserAccountStatus.ACTIVE,
+          passwordSetupRequired: false,
         },
       ]),
     } as unknown as jest.Mocked<SelectQueryBuilder<User>>;
     users = {
       createQueryBuilder: jest.fn().mockReturnValue(queryBuilder),
     } as unknown as jest.Mocked<Repository<User>>;
-    service = new UserManagementService(users);
+    service = new UserManagementService(users, {} as never, {} as never);
   });
 
   it('returns an allowlisted, paginated user response', async () => {
@@ -47,6 +48,7 @@ describe('UserManagementService', () => {
           phone: '0901234567',
           role: { code: 'IT', name: 'Công nghệ thông tin' },
           accountStatus: UserAccountStatus.ACTIVE,
+          passwordSetupRequired: false,
         },
       ],
       meta: { total: 1, page: 1, limit: 10, totalPages: 1 },

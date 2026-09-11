@@ -26,9 +26,15 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
     });
 
     const isLocked =
-      !!user?.lockoutUntil && user.lockoutUntil.getTime() > Date.now();
+      !!user?.manuallyLockedAt ||
+      (!!user?.lockoutUntil && user.lockoutUntil.getTime() > Date.now());
 
-    if (!user || user.status !== RecordStatus.ACTIVE || isLocked) {
+    if (
+      !user ||
+      user.status !== RecordStatus.ACTIVE ||
+      isLocked ||
+      user.authVersion !== payload.authVersion
+    ) {
       throw new UnauthorizedException({
         code: ErrorCode.UNAUTHORIZED,
         message: 'Phiên đăng nhập không hợp lệ.',

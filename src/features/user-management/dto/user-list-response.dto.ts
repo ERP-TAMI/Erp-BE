@@ -27,6 +27,9 @@ export class UserListItemResponseDto {
 
   @ApiProperty({ enum: UserAccountStatus })
   accountStatus: UserAccountStatus;
+
+  @ApiProperty()
+  passwordSetupRequired: boolean;
 }
 
 export class UserListMetaResponseDto {

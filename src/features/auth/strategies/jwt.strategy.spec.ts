@@ -11,6 +11,8 @@ function buildUser(overrides: Partial<User> = {}): User {
     email: 'sa@tami.test',
     status: RecordStatus.ACTIVE,
     lockoutUntil: null,
+    manuallyLockedAt: null,
+    authVersion: 1,
     ...overrides,
   } as User;
 }
@@ -24,6 +26,7 @@ describe('JwtStrategy', () => {
     email: 'sa@tami.test',
     roleCode: 'SA',
     permissions: ['system.users.manage'],
+    authVersion: 1,
   };
 
   beforeEach(() => {
@@ -53,6 +56,22 @@ describe('JwtStrategy', () => {
     userRepository.findOne.mockResolvedValue(
       buildUser({ lockoutUntil: new Date(Date.now() + 60_000) }),
     );
+    await expect(strategy.validate(payload)).rejects.toBeInstanceOf(
+      UnauthorizedException,
+    );
+  });
+
+  it('rejects an account manually locked by an administrator', async () => {
+    userRepository.findOne.mockResolvedValue(
+      buildUser({ manuallyLockedAt: new Date() }),
+    );
+    await expect(strategy.validate(payload)).rejects.toBeInstanceOf(
+      UnauthorizedException,
+    );
+  });
+
+  it('rejects a token issued before the auth version changed', async () => {
+    userRepository.findOne.mockResolvedValue(buildUser({ authVersion: 2 }));
     await expect(strategy.validate(payload)).rejects.toBeInstanceOf(
       UnauthorizedException,
     );

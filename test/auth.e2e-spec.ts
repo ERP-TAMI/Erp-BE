@@ -13,6 +13,7 @@ import { ErrorCode } from '../src/common/enums/error-code.enum';
 import { AuthController } from '../src/features/auth/auth.controller';
 import { AuthService } from '../src/features/auth/auth.service';
 import { JwtAuthGuard } from '../src/common/guards/jwt-auth.guard';
+import { PasswordSetupService } from '../src/features/auth/password-setup.service';
 
 describe('Auth API (e2e)', () => {
   const authService = {
@@ -21,13 +22,20 @@ describe('Auth API (e2e)', () => {
     logout: jest.fn(),
     getMe: jest.fn(),
   };
+  const passwordSetupService = {
+    validate: jest.fn(),
+    complete: jest.fn(),
+  };
   let app: INestApplication;
 
   beforeEach(async () => {
     jest.clearAllMocks();
     const moduleRef = await Test.createTestingModule({
       controllers: [AuthController],
-      providers: [{ provide: AuthService, useValue: authService }],
+      providers: [
+        { provide: AuthService, useValue: authService },
+        { provide: PasswordSetupService, useValue: passwordSetupService },
+      ],
     })
       .overrideGuard(JwtAuthGuard)
       .useValue({
@@ -66,6 +74,37 @@ describe('Auth API (e2e)', () => {
 
   afterEach(async () => {
     await app.close();
+  });
+
+  it('validates and consumes a public one-time password setup token', async () => {
+    passwordSetupService.validate.mockResolvedValue({
+      valid: true,
+      expiresAt: '2026-09-12T00:00:00.000Z',
+    });
+    passwordSetupService.complete.mockResolvedValue(undefined);
+
+    await request(app.getHttpServer())
+      .post('/auth/password-setup/validate')
+      .send({ token: 'opaque-token' })
+      .expect(200)
+      .expect({ valid: true, expiresAt: '2026-09-12T00:00:00.000Z' });
+    await request(app.getHttpServer())
+      .post('/auth/password-setup/complete')
+      .send({ token: 'opaque-token', password: 'a secure passphrase' })
+      .expect(204);
+
+    expect(passwordSetupService.complete).toHaveBeenCalledWith(
+      'opaque-token',
+      'a secure passphrase',
+    );
+  });
+
+  it('rejects invalid password setup bodies before service execution', async () => {
+    await request(app.getHttpServer())
+      .post('/auth/password-setup/complete')
+      .send({ token: '', password: 'short' })
+      .expect(400);
+    expect(passwordSetupService.complete).not.toHaveBeenCalled();
   });
 
   it('rejects an invalid request body before it reaches the service', async () => {

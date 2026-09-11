@@ -31,11 +31,12 @@ describe('schema entities', () => {
       .tables.filter((metadata) => entities.includes(metadata.target as never))
       .map((metadata) => metadata.name);
 
-    expect(entities).toHaveLength(61);
-    expect(new Set(tables).size).toBe(61);
+    expect(entities).toHaveLength(62);
+    expect(new Set(tables).size).toBe(62);
     expect(tables).toEqual(
       expect.arrayContaining([
         'users',
+        'user_password_setup_tokens',
         'materials',
         'purchase_order_products',
         'bills_of_materials',
