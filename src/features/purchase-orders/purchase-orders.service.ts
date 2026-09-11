@@ -2148,9 +2148,7 @@ export class PurchaseOrdersService {
         materialNote: dto.materialNote || dto.colorName || undefined,
         deadline: targetDeadline || undefined,
         structureImageVersionId:
-          dto.structureImageVersionId ||
-          sourceStyle?.baseImageKey ||
-          null,
+          dto.structureImageVersionId || sourceStyle?.baseImageKey || null,
         status: ProductStatus.DRAFT,
         as3bCmBaseDays: targetCmDays,
         importedAt: sourceStyleId ? new Date() : undefined,
