@@ -186,6 +186,19 @@ export class PurchaseOrdersController {
     return this.service.update(id, dto, userId);
   }
 
+  @Delete(':id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Xóa đơn hàng PO (chỉ khi còn ở trạng thái Nháp)' })
+  @ApiResponse({ status: 204, description: 'Đã xóa đơn hàng PO' })
+  @ApiResponse({
+    status: 400,
+    description: 'PO không ở trạng thái Nháp, không thể xóa',
+  })
+  @ApiResponse({ status: 404, description: 'Không tìm thấy PO' })
+  async remove(@Param('id', ParseUUIDPipe) id: string): Promise<void> {
+    return this.service.remove(id);
+  }
+
   @Patch(':id/status')
   @ApiOperation({ summary: 'Chuyển trạng thái đơn hàng PO (State machine)' })
   @ApiResponse({ status: 200, description: 'Trạng thái PO đã được cập nhật' })

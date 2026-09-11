@@ -12,7 +12,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In, DataSource } from 'typeorm';
+import { Repository, In, DataSource, EntityManager } from 'typeorm';
 import { assertAllowedFile } from '../../common/utils/file-validation';
 import {
   PRESIGN_GET_EXPIRY_SECONDS,
@@ -2566,6 +2566,62 @@ export class PurchaseOrdersService {
   /**
    * Xóa sản phẩm khỏi PO (Độc lập, giữ nguyên Style nguồn)
    */
+  private async deleteProductCascade(
+    manager: EntityManager,
+    productId: string,
+  ): Promise<void> {
+    // 1. Xóa công đoạn con
+    await manager.delete(PurchaseOrderProductOperationStep, { productId });
+
+    // 2. Xóa các đợt mẫu & ảnh mẫu con
+    const rounds = await manager.find(PurchaseOrderProductSampleRound, {
+      where: { productId },
+    });
+    const roundIds = rounds.map((r) => r.id);
+    if (roundIds.length > 0) {
+      await manager.delete(PurchaseOrderProductSampleImage, {
+        sampleRoundId: In(roundIds),
+      });
+      await manager.delete(PurchaseOrderProductSampleRound, { productId });
+    }
+
+    // 3. Xóa tài liệu SX tiếng Việt con
+    const prodDocs = await manager.find(ProductionDocument, {
+      where: { productId },
+    });
+    const prodDocIds = prodDocs.map((d) => d.id);
+    if (prodDocIds.length > 0) {
+      await manager.delete(ProductionDocumentSizeRow, {
+        productionDocumentId: In(prodDocIds),
+      });
+      await manager.delete(ProductionDocumentSection, {
+        productionDocumentId: In(prodDocIds),
+      });
+      await manager.delete(ProductionDocument, { productId });
+    }
+
+    // 4. Xóa tài liệu đính kèm Product
+    await manager.delete(PurchaseOrderProductDocument, { productId });
+
+    // 5. Xóa lịch sử trạng thái
+    await manager.delete(PurchaseOrderProductStatusHistory, { productId });
+
+    // 5.5. Xóa màu sắc & sizes của Product
+    const colorsToDelete = await manager.find(PurchaseOrderProductColor, {
+      where: { productId },
+    });
+    const colorIdsToDelete = colorsToDelete.map((c) => c.id);
+    if (colorIdsToDelete.length > 0) {
+      await manager.delete(PurchaseOrderProductColorSize, {
+        productColorId: In(colorIdsToDelete),
+      });
+      await manager.delete(PurchaseOrderProductColor, { productId });
+    }
+
+    // 6. Xóa Product
+    await manager.delete(PurchaseOrderProduct, { id: productId });
+  }
+
   async removeProduct(poId: string, productId: string): Promise<void> {
     const product = await this.productRepo.findOne({
       where: { id: productId, purchaseOrderId: poId },
@@ -2581,56 +2637,41 @@ export class PurchaseOrdersService {
     }
 
     await this.dataSource.transaction(async (manager) => {
-      // 1. Xóa công đoạn con
-      await manager.delete(PurchaseOrderProductOperationStep, { productId });
+      await this.deleteProductCascade(manager, productId);
+    });
+  }
 
-      // 2. Xóa các đợt mẫu & ảnh mẫu con
-      const rounds = await manager.find(PurchaseOrderProductSampleRound, {
-        where: { productId },
+  /**
+   * Xóa hẳn một đơn hàng PO cùng toàn bộ dữ liệu con (sản phẩm, màu/size,
+   * tài liệu, lịch sử...). Chỉ cho phép khi PO còn ở trạng thái Nháp — PO đã
+   * đưa vào xử lý/khóa/hủy thì dùng luồng Hủy (updateStatus) để giữ lại lịch
+   * sử thay vì xóa cứng.
+   */
+  async remove(id: string): Promise<void> {
+    const po = await this.poRepo.findOne({ where: { id } });
+    if (!po) {
+      throw new NotFoundException(`Không tìm thấy đơn hàng PO với ID: ${id}`);
+    }
+
+    if (po.status !== PoStatus.DRAFT) {
+      throw new BadRequestException(
+        'Chỉ có thể xóa đơn hàng PO khi đang ở trạng thái Nháp. Với PO đã xử lý, vui lòng chuyển trạng thái sang Đã hủy.',
+      );
+    }
+
+    await this.dataSource.transaction(async (manager) => {
+      const products = await manager.find(PurchaseOrderProduct, {
+        where: { purchaseOrderId: id },
       });
-      const roundIds = rounds.map((r) => r.id);
-      if (roundIds.length > 0) {
-        await manager.delete(PurchaseOrderProductSampleImage, {
-          sampleRoundId: In(roundIds),
-        });
-        await manager.delete(PurchaseOrderProductSampleRound, { productId });
+      for (const product of products) {
+        await this.deleteProductCascade(manager, product.id);
       }
 
-      // 3. Xóa tài liệu SX tiếng Việt con
-      const prodDocs = await manager.find(ProductionDocument, {
-        where: { productId },
+      await manager.delete(PurchaseOrderDocument, { purchaseOrderId: id });
+      await manager.delete(PurchaseOrderStatusHistory, {
+        purchaseOrderId: id,
       });
-      const prodDocIds = prodDocs.map((d) => d.id);
-      if (prodDocIds.length > 0) {
-        await manager.delete(ProductionDocumentSizeRow, {
-          productionDocumentId: In(prodDocIds),
-        });
-        await manager.delete(ProductionDocumentSection, {
-          productionDocumentId: In(prodDocIds),
-        });
-        await manager.delete(ProductionDocument, { productId });
-      }
-
-      // 4. Xóa tài liệu đính kèm Product
-      await manager.delete(PurchaseOrderProductDocument, { productId });
-
-      // 5. Xóa lịch sử trạng thái
-      await manager.delete(PurchaseOrderProductStatusHistory, { productId });
-
-      // 5.5. Xóa màu sắc & sizes của Product
-      const colorsToDelete = await manager.find(PurchaseOrderProductColor, {
-        where: { productId },
-      });
-      const colorIdsToDelete = colorsToDelete.map((c) => c.id);
-      if (colorIdsToDelete.length > 0) {
-        await manager.delete(PurchaseOrderProductColorSize, {
-          productColorId: In(colorIdsToDelete),
-        });
-        await manager.delete(PurchaseOrderProductColor, { productId });
-      }
-
-      // 6. Xóa Product
-      await manager.delete(PurchaseOrderProduct, { id: productId });
+      await manager.delete(PurchaseOrder, { id });
     });
   }
 
