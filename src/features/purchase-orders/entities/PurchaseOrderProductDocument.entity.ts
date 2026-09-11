@@ -3,10 +3,10 @@ import { DocumentPurpose } from '../../../common/enums/database.enums';
 
 @Entity('purchase_order_product_documents')
 export class PurchaseOrderProductDocument {
-  @PrimaryColumn({ type: 'uuid' })
+  @PrimaryColumn({ type: 'uuid', name: 'product_id' })
   productId: string;
 
-  @PrimaryColumn({ type: 'uuid' })
+  @PrimaryColumn({ type: 'uuid', name: 'document_id' })
   documentId: string;
 
   @Column({ type: 'boolean', default: false, name: 'source_po_document' })
