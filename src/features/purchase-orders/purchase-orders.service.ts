@@ -2709,6 +2709,267 @@ export class PurchaseOrdersService {
   }
 
   /**
+   * Xin presigned URL để tải tài liệu lên cho Sản phẩm PO (S3 direct upload)
+   */
+  async presignProductDocument(
+    poId: string,
+    productId: string,
+    dto: PresignPoDocumentDto,
+  ): Promise<{ objectKey: string; uploadUrl: string; expiresIn: number }> {
+    const product = await this.productRepo.findOne({
+      where: { id: productId, purchaseOrderId: poId },
+    });
+    if (!product) {
+      throw new NotFoundException(
+        `Không tìm thấy sản phẩm #${productId} trong đơn hàng PO`,
+      );
+    }
+    if (product.status === ProductStatus.CLOSED) {
+      throw new BadRequestException(
+        'Sản phẩm đã bị khóa, không thể tải lên tài liệu mới.',
+      );
+    }
+
+    assertAllowedFile(dto.fileName, dto.mimeType, dto.sizeBytes, {
+      allowlist: ALLOWED_PO_MIME_BY_EXTENSION,
+      maxSizeBytes: PO_DOCUMENT_MAX_SIZE_BYTES,
+    });
+
+    const ext = path.extname(dto.fileName).toLowerCase();
+    const objectKey = `purchase-orders/${poId}/products/${productId}/documents/${dto.purpose}/${randomUUID()}${ext}`;
+
+    const uploadUrl = await this.storage.getPresignedPutUrl(
+      objectKey,
+      dto.mimeType,
+      PRESIGN_PUT_EXPIRY_SECONDS,
+    );
+
+    return { objectKey, uploadUrl, expiresIn: PRESIGN_PUT_EXPIRY_SECONDS };
+  }
+
+  /**
+   * Xác nhận đã tải lên xong (S3), ghi tài liệu mới vào Sản phẩm PO
+   */
+  async confirmProductDocument(
+    poId: string,
+    productId: string,
+    userId: string | undefined,
+    dto: ConfirmPoDocumentDto,
+  ): Promise<{
+    productId: string;
+    documentId: string;
+    documentCode: string | null;
+    title: string;
+    purpose: string;
+    linkedAt: Date;
+    fileUrl: string;
+    fileName: string;
+    fileSize: number;
+  }> {
+    const product = await this.productRepo.findOne({
+      where: { id: productId, purchaseOrderId: poId },
+    });
+    if (!product) {
+      throw new NotFoundException(
+        `Không tìm thấy sản phẩm #${productId} trong đơn hàng PO`,
+      );
+    }
+    if (product.status === ProductStatus.CLOSED) {
+      throw new BadRequestException(
+        'Sản phẩm đã bị khóa, không thể tải lên tài liệu mới.',
+      );
+    }
+
+    const head = await this.storage.headObject(dto.objectKey);
+    if (!head.exists) {
+      throw new BadRequestException(
+        'Tệp chưa được tải lên thành công, vui lòng thử upload lại.',
+      );
+    }
+
+    // Server never receives the raw upload (client PUTs straight to S3 with a
+    // presigned URL), so the magic-bytes check that used to run on the multer
+    // buffer must run here instead, against the bytes actually stored on S3.
+    const ext = path.extname(dto.fileName) || '';
+    const buffer = await this.storage.getObjectBuffer(dto.objectKey);
+    this.validateFileMagicBytes(ext, buffer);
+
+    const now = new Date();
+
+    return this.dataSource.transaction(async (manager) => {
+      const docRepo = manager.getRepository(Document);
+      const versionRepo = manager.getRepository(DocumentVersion);
+      const productDocRepo = manager.getRepository(
+        PurchaseOrderProductDocument,
+      );
+
+      const doc = await docRepo.save(
+        docRepo.create({
+          documentCode: `DOC-PROD-${Date.now().toString().slice(-6)}`,
+          title: dto.fileName,
+          createdBy: userId || (null as any),
+          createdAt: now,
+        }),
+      );
+
+      const version = await versionRepo.save(
+        versionRepo.create({
+          documentId: doc.id,
+          versionNo: 1,
+          originalFileName: dto.fileName,
+          storageKey: dto.objectKey,
+          mimeType: dto.mimeType,
+          byteSize: dto.sizeBytes,
+          status: UploadStatus.READY,
+          uploadedBy: userId || (null as any),
+          uploadedAt: now,
+        }),
+      );
+
+      doc.currentVersionId = version.id;
+      await docRepo.save(doc);
+
+      await productDocRepo.save(
+        productDocRepo.create({
+          productId,
+          documentId: doc.id,
+          sourcePoDocument: false,
+          purpose: dto.purpose,
+          linkedBy: userId || (null as any),
+          linkedAt: now,
+        }),
+      );
+
+      return {
+        productId,
+        documentId: doc.id,
+        documentCode: doc.documentCode,
+        title: doc.title,
+        purpose: String(dto.purpose),
+        linkedAt: now,
+        fileUrl: await this.storage.getPresignedGetUrl(
+          dto.objectKey,
+          PRESIGN_GET_EXPIRY_SECONDS,
+        ),
+        fileName: dto.fileName,
+        fileSize: dto.sizeBytes,
+      };
+    });
+  }
+
+  /**
+   * Xác nhận đã tải lên xong (S3), thêm phiên bản mới cho tài liệu của Sản phẩm PO
+   */
+  async confirmProductDocumentVersion(
+    poId: string,
+    productId: string,
+    documentId: string,
+    userId: string | undefined,
+    dto: ConfirmPoDocumentDto,
+  ) {
+    const product = await this.productRepo.findOne({
+      where: { id: productId, purchaseOrderId: poId },
+    });
+    if (!product) {
+      throw new NotFoundException(
+        `Không tìm thấy sản phẩm #${productId} trong đơn hàng PO`,
+      );
+    }
+    if (product.status === ProductStatus.CLOSED) {
+      throw new BadRequestException(
+        'Sản phẩm đã bị khóa, không thể cập nhật phiên bản mới.',
+      );
+    }
+
+    const prodDoc = await this.productDocRepo.findOne({
+      where: { productId, documentId },
+    });
+    if (!prodDoc) {
+      throw new NotFoundException('Tài liệu không thuộc sản phẩm này.');
+    }
+
+    const doc = await this.docRepo.findOne({ where: { id: documentId } });
+    if (!doc) {
+      throw new NotFoundException('Không tìm thấy tài liệu.');
+    }
+
+    const head = await this.storage.headObject(dto.objectKey);
+    if (!head.exists) {
+      throw new BadRequestException(
+        'Tệp chưa được tải lên thành công, vui lòng thử upload lại.',
+      );
+    }
+
+    const ext = path.extname(dto.fileName) || '';
+    const buffer = await this.storage.getObjectBuffer(dto.objectKey);
+    this.validateFileMagicBytes(ext, buffer);
+
+    const existingVersions = await this.docVersionRepo.find({
+      where: { documentId },
+      order: { versionNo: 'DESC' },
+    });
+    const maxVersion =
+      existingVersions.length > 0
+        ? Math.max(...existingVersions.map((v) => v.versionNo))
+        : 0;
+    const nextVersionNo = maxVersion + 1;
+
+    const now = new Date();
+
+    return this.dataSource.transaction(async (manager) => {
+      const docRepo = manager.getRepository(Document);
+      const versionRepo = manager.getRepository(DocumentVersion);
+
+      const newVersion = await versionRepo.save(
+        versionRepo.create({
+          documentId,
+          versionNo: nextVersionNo,
+          originalFileName: dto.fileName,
+          storageKey: dto.objectKey,
+          mimeType: dto.mimeType,
+          byteSize: dto.sizeBytes,
+          status: UploadStatus.READY,
+          uploadedBy: userId || (null as any),
+          uploadedAt: now,
+        }),
+      );
+
+      doc.currentVersionId = newVersion.id;
+      await docRepo.save(doc);
+
+      const allVersions = [newVersion, ...existingVersions];
+
+      return {
+        productId,
+        documentId,
+        documentCode: doc.documentCode,
+        title: doc.title,
+        purpose: String(prodDoc.purpose),
+        sourcePoDocument: prodDoc.sourcePoDocument,
+        linkedAt: prodDoc.linkedAt,
+        fileName: dto.fileName,
+        fileUrl: await this.storage.getPresignedGetUrl(
+          dto.objectKey,
+          PRESIGN_GET_EXPIRY_SECONDS,
+        ),
+        fileSize: dto.sizeBytes,
+        currentVersionNo: nextVersionNo,
+        versions: allVersions.map((v) => ({
+          id: v.id,
+          versionNo: v.versionNo,
+          originalFileName: v.originalFileName,
+          fileUrl: v.storageKey,
+          fileSize: v.byteSize ? Number(v.byteSize) : null,
+          mimeType: v.mimeType,
+          changeReason: v.changeReason,
+          uploadedAt: v.uploadedAt,
+          uploadedBy: v.uploadedBy,
+        })),
+      };
+    });
+  }
+
+  /**
    * Tải lên tài liệu đính kèm trực tiếp cho Sản phẩm PO
    */
   async uploadProductDocument(
@@ -2999,6 +3260,12 @@ export class PurchaseOrdersService {
       await manager.delete(PurchaseOrderProductOperationStep, { productId });
 
       // Tạo các bước mới
+      // NOTE: order_index has a UNIQUE(product_id, order_index) DB constraint,
+      // so it must be assigned from the submitted array position (idx), which
+      // is always unique 0..n-1. Trusting a client-supplied step.orderIndex
+      // instead (as before) breaks as soon as nested/grouped steps re-use the
+      // same index per-group (e.g. every group's children numbered 0,1,2...),
+      // causing a duplicate-key 500 on save (uq_product_step_order).
       const newSteps = (dto.steps || []).map((step, idx) => {
         const entity = new PurchaseOrderProductOperationStep();
         entity.id = step.id || randomUUID();
@@ -3011,7 +3278,7 @@ export class PurchaseOrdersService {
         entity.ssv = Number(step.ssv || 0);
         entity.targetTotal = Number(step.targetTotal || 0);
         entity.note = (step.note || null) as any;
-        entity.orderIndex = step.orderIndex ?? idx;
+        entity.orderIndex = idx;
         entity.isGroup = Boolean(step.isGroup);
         return entity;
       });
@@ -3021,7 +3288,9 @@ export class PurchaseOrdersService {
         newSteps,
       );
 
-      if (dto.cmBaseDays) {
+      // NOTE: use `!= null` (not truthy) so an explicit cmBaseDays of 0 is
+      // still persisted instead of being silently skipped.
+      if (dto.cmBaseDays != null) {
         product.as3bCmBaseDays = Number(dto.cmBaseDays);
         await manager.save(PurchaseOrderProduct, product);
       }
@@ -3083,22 +3352,45 @@ export class PurchaseOrdersService {
       throw new NotFoundException(`Không tìm thấy sản phẩm #${productId}`);
     }
 
-    const currentCount = await this.productSampleRoundRepo.count({
-      where: { productId },
-    });
-    const roundNo = dto.roundNo || currentCount + 1;
+    return await this.dataSource.transaction(async (manager) => {
+      const roundRepo = manager.getRepository(PurchaseOrderProductSampleRound);
+      const imageRepo = manager.getRepository(PurchaseOrderProductSampleImage);
 
-    const round = this.productSampleRoundRepo.create({
-      productId,
-      roundNo,
-      sampleDate: dto.sampleDate ? new Date(dto.sampleDate) : new Date(),
-      feedback: dto.feedback || '',
-      status: (dto.status as SampleStatus) || SampleStatus.WORKING,
-      createdBy: userId,
-      createdAt: new Date(),
-    });
+      const currentCount = await roundRepo.count({ where: { productId } });
+      const roundNo = dto.roundNo || currentCount + 1;
 
-    return await this.productSampleRoundRepo.save(round);
+      const round = roundRepo.create({
+        productId,
+        roundNo,
+        sampleDate: dto.sampleDate ? new Date(dto.sampleDate) : new Date(),
+        feedback: dto.feedback || '',
+        status: (dto.status as SampleStatus) || SampleStatus.WORKING,
+        createdBy: userId,
+        createdAt: new Date(),
+      });
+      const savedRound = await roundRepo.save(round);
+
+      // NOTE: dto.images used to be accepted by the DTO but silently dropped
+      // here — the round was created with no attached images at all, even
+      // when the client sent a fully-populated ordered image list.
+      const imagesToCreate = (dto.images || []).filter(
+        (img) => !!img.documentVersionId,
+      );
+      let savedImages: PurchaseOrderProductSampleImage[] = [];
+      if (imagesToCreate.length > 0) {
+        const imageEntities = imagesToCreate.map((img, idx) =>
+          imageRepo.create({
+            sampleRoundId: savedRound.id,
+            documentVersionId: img.documentVersionId as string,
+            colorNameSnapshot: img.colorName || undefined,
+            orderIndex: idx,
+          }),
+        );
+        savedImages = await imageRepo.save(imageEntities);
+      }
+
+      return { ...savedRound, images: savedImages };
+    });
   }
 
   /**

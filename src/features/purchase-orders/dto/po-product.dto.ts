@@ -8,7 +8,9 @@ import {
   IsInt,
   Min,
   IsArray,
+  ValidateNested,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class ProductColorSizeItemDto {
@@ -354,16 +356,37 @@ export class ProductStepItemDto {
 }
 
 export class SaveProductOperationStepsDto {
-  @ApiProperty({ description: 'Danh sách các bước công đoạn' })
+  @ApiProperty({
+    description: 'Danh sách các bước công đoạn',
+    type: [ProductStepItemDto],
+  })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ProductStepItemDto)
   steps: ProductStepItemDto[];
 
   @IsOptional()
   @IsInt()
+  @Min(1, { message: 'cmBaseDays phải lớn hơn 0' })
   cmBaseDays?: number;
 
   @IsOptional()
   @IsString()
   reason?: string;
+}
+
+export class SampleRoundImageItemDto {
+  @IsOptional()
+  @IsString()
+  imageUrl?: string;
+
+  @IsOptional()
+  @IsUUID('4', { message: 'documentVersionId phải là UUID hợp lệ' })
+  documentVersionId?: string;
+
+  @IsOptional()
+  @IsString()
+  colorName?: string;
 }
 
 export class CreateProductSampleRoundDto {
@@ -383,12 +406,15 @@ export class CreateProductSampleRoundDto {
   @IsString()
   status?: string;
 
+  @ApiPropertyOptional({
+    description: 'Danh sách ảnh mẫu đính kèm theo thứ tự',
+    type: [SampleRoundImageItemDto],
+  })
   @IsOptional()
-  images?: {
-    imageUrl?: string;
-    documentVersionId?: string;
-    colorName?: string;
-  }[];
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => SampleRoundImageItemDto)
+  images?: SampleRoundImageItemDto[];
 }
 
 export class UpdateProductSampleRoundDto {

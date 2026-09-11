@@ -348,28 +348,6 @@ export class PurchaseOrdersController {
     return this.service.updateProductProductionDoc(productId, dto, userId);
   }
 
-  @Post(':id/products/:productId/documents/:documentId')
-  @ApiOperation({ summary: 'Gán tài liệu từ PO vào sản phẩm (kéo thả)' })
-  async linkProductDocument(
-    @Param('id', ParseUUIDPipe) id: string,
-    @Param('productId', ParseUUIDPipe) productId: string,
-    @Param('documentId', ParseUUIDPipe) documentId: string,
-    @Query('purpose') purpose?: string,
-    @Body() body?: { purpose?: string },
-    @Req() req?: any,
-  ) {
-    const targetPurpose = (body?.purpose || purpose) as
-      DocumentPurpose | undefined;
-    const userId = req?.user?.id || req?.user?.sub;
-    return this.service.linkProductDocument(
-      id,
-      productId,
-      documentId,
-      userId,
-      targetPurpose,
-    );
-  }
-
   @Patch(':id/products/:productId/documents/:documentId/purpose')
   @ApiOperation({
     summary: 'Cập nhật mục (PO Chi Tiết, TechPack, Khác) của tài liệu sản phẩm',
@@ -397,6 +375,80 @@ export class PurchaseOrdersController {
     @Param('documentId', ParseUUIDPipe) documentId: string,
   ) {
     return this.service.unlinkProductDocument(id, productId, documentId);
+  }
+
+  @Post(':id/products/:productId/documents/presign')
+  @ApiOperation({
+    summary: 'Xin presigned URL để tải tài liệu lên cho sản phẩm PO',
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'Presigned URL để PUT thẳng lên S3',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Sản phẩm đã khóa hoặc tệp không hợp lệ',
+  })
+  async presignProductDocument(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('productId', ParseUUIDPipe) productId: string,
+    @Body() dto: PresignPoDocumentDto,
+  ) {
+    return this.service.presignProductDocument(id, productId, dto);
+  }
+
+  @Post(':id/products/:productId/documents/confirm')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary: 'Xác nhận đã tải lên xong, ghi tài liệu vào sản phẩm PO',
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'Đã đính kèm tài liệu vào sản phẩm PO',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Sản phẩm đã khóa hoặc tệp không hợp lệ',
+  })
+  async confirmProductDocument(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('productId', ParseUUIDPipe) productId: string,
+    @Body() dto: ConfirmPoDocumentDto,
+    @Req() req?: any,
+  ) {
+    const userId = req?.user?.id || req?.user?.sub;
+    return this.service.confirmProductDocument(id, productId, userId, dto);
+  }
+
+  @Post(':id/products/:productId/documents/:documentId/versions/confirm')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary:
+      'Xác nhận đã tải lên xong, thêm phiên bản mới cho tài liệu của sản phẩm PO',
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'Đã thêm phiên bản mới cho tài liệu của sản phẩm PO',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Sản phẩm đã khóa hoặc tệp không hợp lệ',
+  })
+  async confirmProductDocumentVersion(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('productId', ParseUUIDPipe) productId: string,
+    @Param('documentId', ParseUUIDPipe) documentId: string,
+    @Body() dto: ConfirmPoDocumentDto,
+    @Req() req?: any,
+  ) {
+    const userId = req?.user?.id || req?.user?.sub;
+    return this.service.confirmProductDocumentVersion(
+      id,
+      productId,
+      documentId,
+      userId,
+      dto,
+    );
   }
 
   @Post(':id/products/:productId/documents/upload')
@@ -456,6 +508,33 @@ export class PurchaseOrdersController {
       file,
       changeReason,
       userId,
+    );
+  }
+
+  // NOTE: this generic POST ':documentId' route MUST be registered after every
+  // literal-suffix POST route above (presign/confirm/upload/etc.) — Express
+  // matches routes in registration order, and ':documentId' would otherwise
+  // greedily swallow requests like POST .../documents/presign (treating
+  // "presign" as the documentId) before they ever reach the intended handler.
+  @Post(':id/products/:productId/documents/:documentId')
+  @ApiOperation({ summary: 'Gán tài liệu từ PO vào sản phẩm (kéo thả)' })
+  async linkProductDocument(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('productId', ParseUUIDPipe) productId: string,
+    @Param('documentId', ParseUUIDPipe) documentId: string,
+    @Query('purpose') purpose?: string,
+    @Body() body?: { purpose?: string },
+    @Req() req?: any,
+  ) {
+    const targetPurpose = (body?.purpose || purpose) as
+      DocumentPurpose | undefined;
+    const userId = req?.user?.id || req?.user?.sub;
+    return this.service.linkProductDocument(
+      id,
+      productId,
+      documentId,
+      userId,
+      targetPurpose,
     );
   }
 
