@@ -29,6 +29,8 @@ describe('UserManagementService', () => {
           roleName: 'Công nghệ thông tin',
           accountStatus: UserAccountStatus.ACTIVE,
           passwordSetupRequired: false,
+          passwordSetupEmailStatus: 'failed',
+          passwordSetupEmailAttemptedAt: new Date('2026-09-12T12:00:00.000Z'),
         },
       ]),
     } as unknown as jest.Mocked<SelectQueryBuilder<User>>;
@@ -49,6 +51,8 @@ describe('UserManagementService', () => {
           role: { code: 'IT', name: 'Công nghệ thông tin' },
           accountStatus: UserAccountStatus.ACTIVE,
           passwordSetupRequired: false,
+          passwordSetupEmailStatus: 'failed',
+          passwordSetupEmailAttemptedAt: '2026-09-12T12:00:00.000Z',
         },
       ],
       meta: { total: 1, page: 1, limit: 10, totalPages: 1 },
@@ -57,6 +61,12 @@ describe('UserManagementService', () => {
     expect(queryBuilder.skip).toHaveBeenCalledWith(0);
     expect(queryBuilder.take).toHaveBeenCalledWith(10);
     expect(queryBuilder.orderBy).toHaveBeenCalledWith('user.fullName', 'ASC');
+    expect(queryBuilder.select).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.stringContaining('delivery_status'),
+        expect.stringContaining('delivery_attempted_at'),
+      ]),
+    );
   });
 
   it('escapes SQL wildcard characters in a case-insensitive text search', async () => {

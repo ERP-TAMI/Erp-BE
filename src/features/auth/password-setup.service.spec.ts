@@ -74,8 +74,17 @@ describe('PasswordSetupService', () => {
     const emailed = mail.sendPasswordSetupEmail.mock.calls[0][0];
     expect(saved.tokenHash).toMatch(/^[a-f0-9]{64}$/);
     expect(saved.tokenHash).not.toBe(emailed.token);
+    expect(saved.deliveryStatus).toBe('pending');
+    expect(saved.deliveryAttemptedAt).toBeNull();
     expect(saved.expiresAt.getTime() - Date.now()).toBeGreaterThan(
       23 * 60 * 60 * 1000,
+    );
+    expect(tokenRepository.update).toHaveBeenLastCalledWith(
+      { tokenHash: saved.tokenHash },
+      {
+        deliveryStatus: 'sent',
+        deliveryAttemptedAt: expect.any(Date),
+      },
     );
   });
 
@@ -102,6 +111,13 @@ describe('PasswordSetupService', () => {
     await expect(service.deliver(invitation)).resolves.toBe('failed');
     expect(logError).toHaveBeenCalledWith(expect.stringContaining(user.id));
     expect(JSON.stringify(logError.mock.calls)).not.toContain(invitation.token);
+    expect(tokenRepository.update).toHaveBeenLastCalledWith(
+      { tokenHash: expect.stringMatching(/^[a-f0-9]{64}$/) },
+      {
+        deliveryStatus: 'failed',
+        deliveryAttemptedAt: expect.any(Date),
+      },
+    );
   });
 
   it('marks a temporarily locked account as unavailable in the invitation', async () => {

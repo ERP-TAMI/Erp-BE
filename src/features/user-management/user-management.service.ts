@@ -29,6 +29,7 @@ import { RecordStatus } from '../../common/enums/database.enums';
 import { ErrorCode } from '../../common/enums/error-code.enum';
 import { hashPassword } from '../../common/security/password.util';
 import { PasswordSetupService } from '../auth/password-setup.service';
+import { PasswordSetupEmailStatus } from '../auth/password-setup-email-status.enum';
 import {
   assertCanCreateUser,
   assertCanUpdateUser,
@@ -43,6 +44,8 @@ type UserListRawRow = {
   roleName: string | null;
   accountStatus: UserAccountStatus;
   passwordSetupRequired: boolean;
+  passwordSetupEmailStatus: PasswordSetupEmailStatus | null;
+  passwordSetupEmailAttemptedAt: Date | string | null;
 };
 
 const DISPLAY_ROLE_JOIN = `role.id = (
@@ -115,7 +118,12 @@ export class UserManagementService {
       });
       this.deliverInBackground(result.invitation);
       return {
-        user: this.toUserItem(result.user, dto.roleCode, result.roleName),
+        user: this.toUserItem(
+          result.user,
+          dto.roleCode,
+          result.roleName,
+          PasswordSetupEmailStatus.PENDING,
+        ),
         invitationStatus: 'pending',
       };
     } catch (error) {
@@ -209,7 +217,12 @@ export class UserManagementService {
             );
         }
         return {
-          item: this.toUserItem(user, dto.roleCode, role!.name),
+          item: this.toUserItem(
+            user,
+            dto.roleCode,
+            role!.name,
+            invitation ? PasswordSetupEmailStatus.PENDING : null,
+          ),
           invitation,
         };
       });
@@ -264,6 +277,16 @@ export class UserManagementService {
         'role.code AS "roleCode"',
         'role.name AS "roleName"',
         'user.mustChangePassword AS "passwordSetupRequired"',
+        `(SELECT setup_token.delivery_status
+          FROM user_password_setup_tokens setup_token
+          WHERE setup_token.user_id = "user"."id"
+            AND setup_token.used_at IS NULL
+          LIMIT 1) AS "passwordSetupEmailStatus"`,
+        `(SELECT setup_token.delivery_attempted_at
+          FROM user_password_setup_tokens setup_token
+          WHERE setup_token.user_id = "user"."id"
+            AND setup_token.used_at IS NULL
+          LIMIT 1) AS "passwordSetupEmailAttemptedAt"`,
         `CASE
           WHEN user.status = 'inactive' THEN 'inactive'
           WHEN user.manuallyLockedAt IS NOT NULL THEN 'locked'
@@ -349,6 +372,10 @@ export class UserManagementService {
           : null,
       accountStatus: row.accountStatus,
       passwordSetupRequired: row.passwordSetupRequired,
+      passwordSetupEmailStatus: row.passwordSetupEmailStatus,
+      passwordSetupEmailAttemptedAt: row.passwordSetupEmailAttemptedAt
+        ? new Date(row.passwordSetupEmailAttemptedAt).toISOString()
+        : null,
     };
   }
 
@@ -407,6 +434,7 @@ export class UserManagementService {
     user: User,
     roleCode: UserRoleCode,
     roleName: string,
+    passwordSetupEmailStatus: PasswordSetupEmailStatus | null = null,
   ): UserListItemResponseDto {
     return {
       id: user.id,
@@ -416,6 +444,8 @@ export class UserManagementService {
       role: { code: roleCode, name: roleName },
       accountStatus: this.deriveStatus(user),
       passwordSetupRequired: user.mustChangePassword,
+      passwordSetupEmailStatus,
+      passwordSetupEmailAttemptedAt: null,
     };
   }
 

@@ -1,4 +1,5 @@
 import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
+import { PasswordSetupEmailStatus } from '../password-setup-email-status.enum';
 
 @Entity('user_password_setup_tokens')
 export class UserPasswordSetupToken {
@@ -19,6 +20,21 @@ export class UserPasswordSetupToken {
 
   @Column({ type: 'uuid', nullable: true, name: 'created_by' })
   createdBy: string | null;
+
+  @Column({
+    type: 'varchar',
+    length: 16,
+    name: 'delivery_status',
+    default: PasswordSetupEmailStatus.PENDING,
+  })
+  deliveryStatus: PasswordSetupEmailStatus;
+
+  @Column({
+    type: 'timestamptz',
+    nullable: true,
+    name: 'delivery_attempted_at',
+  })
+  deliveryAttemptedAt: Date | null;
 
   @Column({ type: 'timestamptz', name: 'created_at' })
   createdAt: Date;

@@ -18,6 +18,7 @@ import {
   passwordSetupExpiry,
 } from './password-setup-token.util';
 import { SmtpMailService } from './smtp-mail.service';
+import { PasswordSetupEmailStatus } from './password-setup-email-status.enum';
 
 export type InvitationStatus = 'sent' | 'failed';
 export type IssuedPasswordSetup = { user: User; token: string };
@@ -61,6 +62,8 @@ export class PasswordSetupService {
         expiresAt: passwordSetupExpiry(now),
         usedAt: null,
         createdBy,
+        deliveryStatus: PasswordSetupEmailStatus.PENDING,
+        deliveryAttemptedAt: null,
       }),
     );
     return { user, token: rawToken };
@@ -77,6 +80,7 @@ export class PasswordSetupService {
   }
 
   async deliver(invitation: IssuedPasswordSetup): Promise<InvitationStatus> {
+    let deliveryStatus: PasswordSetupEmailStatus;
     try {
       await this.mail.sendPasswordSetupEmail({
         email: invitation.user.email,
@@ -88,14 +92,34 @@ export class PasswordSetupService {
           (!invitation.user.lockoutUntil ||
             invitation.user.lockoutUntil.getTime() <= Date.now()),
       });
-      return 'sent';
+      deliveryStatus = PasswordSetupEmailStatus.SENT;
     } catch (error) {
       const reason =
         error instanceof Error ? error.message : 'Unknown SMTP error';
       this.logger.error(
         `Password setup email failed for user ${invitation.user.id} (${invitation.user.email}): ${reason}`,
       );
-      return 'failed';
+      deliveryStatus = PasswordSetupEmailStatus.FAILED;
+    }
+    await this.recordDeliveryStatus(invitation, deliveryStatus);
+    return deliveryStatus;
+  }
+
+  private async recordDeliveryStatus(
+    invitation: IssuedPasswordSetup,
+    deliveryStatus: PasswordSetupEmailStatus,
+  ): Promise<void> {
+    try {
+      await this.tokens.update(
+        { tokenHash: hashPasswordSetupToken(invitation.token) },
+        { deliveryStatus, deliveryAttemptedAt: new Date() },
+      );
+    } catch (error) {
+      const reason =
+        error instanceof Error ? error.message : 'Unknown persistence error';
+      this.logger.error(
+        `Password setup delivery status could not be saved for user ${invitation.user.id}: ${reason}`,
+      );
     }
   }
 
