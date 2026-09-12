@@ -62,7 +62,7 @@ export class StyleOperationStepsController {
         styleName: style.styleName,
         category: style.category,
         material: null,
-        imageUrl: style.baseImageVersionId,
+        imageUrl: style.baseImageKey,
         as3bCmBaseDays: style.as3bCmBaseDays ?? 30,
         steps,
       });

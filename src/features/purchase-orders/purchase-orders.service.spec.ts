@@ -1,12 +1,33 @@
-import * as JSZip from 'jszip';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { ConflictException, BadRequestException } from '@nestjs/common';
+import { DataSource } from 'typeorm';
+import {
+  ConflictException,
+  BadRequestException,
+  ValidationPipe,
+} from '@nestjs/common';
 import { PurchaseOrdersService } from './purchase-orders.service';
+import { SaveProductOperationStepsDto } from './dto';
 import { PurchaseOrder } from './entities/PurchaseOrder.entity';
 import { PurchaseOrderStatusHistory } from './entities/PurchaseOrderStatusHistory.entity';
 import { PurchaseOrderDocument } from './entities/PurchaseOrderDocument.entity';
 import { PurchaseOrderProduct } from './entities/PurchaseOrderProduct.entity';
+import { PurchaseOrderProductOperationStep } from './entities/PurchaseOrderProductOperationStep.entity';
+import { PurchaseOrderProductSampleRound } from './entities/PurchaseOrderProductSampleRound.entity';
+import { PurchaseOrderProductSampleImage } from './entities/PurchaseOrderProductSampleImage.entity';
+import { PurchaseOrderProductDocument } from './entities/PurchaseOrderProductDocument.entity';
+import { PurchaseOrderProductStatusHistory } from './entities/PurchaseOrderProductStatusHistory.entity';
+import { PurchaseOrderProductColor } from './entities/PurchaseOrderProductColor.entity';
+import { PurchaseOrderProductColorSize } from './entities/PurchaseOrderProductColorSize.entity';
+import { Style } from '../styles/entities/Style.entity';
+import { StyleOperationStep } from '../styles/entities/StyleOperationStep.entity';
+import { StyleSampleRound } from '../styles/entities/StyleSampleRound.entity';
+import { StyleSampleImage } from '../styles/entities/StyleSampleImage.entity';
+import { StyleDocument } from '../styles/entities/StyleDocument.entity';
+import { ProductionDocument } from '../production/entities/ProductionDocument.entity';
+import { ProductionDocumentSizeRow } from '../production/entities/ProductionDocumentSizeRow.entity';
+import { ProductionDocumentSection } from '../production/entities/ProductionDocumentSection.entity';
+import { ProductionDocumentImage } from '../production/entities/ProductionDocumentImage.entity';
 import { Document } from '../documents/entities/Document.entity';
 import { DocumentVersion } from '../documents/entities/DocumentVersion.entity';
 import { Customer } from '../master-data/entities/Customer.entity';
@@ -15,7 +36,7 @@ import {
   ProductStatus,
   DocumentPurpose,
 } from '../../common/enums/database.enums';
-import { poDocumentFileFilter } from './purchase-orders.controller';
+import { STORAGE_SERVICE, StorageService } from '../storage/storage.interface';
 
 describe('PurchaseOrdersService', () => {
   let service: PurchaseOrdersService;
@@ -71,12 +92,152 @@ describe('PurchaseOrdersService', () => {
     save: jest.fn(),
   };
 
+  const mockStyleRepo = {
+    find: jest.fn().mockResolvedValue([]),
+    findOne: jest.fn().mockImplementation((opts: any) => {
+      const id = opts?.where?.id || 'd9b2d63d-a233-4f9e-a89e-2938804918e7';
+      return Promise.resolve({
+        id,
+        styleCode: 'STYLE-002',
+        styleName: 'Áo T-Shirt',
+      });
+    }),
+    create: jest.fn().mockImplementation((dto: any) => dto),
+    save: jest
+      .fn()
+      .mockImplementation((entity: any) => Promise.resolve(entity)),
+  };
+
+  const mockGenericRepo = {
+    find: jest.fn().mockResolvedValue([]),
+    findOne: jest.fn().mockResolvedValue(null),
+    create: jest.fn().mockImplementation((dto: any) => dto),
+    save: jest
+      .fn()
+      .mockImplementation((entity: any) =>
+        Promise.resolve({ id: 'mock-id', ...entity }),
+      ),
+    remove: jest.fn().mockResolvedValue(undefined),
+    delete: jest.fn().mockResolvedValue({ affected: 1 }),
+    createQueryBuilder: jest.fn(),
+  };
+
+  let storageMock: jest.Mocked<StorageService>;
+  let txDocRepoMock: { create: jest.Mock; save: jest.Mock };
+  let txVersionRepoMock: { create: jest.Mock; save: jest.Mock };
+  let txPoDocRepoMock: { create: jest.Mock; save: jest.Mock };
+  let txProductDocRepoMock: { create: jest.Mock; save: jest.Mock };
+  let txSampleRoundRepoMock: {
+    count: jest.Mock;
+    create: jest.Mock;
+    save: jest.Mock;
+  };
+  let txSampleImageRepoMock: { create: jest.Mock; save: jest.Mock };
+
+  const mockDataSource = {
+    transaction: jest.fn().mockImplementation((cb: any) => {
+      const manager = {
+        findOne: jest.fn().mockImplementation((entity: any, options: any) => {
+          if (entity === Style) {
+            return Promise.resolve({
+              id: options?.where?.id || 'd9b2d63d-a233-4f9e-a89e-2938804918e7',
+              styleCode: 'STYLE-002',
+              styleName: 'Áo T-Shirt',
+            });
+          }
+          return Promise.resolve(null);
+        }),
+        find: jest.fn().mockResolvedValue([]),
+        create: jest.fn().mockImplementation((entity: any, dto: any) => {
+          if (entity === PurchaseOrderProduct) {
+            return mockProductRepo.create(dto);
+          }
+          return dto;
+        }),
+        save: jest
+          .fn()
+          .mockImplementation((entityOrTarget: any, maybeEntity: any) => {
+            const target = maybeEntity || entityOrTarget;
+            if (entityOrTarget === PurchaseOrderProduct || !maybeEntity) {
+              mockProductRepo.save(target);
+            }
+            return Promise.resolve(target);
+          }),
+        delete: jest.fn().mockResolvedValue({ affected: 1 }),
+        remove: jest.fn().mockResolvedValue(undefined),
+        getRepository: jest.fn().mockImplementation((entity: any) => {
+          if (entity === Document) return txDocRepoMock;
+          if (entity === DocumentVersion) return txVersionRepoMock;
+          if (entity === PurchaseOrderDocument) return txPoDocRepoMock;
+          if (entity === PurchaseOrderProductDocument)
+            return txProductDocRepoMock;
+          if (entity === PurchaseOrderProductSampleRound)
+            return txSampleRoundRepoMock;
+          if (entity === PurchaseOrderProductSampleImage)
+            return txSampleImageRepoMock;
+          return mockGenericRepo;
+        }),
+      };
+      return cb(manager);
+    }),
+  };
+
   beforeEach(async () => {
     jest.clearAllMocks();
+
+    storageMock = {
+      getPresignedPutUrl: jest.fn().mockResolvedValue('https://s3.example/put'),
+      getPresignedGetUrl: jest.fn().mockResolvedValue('https://s3.example/get'),
+      deleteObject: jest.fn(),
+      headObject: jest.fn().mockResolvedValue({ exists: true }),
+      getObjectBuffer: jest
+        .fn()
+        .mockResolvedValue(Buffer.from('%PDF-1.5 test')),
+    };
+
+    txDocRepoMock = {
+      create: jest.fn().mockImplementation((v) => v),
+      save: jest.fn().mockImplementation((v) => ({ id: 'doc-1', ...v })),
+    };
+    txVersionRepoMock = {
+      create: jest.fn().mockImplementation((v) => v),
+      save: jest.fn().mockImplementation((v) => ({ id: 'version-1', ...v })),
+    };
+    txPoDocRepoMock = {
+      create: jest.fn().mockImplementation((v) => v),
+      save: jest.fn().mockResolvedValue(undefined),
+    };
+    txProductDocRepoMock = {
+      create: jest.fn().mockImplementation((v) => v),
+      save: jest.fn().mockResolvedValue(undefined),
+    };
+    txSampleRoundRepoMock = {
+      count: jest.fn().mockResolvedValue(0),
+      create: jest.fn().mockImplementation((v) => v),
+      save: jest
+        .fn()
+        .mockImplementation((v) => Promise.resolve({ id: 'round-1', ...v })),
+    };
+    txSampleImageRepoMock = {
+      create: jest.fn().mockImplementation((v) => v),
+      save: jest
+        .fn()
+        .mockImplementation((v) =>
+          Promise.resolve(
+            Array.isArray(v)
+              ? v.map((item, idx) => ({ id: `image-${idx}`, ...item }))
+              : { id: 'image-0', ...v },
+          ),
+        ),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         PurchaseOrdersService,
+        {
+          provide: DataSource,
+          useValue: mockDataSource,
+        },
         {
           provide: getRepositoryToken(PurchaseOrder),
           useValue: mockPoRepo,
@@ -94,6 +255,70 @@ describe('PurchaseOrdersService', () => {
           useValue: mockProductRepo,
         },
         {
+          provide: getRepositoryToken(PurchaseOrderProductOperationStep),
+          useValue: mockGenericRepo,
+        },
+        {
+          provide: getRepositoryToken(PurchaseOrderProductSampleRound),
+          useValue: mockGenericRepo,
+        },
+        {
+          provide: getRepositoryToken(PurchaseOrderProductSampleImage),
+          useValue: mockGenericRepo,
+        },
+        {
+          provide: getRepositoryToken(PurchaseOrderProductDocument),
+          useValue: mockGenericRepo,
+        },
+        {
+          provide: getRepositoryToken(PurchaseOrderProductStatusHistory),
+          useValue: mockGenericRepo,
+        },
+        {
+          provide: getRepositoryToken(PurchaseOrderProductColor),
+          useValue: mockGenericRepo,
+        },
+        {
+          provide: getRepositoryToken(PurchaseOrderProductColorSize),
+          useValue: mockGenericRepo,
+        },
+        {
+          provide: getRepositoryToken(Style),
+          useValue: mockStyleRepo,
+        },
+        {
+          provide: getRepositoryToken(StyleOperationStep),
+          useValue: mockGenericRepo,
+        },
+        {
+          provide: getRepositoryToken(StyleSampleRound),
+          useValue: mockGenericRepo,
+        },
+        {
+          provide: getRepositoryToken(StyleSampleImage),
+          useValue: mockGenericRepo,
+        },
+        {
+          provide: getRepositoryToken(StyleDocument),
+          useValue: mockGenericRepo,
+        },
+        {
+          provide: getRepositoryToken(ProductionDocument),
+          useValue: mockGenericRepo,
+        },
+        {
+          provide: getRepositoryToken(ProductionDocumentSizeRow),
+          useValue: mockGenericRepo,
+        },
+        {
+          provide: getRepositoryToken(ProductionDocumentSection),
+          useValue: mockGenericRepo,
+        },
+        {
+          provide: getRepositoryToken(ProductionDocumentImage),
+          useValue: mockGenericRepo,
+        },
+        {
           provide: getRepositoryToken(Document),
           useValue: mockDocRepo,
         },
@@ -105,6 +330,7 @@ describe('PurchaseOrdersService', () => {
           provide: getRepositoryToken(Customer),
           useValue: mockCustomerRepo,
         },
+        { provide: STORAGE_SERVICE, useValue: storageMock },
       ],
     }).compile();
 
@@ -570,181 +796,141 @@ describe('PurchaseOrdersService', () => {
       ).rejects.toThrow('Đơn hàng PO đã hủy, không thể thêm sản phẩm mới.');
     });
 
-    it('should block uploading document if PO is CANCELLED', async () => {
+    it('should block presigning a document upload if PO is CANCELLED', async () => {
       mockPoRepo.findOne.mockResolvedValueOnce({
         id: 'po-1',
         status: PoStatus.CANCELLED,
       });
 
       await expect(
-        service.uploadDocument('po-1', {
-          originalname: 'test.pdf',
-          mimetype: 'application/pdf',
-          size: 4,
-          buffer: Buffer.from('test'),
+        service.presignDocument('po-1', {
+          fileName: 'test.pdf',
+          mimeType: 'application/pdf',
+          sizeBytes: 4,
+          purpose: DocumentPurpose.OTHER,
         }),
       ).rejects.toThrow('Đơn hàng PO đã hủy, không thể tải lên tài liệu mới.');
     });
 
-    it('should block uploading multiple documents if PO is CANCELLED', async () => {
+    it('should block confirming a document upload if PO is CANCELLED', async () => {
       mockPoRepo.findOne.mockResolvedValueOnce({
         id: 'po-1',
         status: PoStatus.CANCELLED,
       });
 
       await expect(
-        service.uploadMultipleDocuments('po-1', [
-          {
-            originalname: 'test1.pdf',
-            mimetype: 'application/pdf',
-            size: 5,
-            buffer: Buffer.from('test1'),
-          },
-        ]),
+        service.confirmDocument('po-1', 'user-1', {
+          objectKey: 'purchase-orders/po-1/documents/other/x.pdf',
+          fileName: 'test.pdf',
+          mimeType: 'application/pdf',
+          sizeBytes: 4,
+          purpose: DocumentPurpose.OTHER,
+        }),
       ).rejects.toThrow('Đơn hàng PO đã hủy, không thể tải lên tài liệu mới.');
     });
   });
 
-  describe('uploadDocument disk cleanup on DB failure', () => {
-    it('should delete uploaded file from disk if docRepo.save fails', async () => {
+  describe('presignDocument', () => {
+    it('rejects a file whose extension is not in the PO allowlist', async () => {
       mockPoRepo.findOne.mockResolvedValueOnce({
         id: 'po-1',
         status: PoStatus.DRAFT,
       });
-      mockDocRepo.create.mockReturnValue({ id: 'temp-doc' });
-      mockDocRepo.save.mockRejectedValueOnce(new Error('DB Connection Failed'));
 
       await expect(
-        service.uploadDocument('po-1', {
-          originalname: 'cleanup-test.pdf',
-          mimetype: 'application/pdf',
-          size: 10,
-          buffer: Buffer.from('%PDF-1.4 test content'),
+        service.presignDocument('po-1', {
+          fileName: 'payload.exe',
+          mimeType: 'application/pdf',
+          sizeBytes: 4,
+          purpose: DocumentPurpose.OTHER,
         }),
-      ).rejects.toThrow('DB Connection Failed');
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('builds an object key scoped to the PO and purpose, and returns the presigned PUT url', async () => {
+      mockPoRepo.findOne.mockResolvedValueOnce({
+        id: 'po-1',
+        status: PoStatus.DRAFT,
+      });
+
+      const result = await service.presignDocument('po-1', {
+        fileName: 'contract.pdf',
+        mimeType: 'application/pdf',
+        sizeBytes: 1024,
+        purpose: DocumentPurpose.PO_ORIGINAL,
+      });
+
+      expect(result.objectKey).toMatch(
+        /^purchase-orders\/po-1\/documents\/po_original\/[0-9a-f-]+\.pdf$/,
+      );
+      expect(result.uploadUrl).toBe('https://s3.example/put');
+      expect(storageMock.getPresignedPutUrl).toHaveBeenCalledWith(
+        result.objectKey,
+        'application/pdf',
+        expect.any(Number),
+      );
     });
   });
 
-  describe('escapeHtml in parseDocxToHtml', () => {
-    it('should escape malicious script and img tags in docx text', async () => {
-      const escapeFn = (service as any).escapeHtml.bind(service);
-      const malicious =
-        '<script>alert("xss")</script>&<img src="x" onerror="evil()"/>';
-      const safe = escapeFn(malicious);
+  describe('confirmDocument', () => {
+    const confirmDto = {
+      objectKey: 'purchase-orders/po-1/documents/other/x.pdf',
+      fileName: 'x.pdf',
+      mimeType: 'application/pdf',
+      sizeBytes: 13,
+      purpose: DocumentPurpose.OTHER,
+    };
 
-      expect(safe).not.toContain('<script>');
-      expect(safe).not.toContain('</script>');
-      expect(safe).toContain('&lt;script&gt;');
-      expect(safe).toContain('&lt;img');
-      expect(safe).toContain('&amp;');
+    it('throws if the object was not actually uploaded to S3', async () => {
+      mockPoRepo.findOne.mockResolvedValueOnce({
+        id: 'po-1',
+        status: PoStatus.DRAFT,
+      });
+      storageMock.headObject.mockResolvedValueOnce({ exists: false });
+
+      await expect(
+        service.confirmDocument('po-1', 'user-1', confirmDto),
+      ).rejects.toThrow(BadRequestException);
     });
 
-    it('should parse docx buffer and escape malicious script and markup in paragraphs and tables', async () => {
-      const zip = new JSZip();
-      zip.file(
-        'word/document.xml',
-        `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-        <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
-          <w:body>
-            <w:p>
-              <w:r><w:t><script>alert("xss")</script></w:t></w:r>
-            </w:p>
-            <w:tbl>
-              <w:tr>
-                <w:tc>
-                  <w:p><w:r><w:t><img src=x onerror=alert(1) /></w:t></w:r></w:p>
-                </w:tc>
-              </w:tr>
-            </w:tbl>
-          </w:body>
-        </w:document>`,
-      );
-      const buffer = await zip.generateAsync({ type: 'nodebuffer' });
-      const html = await (service as any).parseDocxToHtml(buffer);
-
-      expect(html).not.toContain('<script>');
-      expect(html).not.toContain('</script>');
-      expect(html).not.toContain('<img');
-      expect(html).toContain('&lt;script&gt;');
-      expect(html).toContain('&lt;img');
-    });
-  });
-
-  describe('poDocumentFileFilter (MIME & extension mapping)', () => {
-    it('should reject payload.html even with Content-Type: application/pdf', () => {
-      const callback = jest.fn();
-      poDocumentFileFilter(
-        {},
-        { originalname: 'payload.html', mimetype: 'application/pdf' },
-        callback,
+    it('throws if the uploaded bytes fail the magic-bytes check for the declared extension', async () => {
+      mockPoRepo.findOne.mockResolvedValueOnce({
+        id: 'po-1',
+        status: PoStatus.DRAFT,
+      });
+      storageMock.getObjectBuffer.mockResolvedValueOnce(
+        Buffer.from('not actually a pdf'),
       );
 
-      expect(callback).toHaveBeenCalledWith(
-        expect.any(BadRequestException),
-        false,
-      );
-      const error = callback.mock.calls[0][0];
-      expect(error.message).toContain(
-        'Định dạng phần mở rộng ".html" không được hỗ trợ',
-      );
+      await expect(
+        service.confirmDocument('po-1', 'user-1', confirmDto),
+      ).rejects.toThrow(BadRequestException);
+      expect(txDocRepoMock.save).not.toHaveBeenCalled();
     });
 
-    it('should reject payload.exe even with Content-Type: application/pdf', () => {
-      const callback = jest.fn();
-      poDocumentFileFilter(
-        {},
-        { originalname: 'payload.exe', mimetype: 'application/pdf' },
-        callback,
+    it('creates document, version and PO link inside one transaction, resolving a fresh presigned URL', async () => {
+      mockPoRepo.findOne.mockResolvedValueOnce({
+        id: 'po-1',
+        status: PoStatus.DRAFT,
+      });
+
+      const result = await service.confirmDocument(
+        'po-1',
+        'user-1',
+        confirmDto,
       );
 
-      expect(callback).toHaveBeenCalledWith(
-        expect.any(BadRequestException),
-        false,
+      expect(txDocRepoMock.save).toHaveBeenCalled();
+      expect(txVersionRepoMock.save).toHaveBeenCalledWith(
+        expect.objectContaining({ storageKey: confirmDto.objectKey }),
       );
-      const error = callback.mock.calls[0][0];
-      expect(error.message).toContain(
-        'Định dạng phần mở rộng ".exe" không được hỗ trợ',
+      expect(txPoDocRepoMock.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          purchaseOrderId: 'po-1',
+          purpose: DocumentPurpose.OTHER,
+        }),
       );
-    });
-
-    it('should reject document.pdf with mismatched Content-Type: text/html', () => {
-      const callback = jest.fn();
-      poDocumentFileFilter(
-        {},
-        { originalname: 'document.pdf', mimetype: 'text/html' },
-        callback,
-      );
-
-      expect(callback).toHaveBeenCalledWith(
-        expect.any(BadRequestException),
-        false,
-      );
-      const error = callback.mock.calls[0][0];
-      expect(error.message).toContain(
-        'Loại MIME "text/html" không hợp lệ cho tệp ".pdf"',
-      );
-    });
-
-    it('should accept valid PDF with application/pdf', () => {
-      const callback = jest.fn();
-      poDocumentFileFilter(
-        {},
-        { originalname: 'document.pdf', mimetype: 'application/pdf' },
-        callback,
-      );
-
-      expect(callback).toHaveBeenCalledWith(null, true);
-    });
-
-    it('should accept valid TXT with Content-Type containing charset', () => {
-      const callback = jest.fn();
-      poDocumentFileFilter(
-        {},
-        { originalname: 'notes.txt', mimetype: 'text/plain; charset=utf-8' },
-        callback,
-      );
-
-      expect(callback).toHaveBeenCalledWith(null, true);
+      expect(result.fileUrl).toBe('https://s3.example/get');
     });
   });
 
@@ -829,6 +1015,362 @@ describe('PurchaseOrdersService', () => {
       expect(() =>
         service.validateFileMagicBytes('.csv', cleanCsv),
       ).not.toThrow();
+    });
+  });
+
+  describe('presignProductDocument', () => {
+    it('rejects a file whose extension is not in the PO allowlist', async () => {
+      mockProductRepo.findOne.mockResolvedValueOnce({
+        id: 'prod-1',
+        purchaseOrderId: 'po-1',
+        status: ProductStatus.DRAFT,
+      });
+
+      await expect(
+        service.presignProductDocument('po-1', 'prod-1', {
+          fileName: 'payload.exe',
+          mimeType: 'application/pdf',
+          sizeBytes: 4,
+          purpose: DocumentPurpose.OTHER,
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('rejects when the product is CLOSED', async () => {
+      mockProductRepo.findOne.mockResolvedValueOnce({
+        id: 'prod-1',
+        purchaseOrderId: 'po-1',
+        status: ProductStatus.CLOSED,
+      });
+
+      await expect(
+        service.presignProductDocument('po-1', 'prod-1', {
+          fileName: 'contract.pdf',
+          mimeType: 'application/pdf',
+          sizeBytes: 4,
+          purpose: DocumentPurpose.OTHER,
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('builds an object key scoped to the PO + product + purpose, and returns the presigned PUT url', async () => {
+      mockProductRepo.findOne.mockResolvedValueOnce({
+        id: 'prod-1',
+        purchaseOrderId: 'po-1',
+        status: ProductStatus.DRAFT,
+      });
+
+      const result = await service.presignProductDocument('po-1', 'prod-1', {
+        fileName: 'techpack.pdf',
+        mimeType: 'application/pdf',
+        sizeBytes: 1024,
+        purpose: DocumentPurpose.TECH_PACK,
+      });
+
+      expect(result.objectKey).toMatch(
+        /^purchase-orders\/po-1\/products\/prod-1\/documents\/tech_pack\/[0-9a-f-]+\.pdf$/,
+      );
+      expect(result.uploadUrl).toBe('https://s3.example/put');
+    });
+  });
+
+  describe('confirmProductDocument', () => {
+    const confirmDto = {
+      objectKey: 'purchase-orders/po-1/products/prod-1/documents/other/x.pdf',
+      fileName: 'x.pdf',
+      mimeType: 'application/pdf',
+      sizeBytes: 13,
+      purpose: DocumentPurpose.OTHER,
+    };
+
+    it('throws if the object was not actually uploaded to S3', async () => {
+      mockProductRepo.findOne.mockResolvedValueOnce({
+        id: 'prod-1',
+        purchaseOrderId: 'po-1',
+        status: ProductStatus.DRAFT,
+      });
+      storageMock.headObject.mockResolvedValueOnce({ exists: false });
+
+      await expect(
+        service.confirmProductDocument('po-1', 'prod-1', 'user-1', confirmDto),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('throws if the uploaded bytes fail the magic-bytes check', async () => {
+      mockProductRepo.findOne.mockResolvedValueOnce({
+        id: 'prod-1',
+        purchaseOrderId: 'po-1',
+        status: ProductStatus.DRAFT,
+      });
+      storageMock.getObjectBuffer.mockResolvedValueOnce(
+        Buffer.from('not actually a pdf'),
+      );
+
+      await expect(
+        service.confirmProductDocument('po-1', 'prod-1', 'user-1', confirmDto),
+      ).rejects.toThrow(BadRequestException);
+      expect(txDocRepoMock.save).not.toHaveBeenCalled();
+    });
+
+    it('creates document, version and a PRODUCT-scoped link (not a PO-level link) in one transaction', async () => {
+      mockProductRepo.findOne.mockResolvedValueOnce({
+        id: 'prod-1',
+        purchaseOrderId: 'po-1',
+        status: ProductStatus.DRAFT,
+      });
+
+      const result = await service.confirmProductDocument(
+        'po-1',
+        'prod-1',
+        'user-1',
+        confirmDto,
+      );
+
+      expect(txDocRepoMock.save).toHaveBeenCalled();
+      expect(txVersionRepoMock.save).toHaveBeenCalledWith(
+        expect.objectContaining({ storageKey: confirmDto.objectKey }),
+      );
+      expect(txProductDocRepoMock.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          productId: 'prod-1',
+          purpose: DocumentPurpose.OTHER,
+          sourcePoDocument: false,
+        }),
+      );
+      // Regression guard: this is a product-scoped upload, it must not also
+      // create a PurchaseOrderDocument (PO-level) link.
+      expect(txPoDocRepoMock.save).not.toHaveBeenCalled();
+      expect(result.fileUrl).toBe('https://s3.example/get');
+      expect(result.productId).toBe('prod-1');
+    });
+  });
+
+  describe('confirmProductDocumentVersion', () => {
+    const confirmDto = {
+      objectKey: 'purchase-orders/po-1/products/prod-1/documents/other/y.pdf',
+      fileName: 'y.pdf',
+      mimeType: 'application/pdf',
+      sizeBytes: 13,
+      purpose: DocumentPurpose.OTHER,
+    };
+
+    it('throws if the document is not linked to this product', async () => {
+      mockProductRepo.findOne.mockResolvedValueOnce({
+        id: 'prod-1',
+        purchaseOrderId: 'po-1',
+        status: ProductStatus.DRAFT,
+      });
+      mockGenericRepo.findOne.mockResolvedValueOnce(null); // productDocRepo link lookup
+
+      await expect(
+        service.confirmProductDocumentVersion(
+          'po-1',
+          'prod-1',
+          'doc-1',
+          'user-1',
+          confirmDto,
+        ),
+      ).rejects.toThrow('Tài liệu không thuộc sản phẩm này.');
+    });
+
+    it('appends a new version with an incremented versionNo', async () => {
+      mockProductRepo.findOne.mockResolvedValueOnce({
+        id: 'prod-1',
+        purchaseOrderId: 'po-1',
+        status: ProductStatus.DRAFT,
+      });
+      mockGenericRepo.findOne.mockResolvedValueOnce({
+        productId: 'prod-1',
+        documentId: 'doc-1',
+        purpose: DocumentPurpose.OTHER,
+        sourcePoDocument: false,
+        linkedAt: new Date('2026-01-01'),
+      });
+      mockDocRepo.findOne.mockResolvedValueOnce({
+        id: 'doc-1',
+        documentCode: 'DOC-1',
+        title: 'x.pdf',
+      });
+      mockDocVersionRepo.find.mockResolvedValueOnce([
+        { id: 'v1', versionNo: 1, documentId: 'doc-1' },
+      ]);
+
+      const result = await service.confirmProductDocumentVersion(
+        'po-1',
+        'prod-1',
+        'doc-1',
+        'user-1',
+        confirmDto,
+      );
+
+      expect(txVersionRepoMock.save).toHaveBeenCalledWith(
+        expect.objectContaining({ documentId: 'doc-1', versionNo: 2 }),
+      );
+      expect(result.currentVersionNo).toBe(2);
+      expect(result.versions).toHaveLength(2);
+    });
+  });
+
+  describe('saveProductOperationSteps', () => {
+    it('assigns order_index from the submitted array position, even when grouped steps carry duplicate per-group client orderIndex values', async () => {
+      // Regression test: order_index has a UNIQUE(product_id, order_index) DB
+      // constraint. A nested/grouped steps UI naturally numbers each group's
+      // children starting back at 0 — if the service trusted step.orderIndex
+      // as-is, two groups' first child would collide and the save would 500.
+      mockProductRepo.findOne.mockResolvedValueOnce({
+        id: 'prod-1',
+        status: ProductStatus.DRAFT,
+      });
+
+      const dto = {
+        steps: [
+          { stepName: 'Group A', isGroup: true, orderIndex: 0 },
+          { stepName: 'A - step 1', orderIndex: 0 },
+          { stepName: 'Group B', isGroup: true, orderIndex: 1 },
+          { stepName: 'B - step 1', orderIndex: 0 },
+        ],
+      } as any;
+
+      const result = await service.saveProductOperationSteps(
+        'prod-1',
+        dto,
+        'user-1',
+      );
+
+      expect(result.map((s: any) => s.orderIndex)).toEqual([0, 1, 2, 3]);
+    });
+
+    it('persists cmBaseDays onto the product when provided', async () => {
+      mockProductRepo.findOne.mockResolvedValueOnce({
+        id: 'prod-1',
+        status: ProductStatus.DRAFT,
+        as3bCmBaseDays: 30,
+      });
+
+      await service.saveProductOperationSteps(
+        'prod-1',
+        { steps: [], cmBaseDays: 45 } as any,
+        'user-1',
+      );
+
+      expect(mockProductRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ as3bCmBaseDays: 45 }),
+      );
+    });
+
+    it('rejects when the product is CLOSED', async () => {
+      mockProductRepo.findOne.mockResolvedValueOnce({
+        id: 'prod-1',
+        status: ProductStatus.CLOSED,
+      });
+
+      await expect(
+        service.saveProductOperationSteps('prod-1', { steps: [] } as any),
+      ).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  describe('SaveProductOperationStepsDto whitelist validation (regression)', () => {
+    // Regression test for a bug where `steps` had no class-validator
+    // decorators at all, so the app's global ValidationPipe
+    // ({ whitelist: true, forbidNonWhitelisted: true }, see src/main.ts)
+    // rejected every request with "property steps should not exist" —
+    // the save-operation-steps endpoint was completely unusable.
+    const pipe = new ValidationPipe({
+      whitelist: true,
+      transform: true,
+      forbidNonWhitelisted: true,
+    });
+
+    it('accepts a well-formed nested steps array without stripping it', async () => {
+      const body = {
+        steps: [
+          { stepName: 'Group A', isGroup: true },
+          { stepName: 'A - step 1', parentStepId: undefined },
+        ],
+        cmBaseDays: 30,
+      };
+
+      const result = await pipe.transform(body, {
+        type: 'body',
+        metatype: SaveProductOperationStepsDto,
+      });
+
+      expect(result).toBeInstanceOf(SaveProductOperationStepsDto);
+      expect(result.steps).toHaveLength(2);
+      expect(result.steps[0].stepName).toBe('Group A');
+    });
+
+    it('rejects cmBaseDays of 0 with a clean validation error instead of a DB check-constraint 500', async () => {
+      const body = { steps: [], cmBaseDays: 0 };
+
+      await expect(
+        pipe.transform(body, {
+          type: 'body',
+          metatype: SaveProductOperationStepsDto,
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  describe('createProductSampleRound', () => {
+    it('persists the ordered images list instead of silently dropping it', async () => {
+      mockProductRepo.findOne.mockResolvedValueOnce({ id: 'prod-1' });
+      txSampleRoundRepoMock.count.mockResolvedValueOnce(0);
+
+      const result = await service.createProductSampleRound(
+        'prod-1',
+        {
+          feedback: 'Fit ok',
+          images: [
+            { documentVersionId: 'ver-1', colorName: 'Red' },
+            { documentVersionId: 'ver-2', colorName: 'Blue' },
+          ],
+        } as any,
+        'user-1',
+      );
+
+      expect(txSampleImageRepoMock.save).toHaveBeenCalledWith([
+        expect.objectContaining({
+          documentVersionId: 'ver-1',
+          colorNameSnapshot: 'Red',
+          orderIndex: 0,
+        }),
+        expect.objectContaining({
+          documentVersionId: 'ver-2',
+          colorNameSnapshot: 'Blue',
+          orderIndex: 1,
+        }),
+      ]);
+      expect(result.images).toHaveLength(2);
+    });
+
+    it('skips image entries with no documentVersionId instead of inserting an invalid row', async () => {
+      mockProductRepo.findOne.mockResolvedValueOnce({ id: 'prod-1' });
+      txSampleRoundRepoMock.count.mockResolvedValueOnce(0);
+
+      const result = await service.createProductSampleRound(
+        'prod-1',
+        { images: [{ colorName: 'Red' }] } as any,
+        'user-1',
+      );
+
+      expect(txSampleImageRepoMock.save).not.toHaveBeenCalled();
+      expect(result.images).toEqual([]);
+    });
+
+    it('creates a round with no images when none are provided', async () => {
+      mockProductRepo.findOne.mockResolvedValueOnce({ id: 'prod-1' });
+      txSampleRoundRepoMock.count.mockResolvedValueOnce(2);
+
+      const result = await service.createProductSampleRound(
+        'prod-1',
+        { feedback: '2nd round' } as any,
+        'user-1',
+      );
+
+      expect(result.roundNo).toBe(3);
+      expect(result.images).toEqual([]);
     });
   });
 });

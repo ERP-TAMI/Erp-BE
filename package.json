@@ -30,6 +30,7 @@
     "seed:workshops": "ts-node -r tsconfig-paths/register src/database/seeds/seed-workshops.ts",
     "seed:master-data": "ts-node -r tsconfig-paths/register src/database/seeds/seed-master-data.ts",
     "seed:master-data:reset": "ts-node -r tsconfig-paths/register src/database/seeds/seed-master-data.ts --reset",
+    "seed:po-demo": "ts-node -r tsconfig-paths/register src/database/seeds/seed-po-demo.ts",
     "verify:start-dev": "node scripts/verify-start-dev.js"
   },
   "dependencies": {
