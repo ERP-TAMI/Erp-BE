@@ -25,7 +25,10 @@ const ALLOWED_COST_ROLES = new Set([
   'admin',
 ]);
 
-export function isUserAllowedToViewCost(user?: any, headerRole?: string): boolean {
+export function isUserAllowedToViewCost(
+  user?: any,
+  headerRole?: string,
+): boolean {
   const roleCode = user?.roleCode || user?.role || headerRole;
   if (!roleCode) return false;
   return ALLOWED_COST_ROLES.has(String(roleCode).toLowerCase().trim());
@@ -97,8 +100,14 @@ export class BomsService implements OnModuleInit {
     const canViewCost = isUserAllowedToViewCost(user, headerRole);
     const items: BomListItemDto[] = [];
 
-    const shouldIncludePo = !query?.objectType || query.objectType === 'all' || query.objectType === 'po';
-    const shouldIncludeFit = !query?.objectType || query.objectType === 'all' || query.objectType === 'fit';
+    const shouldIncludePo =
+      !query?.objectType ||
+      query.objectType === 'all' ||
+      query.objectType === 'po';
+    const shouldIncludeFit =
+      !query?.objectType ||
+      query.objectType === 'all' ||
+      query.objectType === 'fit';
 
     // 1. Fetch PO BOMs
     if (shouldIncludePo) {
@@ -174,7 +183,9 @@ export class BomsService implements OnModuleInit {
         order: { orderIndex: 'ASC' },
       });
       const totalCost = lines.reduce(
-        (acc, cur) => acc + (Number(cur.consumptionPerUnit) || 0) * (Number(cur.unitCost) || 0),
+        (acc, cur) =>
+          acc +
+          (Number(cur.consumptionPerUnit) || 0) * (Number(cur.unitCost) || 0),
         0,
       );
       return {
@@ -192,7 +203,9 @@ export class BomsService implements OnModuleInit {
     // Check Fit BOM
     const fitBom = await this.draftBomRepo.findOne({ where: { id } });
     if (fitBom) {
-      const style = await this.styleRepo.findOne({ where: { id: fitBom.styleId } });
+      const style = await this.styleRepo.findOne({
+        where: { id: fitBom.styleId },
+      });
       const version = await this.draftVersionRepo.findOne({
         where: { familyId: fitBom.id, isCurrent: true },
       });
@@ -270,7 +283,9 @@ export class BomsService implements OnModuleInit {
       status: mapBomStatusToLabel(r.status),
       totalCostPerUnit: Math.round(Number(r.total_cost) || 0),
       deadline: r.deadline ? new Date(r.deadline).toISOString() : null,
-      createdAt: r.created_at ? new Date(r.created_at).toISOString() : new Date().toISOString(),
+      createdAt: r.created_at
+        ? new Date(r.created_at).toISOString()
+        : new Date().toISOString(),
       imageUrl: null,
     }));
   }
@@ -318,7 +333,9 @@ export class BomsService implements OnModuleInit {
       status: r.style_status === 'active' ? 'Approved' : 'Draft',
       totalCostPerUnit: Math.round(Number(r.total_cost) || 145000),
       deadline: null,
-      createdAt: r.created_at ? new Date(r.created_at).toISOString() : new Date().toISOString(),
+      createdAt: r.created_at
+        ? new Date(r.created_at).toISOString()
+        : new Date().toISOString(),
       imageUrl: null,
     }));
   }

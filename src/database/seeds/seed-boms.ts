@@ -4,9 +4,16 @@ import { AppDataSource } from '../data-source';
 
 export async function seedDemoBoms(manager: EntityManager): Promise<void> {
   // Check if BOMs already exist
-  const existingBoms = await manager.query('SELECT count(*) FROM bills_of_materials');
-  const existingDrafts = await manager.query('SELECT count(*) FROM draft_bom_families');
-  if (parseInt(existingBoms[0]?.count || '0', 10) > 0 && parseInt(existingDrafts[0]?.count || '0', 10) > 0) {
+  const existingBoms = await manager.query(
+    'SELECT count(*) FROM bills_of_materials',
+  );
+  const existingDrafts = await manager.query(
+    'SELECT count(*) FROM draft_bom_families',
+  );
+  if (
+    parseInt(existingBoms[0]?.count || '0', 10) > 0 &&
+    parseInt(existingDrafts[0]?.count || '0', 10) > 0
+  ) {
     console.log('BOMs and Draft BOMs already seeded, skipping.');
     return;
   }
@@ -27,9 +34,18 @@ export async function seedDemoBoms(manager: EntityManager): Promise<void> {
     LIMIT 10
   `);
 
-  const materials = await manager.query(`SELECT id, material_name FROM materials LIMIT 5`);
+  const materials = await manager.query(
+    `SELECT id, material_name FROM materials LIMIT 5`,
+  );
 
-  const statuses = ['closed', 'wait_accounting', 'wait_rd', 'draft', 'closed', 'wait_tpkh_confirm'];
+  const statuses = [
+    'closed',
+    'wait_accounting',
+    'wait_rd',
+    'draft',
+    'closed',
+    'wait_tpkh_confirm',
+  ];
 
   for (let i = 0; i < poColors.length; i++) {
     const pc = poColors[i];
@@ -75,7 +91,9 @@ export async function seedDemoBoms(manager: EntityManager): Promise<void> {
   }
 
   // 2. Fit BOMs
-  const styles = await manager.query(`SELECT id, style_code, style_name, status FROM styles LIMIT 5`);
+  const styles = await manager.query(
+    `SELECT id, style_code, style_name, status FROM styles LIMIT 5`,
+  );
   for (let idx = 0; idx < styles.length; idx++) {
     const st = styles[idx];
     const bomCode = `FIT-${st.style_code}`;
@@ -117,7 +135,9 @@ export async function seedDemoBoms(manager: EntityManager): Promise<void> {
   }
 }
 
-export async function seedDemoBomsCatalog(dataSource: DataSource): Promise<void> {
+export async function seedDemoBomsCatalog(
+  dataSource: DataSource,
+): Promise<void> {
   await dataSource.transaction(seedDemoBoms);
 }
 

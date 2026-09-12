@@ -11,7 +11,8 @@ export class QueryBomsDto {
   objectType?: 'fit' | 'po' | 'all';
 
   @ApiPropertyOptional({
-    description: 'Trạng thái BOM: Draft, Wait_RD, Wait_Price, Wait_TP_Approve, Wait_SA_Approve, Approved',
+    description:
+      'Trạng thái BOM: Draft, Wait_RD, Wait_Price, Wait_TP_Approve, Wait_SA_Approve, Approved',
   })
   @IsOptional()
   @IsString()
@@ -22,7 +23,9 @@ export class QueryBomsDto {
   @IsString()
   poCode?: string;
 
-  @ApiPropertyOptional({ description: 'Tìm kiếm theo Mã Fit, Style, hoặc Tên Sản phẩm' })
+  @ApiPropertyOptional({
+    description: 'Tìm kiếm theo Mã Fit, Style, hoặc Tên Sản phẩm',
+  })
   @IsOptional()
   @IsString()
   search?: string;

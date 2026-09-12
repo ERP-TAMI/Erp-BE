@@ -83,13 +83,19 @@ describe('BomsService', () => {
         BomsService,
         { provide: getRepositoryToken(BillOfMaterials), useValue: bomRepoMock },
         { provide: getRepositoryToken(BillOfMaterialLine), useValue: {} },
-        { provide: getRepositoryToken(DraftBomFamilie), useValue: draftBomRepoMock },
+        {
+          provide: getRepositoryToken(DraftBomFamilie),
+          useValue: draftBomRepoMock,
+        },
         { provide: getRepositoryToken(DraftBomVersion), useValue: {} },
         { provide: getRepositoryToken(DraftBomLine), useValue: {} },
         { provide: getRepositoryToken(Style), useValue: {} },
         { provide: getRepositoryToken(PurchaseOrder), useValue: {} },
         { provide: getRepositoryToken(PurchaseOrderProduct), useValue: {} },
-        { provide: getRepositoryToken(PurchaseOrderProductColor), useValue: {} },
+        {
+          provide: getRepositoryToken(PurchaseOrderProductColor),
+          useValue: {},
+        },
         { provide: getRepositoryToken(Material), useValue: {} },
         { provide: DataSource, useValue: dataSourceMock },
       ],
@@ -144,27 +150,42 @@ describe('BomsService', () => {
     });
 
     it('filters by objectType: po', async () => {
-      const items = await service.findAll({ objectType: 'po' }, { roleCode: 'SA' });
+      const items = await service.findAll(
+        { objectType: 'po' },
+        { roleCode: 'SA' },
+      );
       expect(items.every((i) => i.objectType === 'po')).toBe(true);
       expect(items).toHaveLength(1);
     });
 
     it('filters by objectType: fit', async () => {
-      const items = await service.findAll({ objectType: 'fit' }, { roleCode: 'SA' });
+      const items = await service.findAll(
+        { objectType: 'fit' },
+        { roleCode: 'SA' },
+      );
       expect(items.every((i) => i.objectType === 'fit')).toBe(true);
       expect(items).toHaveLength(1);
     });
 
     it('filters by search keyword', async () => {
-      const items = await service.findAll({ search: 'Polo' }, { roleCode: 'SA' });
+      const items = await service.findAll(
+        { search: 'Polo' },
+        { roleCode: 'SA' },
+      );
       expect(items).toHaveLength(2);
 
-      const nonExistent = await service.findAll({ search: 'NonExistent' }, { roleCode: 'SA' });
+      const nonExistent = await service.findAll(
+        { search: 'NonExistent' },
+        { roleCode: 'SA' },
+      );
       expect(nonExistent).toHaveLength(0);
     });
 
     it('filters by color', async () => {
-      const navyItems = await service.findAll({ colorName: 'Navy' }, { roleCode: 'SA' });
+      const navyItems = await service.findAll(
+        { colorName: 'Navy' },
+        { roleCode: 'SA' },
+      );
       expect(navyItems).toHaveLength(1);
       expect(navyItems[0].colorName).toBe('Navy');
     });

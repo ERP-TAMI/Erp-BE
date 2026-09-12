@@ -66,7 +66,11 @@ describe('BomsController', () => {
     const result = await controller.findAll(query, req);
 
     expect(result).toEqual(mockBomList);
-    expect(serviceMock.findAll).toHaveBeenCalledWith(query, req.user, undefined);
+    expect(serviceMock.findAll).toHaveBeenCalledWith(
+      query,
+      req.user,
+      undefined,
+    );
   });
 
   it('findOne should call service.findOne with id and auth context', async () => {
@@ -75,6 +79,10 @@ describe('BomsController', () => {
     const result = await controller.findOne('po-bom-1', req);
 
     expect(result).toEqual(mockBomList[0]);
-    expect(serviceMock.findOne).toHaveBeenCalledWith('po-bom-1', req.user, undefined);
+    expect(serviceMock.findOne).toHaveBeenCalledWith(
+      'po-bom-1',
+      req.user,
+      undefined,
+    );
   });
 });
