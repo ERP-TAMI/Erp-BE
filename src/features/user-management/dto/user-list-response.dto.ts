@@ -5,7 +5,7 @@ export class UserRoleResponseDto {
   @ApiProperty({ example: 'IT' })
   code: string;
 
-  @ApiProperty({ example: 'Công nghệ thông tin' })
+  @ApiProperty({ example: 'IT' })
   name: string;
 }
 

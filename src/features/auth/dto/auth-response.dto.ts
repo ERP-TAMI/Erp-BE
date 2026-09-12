@@ -13,7 +13,7 @@ export class AuthUserDto {
   @ApiProperty({ example: 'SA' })
   roleCode: string;
 
-  @ApiProperty({ example: 'Quản trị hệ thống' })
+  @ApiProperty({ example: 'SA / Giám đốc' })
   roleName: string;
 
   @ApiProperty({ type: [String] })

@@ -16,6 +16,7 @@ async function bootstrap() {
   }
 
   const app = await NestFactory.create(AppModule);
+  app.enableShutdownHooks();
   app.use('/uploads', express.static(uploadsDir));
   app.use(cookieParser());
   app.enableCors({

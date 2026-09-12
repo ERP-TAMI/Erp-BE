@@ -44,6 +44,7 @@ describe('UserManagementService mutations', () => {
   let users: jest.Mocked<Repository<User>>;
   let dataSource: jest.Mocked<DataSource>;
   let passwordSetup: jest.Mocked<PasswordSetupService>;
+  let revokeActiveSetupTokens: jest.Mock;
 
   beforeEach(() => {
     users = {
@@ -51,17 +52,19 @@ describe('UserManagementService mutations', () => {
       createQueryBuilder: jest.fn(),
     } as unknown as jest.Mocked<Repository<User>>;
     dataSource = {} as jest.Mocked<DataSource>;
+    revokeActiveSetupTokens = jest.fn().mockResolvedValue(undefined);
     passwordSetup = {
       issue: jest.fn().mockImplementation(async (_manager, userId) => ({
         user: user({ id: userId }),
         token: 'raw-token',
       })),
+      revokeActive: revokeActiveSetupTokens,
       deliver: jest.fn().mockResolvedValue('sent'),
       resend: jest.fn(),
     } as unknown as jest.Mocked<PasswordSetupService>;
   });
 
-  it('creates an account without waiting for SMTP delivery', async () => {
+  it('issues an invitation and creates an account without waiting for SMTP delivery', async () => {
     const created = user({ email: 'new@example.com', passwordHash: '' });
     const userRepository = {
       createQueryBuilder: jest.fn().mockReturnValue(emailQueryBuilder()),
@@ -83,6 +86,7 @@ describe('UserManagementService mutations', () => {
       }),
     } as unknown as EntityManager;
     dataSource.transaction = jest.fn(async (run) => run(manager)) as never;
+    passwordSetup.deliver.mockReturnValue(new Promise(() => undefined));
     const service = new UserManagementService(users, dataSource, passwordSetup);
 
     const result = await service.create(
@@ -100,8 +104,14 @@ describe('UserManagementService mutations', () => {
     expect(created.passwordHash).not.toContain('new@example.com');
     expect(created.mustChangePassword).toBe(true);
     expect(userRoleRepository.save).toHaveBeenCalledTimes(1);
-    expect(passwordSetup.issue).not.toHaveBeenCalled();
-    expect(passwordSetup.deliver).not.toHaveBeenCalled();
+    expect(passwordSetup.issue).toHaveBeenCalledWith(
+      manager,
+      created.id,
+      'actor-id',
+    );
+    expect(passwordSetup.deliver).toHaveBeenCalledWith(
+      expect.objectContaining({ token: 'raw-token' }),
+    );
     expect(result.invitationStatus).toBe('pending');
     expect(result.user.accountStatus).toBe(UserAccountStatus.PENDING_SETUP);
   });
@@ -165,9 +175,131 @@ describe('UserManagementService mutations', () => {
       expect.objectContaining({ userId: target.id }),
       expect.objectContaining({ revokeReason: 'account_updated' }),
     );
-    expect(passwordSetup.issue).not.toHaveBeenCalled();
-    expect(passwordSetup.deliver).not.toHaveBeenCalled();
+    expect(passwordSetup.issue).toHaveBeenCalledWith(
+      manager,
+      target.id,
+      'sa-id',
+    );
+    expect(passwordSetup.deliver).toHaveBeenCalledWith(
+      expect.objectContaining({ token: 'raw-token' }),
+    );
     expect(result.invitationStatus).toBe('pending');
     expect(result.user.accountStatus).toBe(UserAccountStatus.LOCKED);
+  });
+
+  it('revokes old setup tokens when only a pending user email changes', async () => {
+    const target = user();
+    const roleQueryBuilder = {
+      innerJoin: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      select: jest.fn().mockReturnThis(),
+      getRawOne: jest.fn().mockResolvedValue({
+        code: UserRoleCode.NVKH,
+        name: role.name,
+      }),
+    };
+    const userRepository = {
+      findOne: jest.fn().mockResolvedValue(target),
+      createQueryBuilder: jest.fn().mockReturnValue(emailQueryBuilder()),
+      save: jest.fn(async (value) => value),
+    } as unknown as jest.Mocked<Repository<User>>;
+    const roleRepository = {
+      findOne: jest.fn().mockResolvedValue(role),
+      createQueryBuilder: jest.fn().mockReturnValue(roleQueryBuilder),
+    } as unknown as jest.Mocked<Repository<Role>>;
+    const sessionRepository = {
+      update: jest.fn().mockResolvedValue({ affected: 0 }),
+    } as unknown as jest.Mocked<Repository<UserSession>>;
+    const manager = {
+      getRepository: jest.fn((entity) => {
+        if (entity === User) return userRepository;
+        if (entity === Role) return roleRepository;
+        return sessionRepository;
+      }),
+    } as unknown as EntityManager;
+    dataSource.transaction = jest.fn(async (run) => run(manager)) as never;
+    const service = new UserManagementService(users, dataSource, passwordSetup);
+
+    const result = await service.update(
+      target.id,
+      {
+        fullName: target.fullName,
+        email: 'correct-owner@example.com',
+        phone: target.phone,
+        roleCode: UserRoleCode.NVKH,
+        accountStatus: UserAccountStatus.ACTIVE,
+      },
+      { id: 'it-id', roleCode: UserRoleCode.IT },
+    );
+
+    expect(passwordSetup.issue).toHaveBeenCalledWith(
+      manager,
+      target.id,
+      'it-id',
+    );
+    expect(revokeActiveSetupTokens).not.toHaveBeenCalled();
+    expect(passwordSetup.deliver).toHaveBeenCalledWith(
+      expect.objectContaining({ token: 'raw-token' }),
+    );
+    expect(target.authVersion).toBe(2);
+    expect(sessionRepository.update).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: target.id }),
+      expect.objectContaining({ revokeReason: 'account_updated' }),
+    );
+    expect(result.invitationStatus).toBe('pending');
+  });
+
+  it('revokes existing sessions when only an active user email changes', async () => {
+    const target = user({ mustChangePassword: false });
+    const roleQueryBuilder = {
+      innerJoin: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      select: jest.fn().mockReturnThis(),
+      getRawOne: jest.fn().mockResolvedValue({
+        code: UserRoleCode.NVKH,
+        name: role.name,
+      }),
+    };
+    const userRepository = {
+      findOne: jest.fn().mockResolvedValue(target),
+      createQueryBuilder: jest.fn().mockReturnValue(emailQueryBuilder()),
+      save: jest.fn(async (value) => value),
+    } as unknown as jest.Mocked<Repository<User>>;
+    const roleRepository = {
+      findOne: jest.fn().mockResolvedValue(role),
+      createQueryBuilder: jest.fn().mockReturnValue(roleQueryBuilder),
+    } as unknown as jest.Mocked<Repository<Role>>;
+    const sessionRepository = {
+      update: jest.fn().mockResolvedValue({ affected: 1 }),
+    } as unknown as jest.Mocked<Repository<UserSession>>;
+    const manager = {
+      getRepository: jest.fn((entity) => {
+        if (entity === User) return userRepository;
+        if (entity === Role) return roleRepository;
+        return sessionRepository;
+      }),
+    } as unknown as EntityManager;
+    dataSource.transaction = jest.fn(async (run) => run(manager)) as never;
+    const service = new UserManagementService(users, dataSource, passwordSetup);
+
+    const result = await service.update(
+      target.id,
+      {
+        fullName: target.fullName,
+        email: 'new-login@example.com',
+        phone: target.phone,
+        roleCode: UserRoleCode.NVKH,
+        accountStatus: UserAccountStatus.ACTIVE,
+      },
+      { id: 'it-id', roleCode: UserRoleCode.IT },
+    );
+
+    expect(target.authVersion).toBe(2);
+    expect(sessionRepository.update).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: target.id }),
+      expect.objectContaining({ revokeReason: 'account_updated' }),
+    );
+    expect(revokeActiveSetupTokens).toHaveBeenCalledWith(manager, target.id);
+    expect(result.invitationStatus).toBeNull();
   });
 });

@@ -1,4 +1,4 @@
-import { BadRequestException, GoneException } from '@nestjs/common';
+import { BadRequestException, GoneException, Logger } from '@nestjs/common';
 import { DataSource, EntityManager, Repository } from 'typeorm';
 import { PasswordSetupService } from './password-setup.service';
 import { UserPasswordSetupToken } from './entities/UserPasswordSetupToken.entity';
@@ -79,13 +79,29 @@ describe('PasswordSetupService', () => {
     );
   });
 
+  it('revokes every unused setup token in the supplied transaction', async () => {
+    const nowBeforeRevoke = Date.now();
+
+    await service.revokeActive(manager, buildUser().id);
+
+    expect(tokenRepository.update).toHaveBeenCalledWith(
+      { userId: buildUser().id, usedAt: expect.anything() },
+      { usedAt: expect.any(Date) },
+    );
+    const revokedAt = tokenRepository.update.mock.calls[0][1].usedAt as Date;
+    expect(revokedAt.getTime()).toBeGreaterThanOrEqual(nowBeforeRevoke);
+  });
+
   it('reports failed without deleting the created account when SMTP fails', async () => {
+    const logError = jest.spyOn(Logger.prototype, 'error').mockImplementation();
     mail.sendPasswordSetupEmail.mockRejectedValue(
       new Error('smtp unavailable'),
     );
     const user = buildUser();
     const invitation = await service.issue(manager, user.id, 'actor-id');
     await expect(service.deliver(invitation)).resolves.toBe('failed');
+    expect(logError).toHaveBeenCalledWith(expect.stringContaining(user.id));
+    expect(JSON.stringify(logError.mock.calls)).not.toContain(invitation.token);
   });
 
   it('marks a temporarily locked account as unavailable in the invitation', async () => {

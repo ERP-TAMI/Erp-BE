@@ -2,6 +2,7 @@ import {
   BadRequestException,
   GoneException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
@@ -23,6 +24,8 @@ export type IssuedPasswordSetup = { user: User; token: string };
 
 @Injectable()
 export class PasswordSetupService {
+  private readonly logger = new Logger(PasswordSetupService.name);
+
   constructor(
     @InjectRepository(UserPasswordSetupToken)
     private readonly tokens: Repository<UserPasswordSetupToken>,
@@ -50,10 +53,7 @@ export class PasswordSetupService {
     const rawToken = generatePasswordSetupToken();
     const now = new Date();
     const tokenRepository = manager.getRepository(UserPasswordSetupToken);
-    await tokenRepository.update(
-      { userId: user.id, usedAt: IsNull() },
-      { usedAt: now },
-    );
+    await this.revokeActive(manager, user.id, now);
     await tokenRepository.save(
       tokenRepository.create({
         userId: user.id,
@@ -64,6 +64,16 @@ export class PasswordSetupService {
       }),
     );
     return { user, token: rawToken };
+  }
+
+  async revokeActive(
+    manager: EntityManager,
+    userId: string,
+    revokedAt = new Date(),
+  ): Promise<void> {
+    await manager
+      .getRepository(UserPasswordSetupToken)
+      .update({ userId, usedAt: IsNull() }, { usedAt: revokedAt });
   }
 
   async deliver(invitation: IssuedPasswordSetup): Promise<InvitationStatus> {
@@ -79,7 +89,12 @@ export class PasswordSetupService {
             invitation.user.lockoutUntil.getTime() <= Date.now()),
       });
       return 'sent';
-    } catch {
+    } catch (error) {
+      const reason =
+        error instanceof Error ? error.message : 'Unknown SMTP error';
+      this.logger.error(
+        `Password setup email failed for user ${invitation.user.id} (${invitation.user.email}): ${reason}`,
+      );
       return 'failed';
     }
   }

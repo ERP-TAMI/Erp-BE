@@ -106,8 +106,14 @@ export class UserManagementService {
             assignedBy: actor.id,
           }),
         );
-        return { user: created, roleName: role!.name };
+        const invitation = await this.passwordSetup.issue(
+          manager,
+          created.id,
+          actor.id,
+        );
+        return { user: created, roleName: role!.name, invitation };
       });
+      this.deliverInBackground(result.invitation);
       return {
         user: this.toUserItem(result.user, dto.roleCode, result.roleName),
         invitationStatus: 'pending',
@@ -146,7 +152,10 @@ export class UserManagementService {
         });
         if (!role) this.throwRoleNotFound();
         const currentStatus = this.deriveEditableStatus(user);
+        const previousEmail = user.email;
+        const emailChanged = previousEmail !== dto.email;
         const securityChanged =
+          emailChanged ||
           currentRole.code !== dto.roleCode ||
           currentStatus !== dto.accountStatus;
         const preserveExistingLock =
@@ -159,7 +168,6 @@ export class UserManagementService {
               manuallyLockedBy: user.manuallyLockedBy,
             }
           : this.accountState(dto.accountStatus, actor.id);
-        const previousEmail = user.email;
         Object.assign(user, {
           fullName: dto.fullName,
           email: dto.email,
@@ -174,6 +182,13 @@ export class UserManagementService {
             : user.authVersion,
         });
         await userRepository.save(user);
+        const invitation =
+          emailChanged && user.mustChangePassword
+            ? await this.passwordSetup.issue(manager, id, actor.id)
+            : null;
+        if (emailChanged && !user.mustChangePassword) {
+          await this.passwordSetup.revokeActive(manager, id);
+        }
         if (currentRole.code !== dto.roleCode) {
           await manager.getRepository(UserRole).delete({ userId: id });
           await manager.getRepository(UserRole).save(
@@ -193,15 +208,17 @@ export class UserManagementService {
               { revokedAt: new Date(), revokeReason: 'account_updated' },
             );
         }
-        const emailChanged = previousEmail !== dto.email;
         return {
           item: this.toUserItem(user, dto.roleCode, role!.name),
-          shouldSendInvitation: emailChanged && user.mustChangePassword,
+          invitation,
         };
       });
+      if (result.invitation) {
+        this.deliverInBackground(result.invitation);
+      }
       return {
         user: result.item,
-        invitationStatus: result.shouldSendInvitation ? 'pending' : null,
+        invitationStatus: result.invitation ? 'pending' : null,
       };
     } catch (error) {
       this.rethrowDuplicateEmail(error);
@@ -337,6 +354,12 @@ export class UserManagementService {
 
   private escapeLikePattern(value: string): string {
     return value.replace(/[\\%_]/g, (character) => `\\${character}`);
+  }
+
+  private deliverInBackground(
+    invitation: Awaited<ReturnType<PasswordSetupService['issue']>>,
+  ): void {
+    void this.passwordSetup.deliver(invitation);
   }
 
   private accountState(status: EditableUserAccountStatus, actorId: string) {
