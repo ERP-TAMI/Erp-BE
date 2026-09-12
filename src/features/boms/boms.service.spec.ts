@@ -1,7 +1,11 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
-import { BomsService, isUserAllowedToViewCost } from './boms.service';
+import {
+  BomsService,
+  isUserAllowedToViewCost,
+  normalizeStatusQuery,
+} from './boms.service';
 import { BillOfMaterials } from './entities/BillOfMaterials.entity';
 import { BillOfMaterialLine } from './entities/BillOfMaterialLine.entity';
 import { FitBomLine } from '../fit-boms/entities/FitBomLine.entity';
@@ -74,6 +78,17 @@ describe('BomsService', () => {
       query: jest
         .fn()
         .mockImplementation((queryText: string, params: any[] = []) => {
+          if (queryText.includes('COUNT(*) FILTER')) {
+            return Promise.resolve([
+              {
+                total: '2',
+                draft_count: '1',
+                pending_count: '0',
+                approved_count: '1',
+              },
+            ]);
+          }
+
           let rows = [...allCombinedRows];
           if (
             queryText.includes("'po'::text as object_type") &&
@@ -163,6 +178,27 @@ describe('BomsService', () => {
     });
   });
 
+  describe('normalizeStatusQuery', () => {
+    it('normalizes raw database enum values and UI labels to common keys', () => {
+      expect(normalizeStatusQuery('closed')).toBe('approved');
+      expect(normalizeStatusQuery('Approved')).toBe('approved');
+      expect(normalizeStatusQuery('active')).toBe('approved');
+      expect(normalizeStatusQuery('wait_accounting')).toBe('wait_price');
+      expect(normalizeStatusQuery('Wait_Price')).toBe('wait_price');
+      expect(normalizeStatusQuery('wait_rd')).toBe('wait_rd');
+      expect(normalizeStatusQuery('Wait_RD')).toBe('wait_rd');
+      expect(normalizeStatusQuery('wait_tpkh_confirm')).toBe('wait_tp_approve');
+      expect(normalizeStatusQuery('Wait_TP_Approve')).toBe('wait_tp_approve');
+      expect(normalizeStatusQuery('wait_sa_approve')).toBe('wait_sa_approve');
+      expect(normalizeStatusQuery('Wait_SA_Approve')).toBe('wait_sa_approve');
+      expect(normalizeStatusQuery('draft')).toBe('draft');
+      expect(normalizeStatusQuery('Draft')).toBe('draft');
+      expect(normalizeStatusQuery('locked')).toBe('locked');
+      expect(normalizeStatusQuery(null)).toBe('');
+      expect(normalizeStatusQuery(undefined)).toBe('');
+    });
+  });
+
   describe('findAll', () => {
     it('returns both PO and Fit BOMs with costs for PO only for TPKH', async () => {
       const res = await service.findAll(undefined, { roleCode: 'TPKH' });
@@ -233,6 +269,15 @@ describe('BomsService', () => {
       expect(navyRes.data[0].colorName).toBe('Navy');
     });
 
+    it('filters by status using raw database enum values like closed', async () => {
+      const closedRes = await service.findAll(
+        { status: 'closed' },
+        { roleCode: 'SA' },
+      );
+      expect(closedRes.data).toHaveLength(1);
+      expect(closedRes.data[0].status).toBe('Approved');
+    });
+
     it('paginates correctly with page and limit', async () => {
       const resPage1 = await service.findAll(
         { page: 1, limit: 1 },
@@ -297,6 +342,36 @@ describe('BomsService', () => {
       expect(result.bomLines).toHaveLength(1);
       expect(result.bomLines[0].materialGroupSnapshot).toBe('Vải chính');
       expect(result.bomLines[0].unitSnapshot).toBe('Mét');
+    });
+  });
+
+  describe('getStats', () => {
+    it('returns aggregate statistics for period', async () => {
+      const stats = await service.getStats('2026-09');
+      expect(stats).toEqual({
+        total: 2,
+        draftCount: 1,
+        pendingCount: 0,
+        approvedCount: 1,
+      });
+      expect(dataSourceMock.query).toHaveBeenCalledWith(
+        expect.stringContaining('COUNT(*) FILTER'),
+        ['2026-09'],
+      );
+    });
+
+    it('returns aggregate statistics for all periods when period is all or omitted', async () => {
+      const stats = await service.getStats('all');
+      expect(stats).toEqual({
+        total: 2,
+        draftCount: 1,
+        pendingCount: 0,
+        approvedCount: 1,
+      });
+      expect(dataSourceMock.query).toHaveBeenCalledWith(
+        expect.stringContaining('COUNT(*) FILTER'),
+        [],
+      );
     });
   });
 });

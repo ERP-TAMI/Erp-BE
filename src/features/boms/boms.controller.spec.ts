@@ -31,7 +31,7 @@ describe('BomsController', () => {
       colorName: 'Tiêu chuẩn',
       version: 1,
       status: 'Draft',
-      totalCostPerUnit: 120000,
+      totalCostPerUnit: null,
       createdAt: '2026-09-11T00:00:00.000Z',
     },
   ];
@@ -46,10 +46,18 @@ describe('BomsController', () => {
     },
   };
 
+  const mockStats = {
+    total: 2,
+    draftCount: 1,
+    pendingCount: 0,
+    approvedCount: 1,
+  };
+
   beforeEach(async () => {
     serviceMock = {
       findAll: jest.fn().mockResolvedValue(mockPaginatedResponse),
       findOne: jest.fn().mockResolvedValue(mockBomList[0]),
+      getStats: jest.fn().mockResolvedValue(mockStats),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -77,6 +85,13 @@ describe('BomsController', () => {
 
     expect(result).toEqual(mockPaginatedResponse);
     expect(serviceMock.findAll).toHaveBeenCalledWith(query, req.user);
+  });
+
+  it('getStats should call service.getStats with period', async () => {
+    const result = await controller.getStats('2026-09');
+
+    expect(result).toEqual(mockStats);
+    expect(serviceMock.getStats).toHaveBeenCalledWith('2026-09');
   });
 
   it('findOne should call service.findOne with id and user', async () => {

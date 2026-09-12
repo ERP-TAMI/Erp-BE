@@ -16,7 +16,7 @@ import {
 } from '@nestjs/swagger';
 import { Auth } from '../../common/decorators/auth.decorator';
 import { BomsService } from './boms.service';
-import { QueryBomsDto, PaginatedBomResponseDto } from './dto';
+import { QueryBomsDto, PaginatedBomResponseDto, BomStatsDto } from './dto';
 
 @ApiTags('boms')
 @ApiBearerAuth()
@@ -44,6 +44,20 @@ export class BomsController {
   ): Promise<PaginatedBomResponseDto> {
     const user = req?.user;
     return this.bomsService.findAll(query, user);
+  }
+
+  @Get('stats')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Lấy thống kê tổng quan NPL theo tháng hoặc toàn thời gian',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Thống kê NPL',
+    type: BomStatsDto,
+  })
+  async getStats(@Query('period') period?: string): Promise<BomStatsDto> {
+    return this.bomsService.getStats(period);
   }
 
   @Get(':id')

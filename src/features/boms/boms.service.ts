@@ -6,7 +6,12 @@ import { BillOfMaterialLine } from './entities/BillOfMaterialLine.entity';
 import { FitBomLine } from '../fit-boms/entities/FitBomLine.entity';
 import { Style } from '../styles/entities/Style.entity';
 import { StyleStatus } from '../../common/enums/database.enums';
-import { QueryBomsDto, BomListItemDto, PaginatedBomResponseDto } from './dto';
+import {
+  QueryBomsDto,
+  BomListItemDto,
+  PaginatedBomResponseDto,
+  BomStatsDto,
+} from './dto';
 
 const ALLOWED_COST_ROLES = new Set([
   'sa',
@@ -23,6 +28,35 @@ export function isUserAllowedToViewCost(user?: any): boolean {
   const roleCode = user?.roleCode || user?.role;
   if (!roleCode) return false;
   return ALLOWED_COST_ROLES.has(String(roleCode).toLowerCase().trim());
+}
+
+export function normalizeStatusQuery(
+  status: string | null | undefined,
+): string {
+  if (!status) return '';
+  const s = status.trim().toLowerCase();
+  switch (s) {
+    case 'closed':
+    case 'approved':
+    case 'active':
+      return 'approved';
+    case 'wait_accounting':
+    case 'wait_price':
+      return 'wait_price';
+    case 'wait_rd':
+      return 'wait_rd';
+    case 'wait_tpkh_confirm':
+    case 'wait_tp_approve':
+      return 'wait_tp_approve';
+    case 'wait_sa_approve':
+      return 'wait_sa_approve';
+    case 'draft':
+      return 'draft';
+    case 'locked':
+      return 'locked';
+    default:
+      return s;
+  }
 }
 
 function mapBomStatusToLabel(status: string | null | undefined): string {
@@ -162,8 +196,9 @@ export class BomsService {
     const whereClauses: string[] = [];
 
     if (query?.status) {
+      const normalizedStatus = normalizeStatusQuery(query.status);
       whereClauses.push(`LOWER(combined.status) = LOWER($${paramIdx++})`);
-      params.push(query.status);
+      params.push(normalizedStatus);
     }
 
     if (query?.poCode) {
@@ -316,5 +351,63 @@ export class BomsService {
     }
 
     throw new NotFoundException(`BOM với ID ${id} không tồn tại.`);
+  }
+
+  /**
+   * Fetch aggregate BOM stats (total, draft, pending, approved) for a given month or all time.
+   */
+  async getStats(period?: string): Promise<BomStatsDto> {
+    const branches = [
+      `SELECT
+         bom.id::text as id,
+         CASE bom.status::text
+           WHEN 'closed' THEN 'Approved'
+           WHEN 'wait_accounting' THEN 'Wait_Price'
+           WHEN 'wait_rd' THEN 'Wait_RD'
+           WHEN 'wait_tpkh_confirm' THEN 'Wait_TP_Approve'
+           WHEN 'wait_sa_approve' THEN 'Wait_SA_Approve'
+           ELSE 'Draft'
+         END as status,
+         bom.created_at
+       FROM bills_of_materials bom`,
+      `SELECT
+         s.id::text as id,
+         CASE s.status::text
+           WHEN 'active' THEN 'Approved'
+           WHEN 'approved' THEN 'Approved'
+           ELSE 'Draft'
+         END as status,
+         s.created_at
+       FROM styles s`,
+    ];
+
+    const baseUnionSql = branches.join(' UNION ALL ');
+    const params: any[] = [];
+    let periodWhere = '';
+
+    if (period && period !== 'all') {
+      periodWhere = `WHERE to_char(combined.created_at, 'YYYY-MM') = $1`;
+      params.push(period);
+    }
+
+    const statsSql = `
+      SELECT
+        COUNT(*)::int as total,
+        COUNT(*) FILTER (WHERE combined.status = 'Draft')::int as draft_count,
+        COUNT(*) FILTER (WHERE combined.status IN ('Wait_RD', 'Wait_Price', 'Wait_TP_Approve', 'Wait_SA_Approve'))::int as pending_count,
+        COUNT(*) FILTER (WHERE combined.status IN ('Approved', 'Locked'))::int as approved_count
+      FROM (${baseUnionSql}) combined
+      ${periodWhere}
+    `;
+
+    const result = await this.dataSource.query(statsSql, params);
+    const row = result[0] || {};
+
+    return {
+      total: Number(row.total) || 0,
+      draftCount: Number(row.draft_count) || 0,
+      pendingCount: Number(row.pending_count) || 0,
+      approvedCount: Number(row.approved_count) || 0,
+    };
   }
 }
