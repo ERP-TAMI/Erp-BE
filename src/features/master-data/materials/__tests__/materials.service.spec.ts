@@ -6,7 +6,7 @@ import {
 import { Repository } from 'typeorm';
 import { RecordStatus } from '../../../../common/enums/database.enums';
 import { BillOfMaterialLine } from '../../../boms/entities/BillOfMaterialLine.entity';
-import { DraftBomLine } from '../../../draft-boms/entities/DraftBomLine.entity';
+import { FitBomLine } from '../../../fit-boms/entities/FitBomLine.entity';
 import { Material } from '../../entities/Material.entity';
 import { MaterialGroup } from '../../entities/MaterialGroup.entity';
 import { MaterialSize } from '../../entities/MaterialSize.entity';
@@ -40,7 +40,7 @@ describe('MaterialsService', () => {
   let materialGroups: jest.Mocked<Repository<MaterialGroup>>;
   let units: jest.Mocked<Repository<Unit>>;
   let materialSizes: jest.Mocked<Repository<MaterialSize>>;
-  let draftBomLines: jest.Mocked<Repository<DraftBomLine>>;
+  let fitBomLines: jest.Mocked<Repository<FitBomLine>>;
   let billOfMaterialLines: jest.Mocked<Repository<BillOfMaterialLine>>;
   let service: MaterialsService;
 
@@ -63,9 +63,9 @@ describe('MaterialsService', () => {
     materialSizes = {
       countBy: jest.fn().mockResolvedValue(0),
     } as unknown as jest.Mocked<Repository<MaterialSize>>;
-    draftBomLines = {
+    fitBomLines = {
       countBy: jest.fn().mockResolvedValue(0),
-    } as unknown as jest.Mocked<Repository<DraftBomLine>>;
+    } as unknown as jest.Mocked<Repository<FitBomLine>>;
     billOfMaterialLines = {
       countBy: jest.fn().mockResolvedValue(0),
     } as unknown as jest.Mocked<Repository<BillOfMaterialLine>>;
@@ -75,7 +75,7 @@ describe('MaterialsService', () => {
       materialGroups,
       units,
       materialSizes,
-      draftBomLines,
+      fitBomLines,
       billOfMaterialLines,
     );
   });
@@ -268,7 +268,7 @@ describe('MaterialsService', () => {
 
   it('does not hard-delete a material referenced by business data', async () => {
     materials.findOneBy.mockResolvedValue(material);
-    draftBomLines.countBy.mockResolvedValue(1);
+    fitBomLines.countBy.mockResolvedValue(1);
 
     await expect(service.remove(material.id)).rejects.toThrow(
       ConflictException,

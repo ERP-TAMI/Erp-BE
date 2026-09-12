@@ -8,7 +8,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { FindOptionsWhere, ILike, In, Repository } from 'typeorm';
 import { RecordStatus } from '../../../common/enums/database.enums';
 import { BillOfMaterialLine } from '../../boms/entities/BillOfMaterialLine.entity';
-import { DraftBomLine } from '../../draft-boms/entities/DraftBomLine.entity';
+import { FitBomLine } from '../../fit-boms/entities/FitBomLine.entity';
 import { Material } from '../entities/Material.entity';
 import { MaterialGroup } from '../entities/MaterialGroup.entity';
 import { MaterialSize } from '../entities/MaterialSize.entity';
@@ -30,8 +30,8 @@ export class MaterialsService {
     private readonly units: Repository<Unit>,
     @InjectRepository(MaterialSize)
     private readonly materialSizes: Repository<MaterialSize>,
-    @InjectRepository(DraftBomLine)
-    private readonly draftBomLines: Repository<DraftBomLine>,
+    @InjectRepository(FitBomLine)
+    private readonly fitBomLines: Repository<FitBomLine>,
     @InjectRepository(BillOfMaterialLine)
     private readonly billOfMaterialLines: Repository<BillOfMaterialLine>,
   ) {}
@@ -137,7 +137,7 @@ export class MaterialsService {
     const material = await this.getExistingMaterial(id);
     const referenceCounts = await Promise.all([
       this.materialSizes.countBy({ materialId: id }),
-      this.draftBomLines.countBy({ materialId: id }),
+      this.fitBomLines.countBy({ materialId: id }),
       this.billOfMaterialLines.countBy({ materialId: id }),
     ]);
     if (referenceCounts.some((count) => count > 0)) {

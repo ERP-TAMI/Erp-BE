@@ -105,10 +105,8 @@ Schema được chuẩn hoá theo aggregate Style, PurchaseOrder, PurchaseOrderP
 | 17 | `style_operation_steps` | Module 1 - Mẫu fit | Lưu dữ liệu chuẩn hoá của domain và các ràng buộc liên quan. |
 | 18 | `style_sample_rounds` | Module 1 - Mẫu fit | Lưu dữ liệu chuẩn hoá của domain và các ràng buộc liên quan. |
 | 19 | `style_sample_images` | Module 1 - Mẫu fit | Lưu dữ liệu chuẩn hoá của domain và các ràng buộc liên quan. |
-| 20 | `draft_bom_families` | Module 1 - NPL dự thảo | Lưu dữ liệu chuẩn hoá của domain và các ràng buộc liên quan. |
-| 21 | `draft_bom_versions` | Module 1 - NPL dự thảo | Lưu dữ liệu chuẩn hoá của domain và các ràng buộc liên quan. |
-| 22 | `draft_bom_lines` | Module 1 - NPL dự thảo | Lưu dữ liệu chuẩn hoá của domain và các ràng buộc liên quan. |
-| 23 | `purchase_orders` | Module 2 - PO | Đơn hàng khách hàng và trạng thái tổng. |
+| 20 | `fit_bom_lines` | Module 1 - NPL mẫu Fit | Định mức nguyên phụ liệu mẫu Fit, liên kết trực tiếp với mẫu Fit (styles). |
+| 21 | `purchase_orders` | Module 2 - PO | Đơn hàng khách hàng và trạng thái tổng. |
 | 24 | `purchase_order_status_history` | Module 2 - PO | Lưu dữ liệu chuẩn hoá của domain và các ràng buộc liên quan. |
 | 25 | `purchase_order_documents` | Module 2 - PO | Lưu dữ liệu chuẩn hoá của domain và các ràng buộc liên quan. |
 | 26 | `purchase_order_products` | Module 2 - Sản phẩm | Sản phẩm thuộc PO, có thể kế thừa snapshot từ mẫu fit. |
@@ -433,51 +431,28 @@ Schema được chuẩn hoá theo aggregate Style, PurchaseOrder, PurchaseOrderP
 | `color_name` | `varchar(100)` | Nullable theo nghiệp vụ | Thuộc tính nghiệp vụ/kiểm soát của bảng. |
 | `order_index` | `integer` | not null, default: `0` | Thuộc tính nghiệp vụ/kiểm soát của bảng. |
 
-### `draft_bom_families`
+### `fit_bom_lines`
 
-**Mục đích:** Thành phần chuẩn hoá thuộc Module 1 - NPL dự thảo.
+**Mục đích:** Định mức nguyên phụ liệu mẫu Fit, liên kết trực tiếp với mẫu Fit (`styles`), lưu snapshot nhóm vật tư và đơn vị tính để đảm bảo tính toàn vẹn dữ liệu lịch sử.
 
 | Field | Type | Constraint | Mô tả |
 |---|---|---|---|
 
-| `id` | `uuid` | pk, default: `gen_random_uuid()` | Khoá định danh. |
-| `style_id` | `uuid` | not null | Thuộc tính nghiệp vụ/kiểm soát của bảng. |
-| `bom_code` | `varchar(100)` | not null, unique | Thuộc tính nghiệp vụ/kiểm soát của bảng. |
-| `created_by` | `uuid` | Nullable theo nghiệp vụ | Thuộc tính nghiệp vụ/kiểm soát của bảng. |
+| `id` | `uuid` | pk, default: `gen_random_uuid()` | Khoá định danh dòng NPL mẫu Fit. |
+| `style_id` | `uuid` | not null | FK liên kết trực tiếp tới `styles.id` (ON DELETE CASCADE). |
+| `material_id` | `uuid` | Nullable theo nghiệp vụ | FK liên kết tới `materials.id` (ON DELETE RESTRICT). |
+| `material_name_snapshot` | `varchar(255)` | not null | Tên vật tư tại thời điểm khai báo. |
+| `material_group_id` | `uuid` | Nullable theo nghiệp vụ | FK liên kết tới `material_groups.id` (ON DELETE RESTRICT). |
+| `material_group_snapshot` | `varchar(100)` | Nullable theo nghiệp vụ | Tên nhóm vật tư tại thời điểm khai báo (tránh trôi dữ liệu khi đổi tên nhóm). |
+| `unit_id` | `uuid` | Nullable theo nghiệp vụ | FK liên kết tới `units.id` (ON DELETE RESTRICT). |
+| `unit_snapshot` | `varchar(50)` | Nullable theo nghiệp vụ | Tên đơn vị tính tại thời điểm khai báo (tránh trôi dữ liệu khi đổi tên ĐVT). |
+| `consumption` | `numeric(18, 4)` | not null | Định mức tiêu hao nguyên phụ liệu trên một đơn vị sản phẩm mẫu. |
+| `waste_percent` | `numeric(5, 2)` | not null, default: `0` | Tỷ lệ hao hụt dự kiến (%). |
+| `note` | `text` | Nullable theo nghiệp vụ | Ghi chú kỹ thuật NPL mẫu Fit. |
+| `order_index` | `integer` | not null, default: `0` | Thứ tự hiển thị dòng định mức trong bảng NPL mẫu Fit. |
 | `created_at` | `timestamptz` | not null, default: `now()` | Thời điểm tạo bản ghi. |
+| `updated_at` | `timestamptz` | not null, default: `now()` | Thời điểm cập nhật bản ghi gần nhất. |
 
-### `draft_bom_versions`
-
-**Mục đích:** Thành phần chuẩn hoá thuộc Module 1 - NPL dự thảo.
-
-| Field | Type | Constraint | Mô tả |
-|---|---|---|---|
-
-| `id` | `uuid` | pk, default: `gen_random_uuid()` | Khoá định danh. |
-| `family_id` | `uuid` | not null | Thuộc tính nghiệp vụ/kiểm soát của bảng. |
-| `parent_version_id` | `uuid` | Nullable theo nghiệp vụ | Thuộc tính nghiệp vụ/kiểm soát của bảng. |
-| `version_no` | `integer` | not null | Thuộc tính nghiệp vụ/kiểm soát của bảng. |
-| `change_reason` | `text` | Nullable theo nghiệp vụ | Thuộc tính nghiệp vụ/kiểm soát của bảng. |
-| `is_current` | `boolean` | not null, default: `false` | Thuộc tính nghiệp vụ/kiểm soát của bảng. |
-| `created_by` | `uuid` | Nullable theo nghiệp vụ | Thuộc tính nghiệp vụ/kiểm soát của bảng. |
-| `created_at` | `timestamptz` | not null, default: `now()` | Thời điểm tạo bản ghi. |
-
-### `draft_bom_lines`
-
-**Mục đích:** Thành phần chuẩn hoá thuộc Module 1 - NPL dự thảo.
-
-| Field | Type | Constraint | Mô tả |
-|---|---|---|---|
-
-| `id` | `uuid` | pk, default: `gen_random_uuid()` | Khoá định danh. |
-| `version_id` | `uuid` | not null | Thuộc tính nghiệp vụ/kiểm soát của bảng. |
-| `material_id` | `uuid` | Nullable theo nghiệp vụ | Thuộc tính nghiệp vụ/kiểm soát của bảng. |
-| `material_name_snapshot` | `varchar(255)` | not null | Thuộc tính nghiệp vụ/kiểm soát của bảng. |
-| `material_group_id` | `uuid` | Nullable theo nghiệp vụ | Thuộc tính nghiệp vụ/kiểm soát của bảng. |
-| `unit_id` | `uuid` | Nullable theo nghiệp vụ | Thuộc tính nghiệp vụ/kiểm soát của bảng. |
-| `consumption` | `numeric(18` | not null | Thuộc tính nghiệp vụ/kiểm soát của bảng. |
-| `note` | `text` | Nullable theo nghiệp vụ | Thuộc tính nghiệp vụ/kiểm soát của bảng. |
-| `order_index` | `integer` | not null | Thuộc tính nghiệp vụ/kiểm soát của bảng. |
 
 ### `purchase_orders`
 
@@ -1159,15 +1134,10 @@ Schema được chuẩn hoá theo aggregate Style, PurchaseOrder, PurchaseOrderP
 | `style_sample_rounds` | `reviewed_by` | `users.id` | N–1 | SET NULL |
 | `style_sample_images` | `sample_round_id` | `style_sample_rounds.id` | N–1 | CASCADE |
 | `style_sample_images` | `document_version_id` | `document_versions.id` | N–1 | RESTRICT |
-| `draft_bom_families` | `style_id` | `styles.id` | N–1 | CASCADE |
-| `draft_bom_families` | `created_by` | `users.id` | N–1 | SET NULL |
-| `draft_bom_versions` | `family_id` | `draft_bom_families.id` | N–1 | CASCADE |
-| `draft_bom_versions` | `parent_version_id` | `draft_bom_versions.id` | N–1 | RESTRICT |
-| `draft_bom_versions` | `created_by` | `users.id` | N–1 | SET NULL |
-| `draft_bom_lines` | `version_id` | `draft_bom_versions.id` | N–1 | CASCADE |
-| `draft_bom_lines` | `material_id` | `materials.id` | N–1 | RESTRICT |
-| `draft_bom_lines` | `material_group_id` | `material_groups.id` | N–1 | RESTRICT |
-| `draft_bom_lines` | `unit_id` | `units.id` | N–1 | RESTRICT |
+| `fit_bom_lines` | `style_id` | `styles.id` | N–1 | CASCADE |
+| `fit_bom_lines` | `material_id` | `materials.id` | N–1 | RESTRICT |
+| `fit_bom_lines` | `material_group_id` | `material_groups.id` | N–1 | RESTRICT |
+| `fit_bom_lines` | `unit_id` | `units.id` | N–1 | RESTRICT |
 | `purchase_orders` | `customer_id` | `customers.id` | N–1 | RESTRICT |
 | `purchase_orders` | `closed_by` | `users.id` | N–1 | SET NULL |
 | `purchase_orders` | `created_by` | `users.id` | N–1 | SET NULL |
@@ -1271,7 +1241,7 @@ Schema được chuẩn hoá theo aggregate Style, PurchaseOrder, PurchaseOrderP
 | Bảng/Index | Field(s) | Lý do |
 |---|---|---|
 
-| `draft_bom_versions` / `uq_draft_bom_one_current` | `family_id` | Phục vụ list/filter/history/queue theo query pattern; partial: is_current. |
+| `fit_bom_lines` / `ix_fit_bom_lines_style_order` | `style_id,order_index` | Phục vụ list/filter nguyên phụ liệu mẫu Fit theo thứ tự hiển thị; full index. |
 | `production_documents` / `uq_style_prod_doc` | `style_id` | Phục vụ list/filter/history/queue theo query pattern; partial: style_id IS NOT NULL. |
 | `production_documents` / `uq_product_prod_doc` | `product_id` | Phục vụ list/filter/history/queue theo query pattern; partial: product_id IS NOT NULL. |
 | `purchase_orders` / `ix_po_list` | `status,created_at DESC,id DESC` | Phục vụ list/filter/history/queue theo query pattern; partial: archived_at IS NULL. |

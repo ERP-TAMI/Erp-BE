@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { BillOfMaterialLine } from '../../boms/entities/BillOfMaterialLine.entity';
-import { DraftBomLine } from '../../draft-boms/entities/DraftBomLine.entity';
+import { FitBomLine } from '../../fit-boms/entities/FitBomLine.entity';
 import { Material } from '../entities/Material.entity';
 import { MaterialGroup } from '../entities/MaterialGroup.entity';
 import { MaterialSize } from '../entities/MaterialSize.entity';
@@ -16,7 +16,7 @@ import { MaterialsService } from './materials.service';
       MaterialGroup,
       Unit,
       MaterialSize,
-      DraftBomLine,
+      FitBomLine,
       BillOfMaterialLine,
     ]),
   ],

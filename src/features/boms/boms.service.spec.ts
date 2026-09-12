@@ -4,97 +4,140 @@ import { DataSource } from 'typeorm';
 import { BomsService, isUserAllowedToViewCost } from './boms.service';
 import { BillOfMaterials } from './entities/BillOfMaterials.entity';
 import { BillOfMaterialLine } from './entities/BillOfMaterialLine.entity';
-import { DraftBomFamilie } from '../draft-boms/entities/DraftBomFamilie.entity';
-import { DraftBomVersion } from '../draft-boms/entities/DraftBomVersion.entity';
-import { DraftBomLine } from '../draft-boms/entities/DraftBomLine.entity';
+import { FitBomLine } from '../fit-boms/entities/FitBomLine.entity';
 import { Style } from '../styles/entities/Style.entity';
-import { PurchaseOrder } from '../purchase-orders/entities/PurchaseOrder.entity';
-import { PurchaseOrderProduct } from '../purchase-orders/entities/PurchaseOrderProduct.entity';
-import { PurchaseOrderProductColor } from '../purchase-orders/entities/PurchaseOrderProductColor.entity';
 
 describe('BomsService', () => {
   let service: BomsService;
   let dataSourceMock: any;
   let bomRepoMock: any;
-  let draftBomRepoMock: any;
+  let bomLineRepoMock: any;
+  let fitBomLineRepoMock: any;
+  let styleRepoMock: any;
 
-  const mockPoRows = [
+  const allCombinedRows = [
     {
       id: 'po-bom-1',
       bom_code: 'BOM-PO-01',
-      po_code_snapshot: 'PO-2026-001',
-      product_code_snapshot: 'STY-POLO-01',
-      product_name_snapshot: 'Áo Polo Nam Classic Fit',
-      color_name_snapshot: 'Navy',
-      order_quantity_snapshot: 500,
-      deadline: '2026-09-20T00:00:00.000Z',
-      status: 'closed',
-      row_version: 1,
-      created_at: '2026-09-10T10:00:00.000Z',
-      color_id: 'col-1',
+      object_type: 'po',
+      object_code: 'PO-2026-001',
       po_id: 'po-uuid-1',
+      color_id: 'col-1',
+      color_name: 'Navy',
+      style_code: 'STY-POLO-01',
+      product_name: 'Áo Polo Nam Classic Fit',
+      po_quantity: 500,
+      version: 1,
+      status: 'Approved',
       total_cost: 145000,
+      deadline: '2026-09-20T00:00:00.000Z',
+      created_at: new Date('2026-09-10T10:00:00.000Z'),
     },
-  ];
-
-  const mockFitRows = [
     {
-      id: 'fit-bom-1',
-      bom_code: 'FIT-2026-001',
-      created_at: '2026-09-08T08:30:00.000Z',
-      style_id: 'style-uuid-1',
+      id: 'style-uuid-1',
+      bom_code: 'FIT-STY-FIT-01',
+      object_type: 'fit',
+      object_code: 'FIT-STY-FIT-01',
+      po_id: '',
+      color_id: null,
+      color_name: 'Tiêu chuẩn',
       style_code: 'STY-FIT-01',
-      style_name: 'Mẫu Fit Polo',
-      style_status: 'draft',
-      version_no: 1,
-      version_id: 'ver-1',
-      total_cost: 120000,
+      product_name: 'Mẫu Fit Polo',
+      po_quantity: null,
+      version: 1,
+      status: 'Draft',
+      total_cost: null,
+      deadline: null,
+      created_at: new Date('2026-09-08T08:30:00.000Z'),
     },
   ];
 
   beforeEach(async () => {
     bomRepoMock = {
-      count: jest.fn().mockResolvedValue(1),
       findOne: jest.fn(),
       find: jest.fn(),
     };
 
-    draftBomRepoMock = {
-      count: jest.fn().mockResolvedValue(1),
-      findOne: jest.fn(),
+    bomLineRepoMock = {
       find: jest.fn(),
+    };
+
+    fitBomLineRepoMock = {
+      find: jest.fn(),
+    };
+
+    styleRepoMock = {
+      findOne: jest.fn(),
     };
 
     dataSourceMock = {
-      query: jest.fn().mockImplementation((queryText: string) => {
-        if (queryText.includes('FROM bills_of_materials')) {
-          return Promise.resolve(mockPoRows);
-        }
-        if (queryText.includes('FROM draft_bom_families')) {
-          return Promise.resolve(mockFitRows);
-        }
-        return Promise.resolve([]);
-      }),
+      query: jest
+        .fn()
+        .mockImplementation((queryText: string, params: any[] = []) => {
+          let rows = [...allCombinedRows];
+          if (
+            queryText.includes("'po'::text as object_type") &&
+            !queryText.includes("'fit'::text as object_type")
+          ) {
+            rows = rows.filter((r) => r.object_type === 'po');
+          } else if (
+            queryText.includes("'fit'::text as object_type") &&
+            !queryText.includes("'po'::text as object_type")
+          ) {
+            rows = rows.filter((r) => r.object_type === 'fit');
+          }
+
+          // Apply WHERE filter parameters
+          for (const p of params) {
+            if (typeof p === 'string') {
+              if (p.startsWith('%') && p.endsWith('%')) {
+                const val = p.slice(1, -1).toLowerCase();
+                rows = rows.filter(
+                  (r) =>
+                    r.style_code.toLowerCase().includes(val) ||
+                    r.product_name.toLowerCase().includes(val) ||
+                    r.object_code.toLowerCase().includes(val) ||
+                    (r.color_name && r.color_name.toLowerCase().includes(val)),
+                );
+              } else {
+                rows = rows.filter(
+                  (r) => r.status.toLowerCase() === p.toLowerCase(),
+                );
+              }
+            }
+          }
+
+          if (queryText.includes('COUNT(*)')) {
+            return Promise.resolve([{ count: String(rows.length) }]);
+          }
+
+          // Handle LIMIT and OFFSET
+          const limitParam = params[params.length - 2];
+          const offsetParam = params[params.length - 1];
+          if (
+            typeof limitParam === 'number' &&
+            typeof offsetParam === 'number'
+          ) {
+            rows = rows.slice(offsetParam, offsetParam + limitParam);
+          }
+
+          return Promise.resolve(rows);
+        }),
     };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         BomsService,
         { provide: getRepositoryToken(BillOfMaterials), useValue: bomRepoMock },
-        { provide: getRepositoryToken(BillOfMaterialLine), useValue: {} },
         {
-          provide: getRepositoryToken(DraftBomFamilie),
-          useValue: draftBomRepoMock,
+          provide: getRepositoryToken(BillOfMaterialLine),
+          useValue: bomLineRepoMock,
         },
-        { provide: getRepositoryToken(DraftBomVersion), useValue: {} },
-        { provide: getRepositoryToken(DraftBomLine), useValue: {} },
-        { provide: getRepositoryToken(Style), useValue: {} },
-        { provide: getRepositoryToken(PurchaseOrder), useValue: {} },
-        { provide: getRepositoryToken(PurchaseOrderProduct), useValue: {} },
         {
-          provide: getRepositoryToken(PurchaseOrderProductColor),
-          useValue: {},
+          provide: getRepositoryToken(FitBomLine),
+          useValue: fitBomLineRepoMock,
         },
+        { provide: getRepositoryToken(Style), useValue: styleRepoMock },
         { provide: DataSource, useValue: dataSourceMock },
       ],
     }).compile();
@@ -135,7 +178,7 @@ describe('BomsService', () => {
 
       // Fit BOM has NO production cost according to business logic (always null)
       expect(fitItem).toBeDefined();
-      expect(fitItem?.objectCode).toBe('FIT-2026-001');
+      expect(fitItem?.objectCode).toBe('FIT-STY-FIT-01');
       expect(fitItem?.totalCostPerUnit).toBeNull();
     });
 
@@ -208,6 +251,52 @@ describe('BomsService', () => {
       expect(resPage2.data).toHaveLength(1);
       expect(resPage2.meta.page).toBe(2);
       expect(resPage2.data[0].id).not.toBe(resPage1.data[0].id);
+    });
+  });
+
+  describe('findOne', () => {
+    it('returns PO BOM detail with cost for authorized user', async () => {
+      bomRepoMock.findOne.mockResolvedValueOnce({
+        id: 'po-1',
+        poCodeSnapshot: 'PO-100',
+        status: 'closed',
+      });
+      bomLineRepoMock.find.mockResolvedValueOnce([
+        { consumptionPerUnit: 2, unitCost: 20000 },
+      ]);
+
+      const result = await service.findOne('po-1', { roleCode: 'SA' });
+      expect(result.objectType).toBe('po');
+      expect(result.totalCostPerUnit).toBe(40000);
+      expect(result.bomLines[0].unitCost).toBe(20000);
+    });
+
+    it('returns Fit BOM detail pointing directly to style and lines, with null cost', async () => {
+      bomRepoMock.findOne.mockResolvedValueOnce(null);
+      styleRepoMock.findOne.mockResolvedValueOnce({
+        id: 'style-1',
+        styleCode: 'STY-FIT-01',
+        styleName: 'Fit Polo',
+        status: 'active',
+        createdAt: new Date(),
+      });
+      fitBomLineRepoMock.find.mockResolvedValueOnce([
+        {
+          id: 'line-1',
+          materialNameSnapshot: 'Vải cotton',
+          materialGroupSnapshot: 'Vải chính',
+          unitSnapshot: 'Mét',
+          consumption: 1.5,
+        },
+      ]);
+
+      const result = await service.findOne('style-1', { roleCode: 'SA' });
+      expect(result.objectType).toBe('fit');
+      expect(result.bomCode).toBe('FIT-STY-FIT-01');
+      expect(result.totalCostPerUnit).toBeNull();
+      expect(result.bomLines).toHaveLength(1);
+      expect(result.bomLines[0].materialGroupSnapshot).toBe('Vải chính');
+      expect(result.bomLines[0].unitSnapshot).toBe('Mét');
     });
   });
 });

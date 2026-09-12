@@ -7,14 +7,14 @@ export async function seedDemoBoms(manager: EntityManager): Promise<void> {
   const existingBoms = await manager.query(
     'SELECT count(*) FROM bills_of_materials',
   );
-  const existingDrafts = await manager.query(
-    'SELECT count(*) FROM draft_bom_families',
+  const existingFitBoms = await manager.query(
+    'SELECT count(*) FROM fit_bom_lines',
   );
   if (
     parseInt(existingBoms[0]?.count || '0', 10) > 0 &&
-    parseInt(existingDrafts[0]?.count || '0', 10) > 0
+    parseInt(existingFitBoms[0]?.count || '0', 10) > 0
   ) {
-    console.log('BOMs and Draft BOMs already seeded, skipping.');
+    console.log('BOMs and Fit BOM lines already seeded, skipping.');
     return;
   }
 
@@ -115,48 +115,26 @@ export async function seedDemoBoms(manager: EntityManager): Promise<void> {
   );
   for (let idx = 0; idx < styles.length; idx++) {
     const st = styles[idx];
-    const bomCode = `FIT-${st.style_code}`;
-
-    const insertedDraft = await manager.query(
-      `INSERT INTO draft_bom_families
-         (style_id, bom_code, created_at)
-       VALUES ($1, $2, now())
-       ON CONFLICT (bom_code) DO NOTHING
-       RETURNING id`,
-      [st.id, bomCode],
-    );
-
-    const familyId = insertedDraft[0]?.id;
-    if (familyId) {
-      const insertedVersion = await manager.query(
-        `INSERT INTO draft_bom_versions
-           (family_id, version_no, is_current, change_reason, created_at)
-         VALUES ($1, 1, true, 'Khởi tạo BOM mẫu Fit', now())
-         ON CONFLICT DO NOTHING
-         RETURNING id`,
-        [familyId],
-      );
-
-      const versionId = insertedVersion[0]?.id;
-      if (versionId && materials.length > 0) {
-        for (let mIdx = 0; mIdx < Math.min(materials.length, 2); mIdx++) {
-          const mat = materials[mIdx];
-          await manager.query(
-            `INSERT INTO draft_bom_lines
-               (version_id, material_id, material_name_snapshot, material_group_id, unit_id, consumption, order_index)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)
-             ON CONFLICT DO NOTHING`,
-            [
-              versionId,
-              mat.id,
-              mat.material_name,
-              mat.material_group_id || null,
-              mat.unit_id || null,
-              1.2,
-              mIdx,
-            ],
-          );
-        }
+    if (materials.length > 0) {
+      for (let mIdx = 0; mIdx < Math.min(materials.length, 2); mIdx++) {
+        const mat = materials[mIdx];
+        await manager.query(
+          `INSERT INTO fit_bom_lines
+             (style_id, material_id, material_name_snapshot, material_group_snapshot, unit_snapshot, material_group_id, unit_id, consumption, order_index, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now(), now())
+           ON CONFLICT DO NOTHING`,
+          [
+            st.id,
+            mat.id,
+            mat.material_name,
+            mat.material_group_name || null,
+            mat.unit_name || 'Mét',
+            mat.material_group_id || null,
+            mat.unit_id || null,
+            1.2,
+            mIdx,
+          ],
+        );
       }
     }
   }

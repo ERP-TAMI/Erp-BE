@@ -310,40 +310,23 @@ Table style_sample_images {
   order_index integer [not null, default: `0`]
 }
 
-Table draft_bom_families {
+Table fit_bom_lines {
   id uuid [pk, default: `gen_random_uuid()`]
   style_id uuid [not null]
-  bom_code varchar(100) [not null, unique]
-  created_by uuid
-  created_at timestamptz [not null, default: `now()`]
-}
-
-Table draft_bom_versions {
-  id uuid [pk, default: `gen_random_uuid()`]
-  family_id uuid [not null]
-  parent_version_id uuid
-  version_no integer [not null]
-  change_reason text
-  is_current boolean [not null, default: `false`]
-  created_by uuid
-  created_at timestamptz [not null, default: `now()`]
-  indexes {
-    (family_id, version_no) [unique]
-  }
-}
-
-Table draft_bom_lines {
-  id uuid [pk, default: `gen_random_uuid()`]
-  version_id uuid [not null]
   material_id uuid
   material_name_snapshot varchar(255) [not null]
   material_group_id uuid
+  material_group_snapshot varchar(100)
   unit_id uuid
-  consumption numeric(18,6) [not null]
+  unit_snapshot varchar(50)
+  consumption numeric(18,4) [not null]
+  waste_percent numeric(5,2) [not null, default: 0]
   note text
-  order_index integer [not null]
+  order_index integer [not null, default: 0]
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null, default: `now()`]
   indexes {
-    (version_id, order_index) [unique]
+    (style_id, order_index)
   }
 }
 
@@ -892,15 +875,10 @@ Ref: style_sample_rounds.created_by > users.id [delete: set null]
 Ref: style_sample_rounds.reviewed_by > users.id [delete: set null]
 Ref: style_sample_images.sample_round_id > style_sample_rounds.id [delete: cascade]
 Ref: style_sample_images.document_version_id > document_versions.id [delete: restrict]
-Ref: draft_bom_families.style_id > styles.id [delete: cascade]
-Ref: draft_bom_families.created_by > users.id [delete: set null]
-Ref: draft_bom_versions.family_id > draft_bom_families.id [delete: cascade]
-Ref: draft_bom_versions.parent_version_id > draft_bom_versions.id [delete: restrict]
-Ref: draft_bom_versions.created_by > users.id [delete: set null]
-Ref: draft_bom_lines.version_id > draft_bom_versions.id [delete: cascade]
-Ref: draft_bom_lines.material_id > materials.id [delete: restrict]
-Ref: draft_bom_lines.material_group_id > material_groups.id [delete: restrict]
-Ref: draft_bom_lines.unit_id > units.id [delete: restrict]
+Ref: fit_bom_lines.style_id > styles.id [delete: cascade]
+Ref: fit_bom_lines.material_id > materials.id [delete: restrict]
+Ref: fit_bom_lines.material_group_id > material_groups.id [delete: restrict]
+Ref: fit_bom_lines.unit_id > units.id [delete: restrict]
 Ref: purchase_orders.customer_id > customers.id [delete: restrict]
 Ref: purchase_orders.closed_by > users.id [delete: set null]
 Ref: purchase_orders.created_by > users.id [delete: set null]

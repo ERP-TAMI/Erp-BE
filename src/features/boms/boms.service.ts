@@ -3,10 +3,9 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { BillOfMaterials } from './entities/BillOfMaterials.entity';
 import { BillOfMaterialLine } from './entities/BillOfMaterialLine.entity';
-import { DraftBomFamilie } from '../draft-boms/entities/DraftBomFamilie.entity';
-import { DraftBomVersion } from '../draft-boms/entities/DraftBomVersion.entity';
-import { DraftBomLine } from '../draft-boms/entities/DraftBomLine.entity';
+import { FitBomLine } from '../fit-boms/entities/FitBomLine.entity';
 import { Style } from '../styles/entities/Style.entity';
+import { StyleStatus } from '../../common/enums/database.enums';
 import { QueryBomsDto, BomListItemDto, PaginatedBomResponseDto } from './dto';
 
 const ALLOWED_COST_ROLES = new Set([
@@ -54,26 +53,21 @@ export class BomsService {
     private readonly bomRepo: Repository<BillOfMaterials>,
     @InjectRepository(BillOfMaterialLine)
     private readonly bomLineRepo: Repository<BillOfMaterialLine>,
-    @InjectRepository(DraftBomFamilie)
-    private readonly draftBomRepo: Repository<DraftBomFamilie>,
-    @InjectRepository(DraftBomVersion)
-    private readonly draftVersionRepo: Repository<DraftBomVersion>,
-    @InjectRepository(DraftBomLine)
-    private readonly draftLineRepo: Repository<DraftBomLine>,
+    @InjectRepository(FitBomLine)
+    private readonly fitBomLineRepo: Repository<FitBomLine>,
     @InjectRepository(Style)
     private readonly styleRepo: Repository<Style>,
     private readonly dataSource: DataSource,
   ) {}
 
   /**
-   * Fetch both Fit BOMs and PO BOMs, combine them, filter, paginate, and apply role-based cost masking.
+   * Fetch paginated BOMs (PO & Fit) with database-level UNION ALL, filtering, and role-based cost masking.
    */
   async findAll(
     query?: QueryBomsDto,
     user?: any,
   ): Promise<PaginatedBomResponseDto> {
     const canViewCost = isUserAllowedToViewCost(user);
-    const items: BomListItemDto[] = [];
 
     const shouldIncludePo =
       !query?.objectType ||
@@ -84,78 +78,183 @@ export class BomsService {
       query.objectType === 'all' ||
       query.objectType === 'fit';
 
-    // 1. Fetch PO BOMs
+    if (!shouldIncludePo && !shouldIncludeFit) {
+      return {
+        data: [],
+        meta: {
+          total: 0,
+          page: query?.page ? Number(query.page) : 1,
+          limit: query?.limit ? Number(query.limit) : 10,
+          totalPages: 0,
+        },
+      };
+    }
+
+    const branches: string[] = [];
+
     if (shouldIncludePo) {
-      const poBoms = await this.fetchPoBoms();
-      items.push(...poBoms);
+      branches.push(`
+        SELECT
+          bom.id::text as id,
+          bom.bom_code,
+          'po'::text as object_type,
+          bom.po_code_snapshot as object_code,
+          po.id::text as po_id,
+          popc.id::text as color_id,
+          bom.color_name_snapshot as color_name,
+          bom.product_code_snapshot as style_code,
+          bom.product_name_snapshot as product_name,
+          bom.order_quantity_snapshot as po_quantity,
+          bom.row_version as version,
+          CASE bom.status::text
+            WHEN 'closed' THEN 'Approved'
+            WHEN 'wait_accounting' THEN 'Wait_Price'
+            WHEN 'wait_rd' THEN 'Wait_RD'
+            WHEN 'wait_tpkh_confirm' THEN 'Wait_TP_Approve'
+            WHEN 'wait_sa_approve' THEN 'Wait_SA_Approve'
+            ELSE 'Draft'
+          END as status,
+          cost_calc.total_cost,
+          bom.deadline::text as deadline,
+          bom.created_at
+        FROM bills_of_materials bom
+        LEFT JOIN purchase_order_product_colors popc ON popc.id = bom.product_color_id
+        LEFT JOIN purchase_order_products pop ON pop.id = popc.product_id
+        LEFT JOIN purchase_orders po ON po.id = pop.purchase_order_id
+        LEFT JOIN (
+          SELECT bill_of_material_id, SUM(consumption_per_unit * unit_cost) as total_cost
+          FROM bill_of_material_lines
+          GROUP BY bill_of_material_id
+        ) cost_calc ON cost_calc.bill_of_material_id = bom.id
+      `);
     }
 
-    // 2. Fetch Fit BOMs
     if (shouldIncludeFit) {
-      const fitBoms = await this.fetchFitBoms();
-      items.push(...fitBoms);
+      branches.push(`
+        SELECT
+          s.id::text as id,
+          ('FIT-' || s.style_code) as bom_code,
+          'fit'::text as object_type,
+          ('FIT-' || s.style_code) as object_code,
+          ''::text as po_id,
+          NULL::text as color_id,
+          'Tiêu chuẩn'::text as color_name,
+          s.style_code as style_code,
+          s.style_name as product_name,
+          NULL::integer as po_quantity,
+          1 as version,
+          CASE s.status::text
+            WHEN 'active' THEN 'Approved'
+            WHEN 'approved' THEN 'Approved'
+            ELSE 'Draft'
+          END as status,
+          NULL::numeric as total_cost,
+          NULL::text as deadline,
+          s.created_at
+        FROM styles s
+      `);
     }
 
-    // 3. Apply Filters
-    let filtered = items;
+    const baseUnionSql = branches.join(' UNION ALL ');
+
+    const params: any[] = [];
+    let paramIdx = 1;
+    const whereClauses: string[] = [];
 
     if (query?.status) {
-      const s = query.status.toLowerCase();
-      filtered = filtered.filter((i) => i.status.toLowerCase() === s);
+      whereClauses.push(`LOWER(combined.status) = LOWER($${paramIdx++})`);
+      params.push(query.status);
     }
 
     if (query?.poCode) {
-      const po = query.poCode.toLowerCase();
-      filtered = filtered.filter(
-        (i) =>
-          i.objectCode.toLowerCase().includes(po) ||
-          i.poId.toLowerCase().includes(po),
+      whereClauses.push(
+        `(combined.object_code ILIKE $${paramIdx} OR combined.po_id ILIKE $${paramIdx})`,
       );
+      params.push(`%${query.poCode}%`);
+      paramIdx++;
     }
 
     if (query?.search) {
-      const q = query.search.toLowerCase();
-      filtered = filtered.filter(
-        (i) =>
-          i.objectCode.toLowerCase().includes(q) ||
-          i.styleCode.toLowerCase().includes(q) ||
-          i.productName.toLowerCase().includes(q),
+      whereClauses.push(
+        `(combined.style_code ILIKE $${paramIdx} OR combined.product_name ILIKE $${paramIdx} OR combined.object_code ILIKE $${paramIdx})`,
       );
+      params.push(`%${query.search}%`);
+      paramIdx++;
     }
 
     if (query?.colorName) {
-      const c = query.colorName.toLowerCase();
-      filtered = filtered.filter(
-        (i) => i.colorName && i.colorName.toLowerCase().includes(c),
-      );
+      whereClauses.push(`combined.color_name ILIKE $${paramIdx++}`);
+      params.push(`%${query.colorName}%`);
     }
 
-    // Sort by createdAt DESC
-    filtered.sort(
-      (a, b) =>
-        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-    );
+    const whereSql =
+      whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
 
-    // 4. Role-based Cost Masking (Fit BOM is always null; PO BOM masked if !canViewCost)
-    const costProcessed = filtered.map((item) => ({
-      ...item,
-      totalCostPerUnit:
-        item.objectType === 'fit'
-          ? null
-          : canViewCost
-            ? item.totalCostPerUnit
-            : null,
-    }));
+    const countSql = `SELECT COUNT(*) as count FROM (${baseUnionSql}) combined ${whereSql}`;
+    const countResult = await this.dataSource.query(countSql, params);
+    const total = parseInt(countResult[0]?.count || '0', 10);
 
-    // 5. Pagination
     const page = query?.page && query.page > 0 ? Number(query.page) : 1;
     const limit = query?.limit && query.limit > 0 ? Number(query.limit) : 10;
-    const total = costProcessed.length;
+    const offset = (page - 1) * limit;
     const totalPages = Math.max(1, Math.ceil(total / limit));
-    const paginated = costProcessed.slice((page - 1) * limit, page * limit);
+
+    const pagedSql = `
+      SELECT
+        combined.id,
+        combined.bom_code,
+        combined.object_type,
+        combined.object_code,
+        combined.po_id,
+        combined.color_id,
+        combined.color_name,
+        combined.style_code,
+        combined.product_name,
+        combined.po_quantity,
+        combined.version,
+        combined.status,
+        combined.total_cost,
+        combined.deadline,
+        combined.created_at
+      FROM (${baseUnionSql}) combined
+      ${whereSql}
+      ORDER BY combined.created_at DESC, combined.id DESC
+      LIMIT $${paramIdx++} OFFSET $${paramIdx++}
+    `;
+
+    const rows = await this.dataSource.query(pagedSql, [
+      ...params,
+      limit,
+      offset,
+    ]);
+
+    const data: BomListItemDto[] = rows.map((r: any) => ({
+      id: r.id,
+      objectType: r.object_type as 'po' | 'fit',
+      objectCode: r.object_code,
+      poId: r.po_id,
+      colorId: r.color_id,
+      colorName: r.color_name,
+      styleCode: r.style_code,
+      productName: r.product_name,
+      poQuantity: r.po_quantity != null ? Number(r.po_quantity) : undefined,
+      version: Number(r.version) || 1,
+      status: r.status,
+      totalCostPerUnit:
+        r.object_type === 'fit'
+          ? null
+          : canViewCost && r.total_cost != null
+            ? Math.round(Number(r.total_cost))
+            : null,
+      deadline: r.deadline || null,
+      createdAt: r.created_at
+        ? new Date(r.created_at).toISOString()
+        : new Date().toISOString(),
+      imageUrl: null,
+    }));
 
     return {
-      data: paginated,
+      data,
       meta: {
         total,
         page,
@@ -193,141 +292,29 @@ export class BomsService {
       };
     }
 
-    // Check Fit BOM - Fit BOM has NO production cost according to business logic (always null)
-    const fitBom = await this.draftBomRepo.findOne({ where: { id } });
-    if (fitBom) {
-      const style = await this.styleRepo.findOne({
-        where: { id: fitBom.styleId },
+    // Check Fit BOM - style itself is the Fit BOM root entity
+    const style = await this.styleRepo.findOne({ where: { id } });
+    if (style) {
+      const lines = await this.fitBomLineRepo.find({
+        where: { styleId: id },
+        order: { orderIndex: 'ASC' },
       });
-      const version = await this.draftVersionRepo.findOne({
-        where: { familyId: fitBom.id, isCurrent: true },
-      });
-      const lines = version
-        ? await this.draftLineRepo.find({
-            where: { versionId: version.id },
-            order: { orderIndex: 'ASC' },
-          })
-        : [];
       return {
-        ...fitBom,
+        id: style.id,
+        styleId: style.id,
+        bomCode: `FIT-${style.styleCode}`,
         objectType: 'fit',
-        objectCode: fitBom.bomCode,
-        styleCode: style?.styleCode || '—',
-        productName: style?.styleName || '—',
-        status: style?.status === 'active' ? 'Approved' : 'Draft',
-        version: version?.versionNo || 1,
+        objectCode: `FIT-${style.styleCode}`,
+        styleCode: style.styleCode,
+        productName: style.styleName,
+        status: style.status === StyleStatus.ACTIVE ? 'Approved' : 'Draft',
+        version: 1,
         totalCostPerUnit: null,
+        createdAt: style.createdAt,
         bomLines: lines,
       };
     }
 
     throw new NotFoundException(`BOM với ID ${id} không tồn tại.`);
-  }
-
-  private async fetchPoBoms(): Promise<BomListItemDto[]> {
-    const rows = await this.dataSource.query(`
-      SELECT
-        bom.id,
-        bom.bom_code,
-        bom.po_code_snapshot,
-        bom.product_code_snapshot,
-        bom.product_name_snapshot,
-        bom.color_name_snapshot,
-        bom.order_quantity_snapshot,
-        bom.deadline,
-        bom.status,
-        bom.row_version,
-        bom.created_at,
-        popc.id as color_id,
-        po.id as po_id,
-        COALESCE(SUM(boml.consumption_per_unit * boml.unit_cost), 0) as total_cost
-      FROM bills_of_materials bom
-      LEFT JOIN purchase_order_product_colors popc ON popc.id = bom.product_color_id
-      LEFT JOIN purchase_order_products pop ON pop.id = popc.product_id
-      LEFT JOIN purchase_orders po ON po.id = pop.purchase_order_id
-      LEFT JOIN bill_of_material_lines boml ON boml.bill_of_material_id = bom.id
-      GROUP BY
-        bom.id,
-        bom.bom_code,
-        bom.po_code_snapshot,
-        bom.product_code_snapshot,
-        bom.product_name_snapshot,
-        bom.color_name_snapshot,
-        bom.order_quantity_snapshot,
-        bom.deadline,
-        bom.status,
-        bom.row_version,
-        bom.created_at,
-        popc.id,
-        po.id
-    `);
-
-    return rows.map((r: any) => ({
-      id: r.id,
-      objectType: 'po',
-      objectCode: r.po_code_snapshot || r.bom_code,
-      poId: r.po_id || '',
-      colorId: r.color_id || null,
-      colorName: r.color_name_snapshot || null,
-      styleCode: r.product_code_snapshot || '—',
-      productName: r.product_name_snapshot || '—',
-      poQuantity: Number(r.order_quantity_snapshot) || 0,
-      version: Number(r.row_version) || 1,
-      status: mapBomStatusToLabel(r.status),
-      totalCostPerUnit: Math.round(Number(r.total_cost) || 0),
-      deadline: r.deadline ? new Date(r.deadline).toISOString() : null,
-      createdAt: r.created_at
-        ? new Date(r.created_at).toISOString()
-        : new Date().toISOString(),
-      imageUrl: null,
-    }));
-  }
-
-  private async fetchFitBoms(): Promise<BomListItemDto[]> {
-    const rows = await this.dataSource.query(`
-      SELECT
-        dbf.id,
-        dbf.bom_code,
-        dbf.created_at,
-        s.id as style_id,
-        s.style_code,
-        s.style_name,
-        s.status as style_status,
-        dbv.version_no,
-        dbv.id as version_id
-      FROM draft_bom_families dbf
-      JOIN styles s ON s.id = dbf.style_id
-      LEFT JOIN draft_bom_versions dbv ON dbv.family_id = dbf.id AND dbv.is_current = true
-      GROUP BY
-        dbf.id,
-        dbf.bom_code,
-        dbf.created_at,
-        s.id,
-        s.style_code,
-        s.style_name,
-        s.status,
-        dbv.version_no,
-        dbv.id
-    `);
-
-    return rows.map((r: any) => ({
-      id: r.id,
-      objectType: 'fit',
-      objectCode: r.bom_code,
-      poId: '',
-      colorId: null,
-      colorName: 'Tiêu chuẩn',
-      styleCode: r.style_code || '—',
-      productName: r.style_name || '—',
-      poQuantity: undefined,
-      version: Number(r.version_no) || 1,
-      status: r.style_status === 'active' ? 'Approved' : 'Draft',
-      totalCostPerUnit: null, // Fit BOM has no cost according to business logic
-      deadline: null,
-      createdAt: r.created_at
-        ? new Date(r.created_at).toISOString()
-        : new Date().toISOString(),
-      imageUrl: null,
-    }));
   }
 }
