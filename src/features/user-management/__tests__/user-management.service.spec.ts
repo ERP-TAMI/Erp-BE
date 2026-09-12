@@ -78,8 +78,13 @@ describe('UserManagementService', () => {
   });
 
   it.each([
-    [UserAccountStatus.ACTIVE, "user.status = 'active'", 'lockoutUntil'],
+    [UserAccountStatus.ACTIVE, "user.status = 'active'", 'mustChangePassword'],
     [UserAccountStatus.LOCKED, "user.status = 'active'", 'lockoutUntil'],
+    [
+      UserAccountStatus.PENDING_SETUP,
+      "user.status = 'active'",
+      'mustChangePassword',
+    ],
     [UserAccountStatus.INACTIVE, "user.status = 'inactive'", undefined],
   ])(
     'filters the derived %s account status',

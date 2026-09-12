@@ -61,7 +61,7 @@ describe('UserManagementService mutations', () => {
     } as unknown as jest.Mocked<PasswordSetupService>;
   });
 
-  it('creates an account with an unknown random password and exactly one role', async () => {
+  it('creates an account without waiting for SMTP delivery', async () => {
     const created = user({ email: 'new@example.com', passwordHash: '' });
     const userRepository = {
       createQueryBuilder: jest.fn().mockReturnValue(emailQueryBuilder()),
@@ -100,16 +100,13 @@ describe('UserManagementService mutations', () => {
     expect(created.passwordHash).not.toContain('new@example.com');
     expect(created.mustChangePassword).toBe(true);
     expect(userRoleRepository.save).toHaveBeenCalledTimes(1);
-    expect(passwordSetup.issue).toHaveBeenCalledWith(
-      manager,
-      created.id,
-      'actor-id',
-    );
-    expect(passwordSetup.deliver).toHaveBeenCalled();
-    expect(result.invitationStatus).toBe('sent');
+    expect(passwordSetup.issue).not.toHaveBeenCalled();
+    expect(passwordSetup.deliver).not.toHaveBeenCalled();
+    expect(result.invitationStatus).toBe('pending');
+    expect(result.user.accountStatus).toBe(UserAccountStatus.PENDING_SETUP);
   });
 
-  it('increments auth version, revokes sessions and reissues setup on pending email change', async () => {
+  it('increments auth version, revokes sessions and queues setup on pending email change', async () => {
     const target = user();
     const roleQueryBuilder = {
       innerJoin: jest.fn().mockReturnThis(),
@@ -168,12 +165,9 @@ describe('UserManagementService mutations', () => {
       expect.objectContaining({ userId: target.id }),
       expect.objectContaining({ revokeReason: 'account_updated' }),
     );
-    expect(passwordSetup.issue).toHaveBeenCalledWith(
-      manager,
-      target.id,
-      'sa-id',
-    );
-    expect(passwordSetup.deliver).toHaveBeenCalled();
-    expect(result.invitationStatus).toBe('sent');
+    expect(passwordSetup.issue).not.toHaveBeenCalled();
+    expect(passwordSetup.deliver).not.toHaveBeenCalled();
+    expect(result.invitationStatus).toBe('pending');
+    expect(result.user.accountStatus).toBe(UserAccountStatus.LOCKED);
   });
 });

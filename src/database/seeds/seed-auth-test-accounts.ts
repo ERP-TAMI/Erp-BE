@@ -13,12 +13,12 @@ export const SEED_ACCOUNTS: SeedAccount[] = [
   { email: 'sa@tami.test', fullName: 'Quản trị hệ thống', roleCode: 'SA' },
   {
     email: 'tpkh@tami.test',
-    fullName: 'Trưởng phòng Kinh doanh',
+    fullName: 'Trưởng phòng Kế hoạch',
     roleCode: 'TPKH',
   },
   {
     email: 'nvkh@tami.test',
-    fullName: 'Nhân viên Kinh doanh',
+    fullName: 'Nhân viên Kế hoạch',
     roleCode: 'NVKH',
   },
   {

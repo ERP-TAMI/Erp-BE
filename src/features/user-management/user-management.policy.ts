@@ -1,7 +1,10 @@
 import { ForbiddenException } from '@nestjs/common';
 import { ErrorCode } from '../../common/enums/error-code.enum';
 import { UserRoleCode } from './dto/query-users.dto';
-import { UserAccountStatus } from './dto/user-account-status.enum';
+import {
+  EditableUserAccountStatus,
+  UserAccountStatus,
+} from './dto/user-account-status.enum';
 
 const IT_MANAGED_ROLES = new Set<UserRoleCode>([
   UserRoleCode.TPKH,
@@ -29,7 +32,7 @@ export function assertCanUpdateUser(input: {
   targetId: string;
   currentRole: UserRoleCode;
   nextRole: UserRoleCode;
-  nextStatus: UserAccountStatus;
+  nextStatus: EditableUserAccountStatus;
 }): void {
   const isSelf = input.actorId === input.targetId;
   if (isSelf) {

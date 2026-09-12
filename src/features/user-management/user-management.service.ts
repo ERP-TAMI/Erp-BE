@@ -9,7 +9,10 @@ import { randomBytes } from 'crypto';
 import { DataSource, IsNull, QueryFailedError, Repository } from 'typeorm';
 import { User } from '../auth/entities/User.entity';
 import { QueryUsersDto, UserRoleCode } from './dto/query-users.dto';
-import { UserAccountStatus } from './dto/user-account-status.enum';
+import {
+  EditableUserAccountStatus,
+  UserAccountStatus,
+} from './dto/user-account-status.enum';
 import {
   UserListItemResponseDto,
   UserListResponseDto,
@@ -103,19 +106,11 @@ export class UserManagementService {
             assignedBy: actor.id,
           }),
         );
-        const invitation = await this.passwordSetup.issue(
-          manager,
-          created.id,
-          actor.id,
-        );
-        return { user: created, roleName: role!.name, invitation };
+        return { user: created, roleName: role!.name };
       });
-      const invitationStatus = await this.passwordSetup.deliver(
-        result.invitation,
-      );
       return {
         user: this.toUserItem(result.user, dto.roleCode, result.roleName),
-        invitationStatus,
+        invitationStatus: 'pending',
       };
     } catch (error) {
       this.rethrowDuplicateEmail(error);
@@ -150,7 +145,7 @@ export class UserManagementService {
           where: { code: dto.roleCode },
         });
         if (!role) this.throwRoleNotFound();
-        const currentStatus = this.deriveStatus(user);
+        const currentStatus = this.deriveEditableStatus(user);
         const securityChanged =
           currentRole.code !== dto.roleCode ||
           currentStatus !== dto.accountStatus;
@@ -199,19 +194,15 @@ export class UserManagementService {
             );
         }
         const emailChanged = previousEmail !== dto.email;
-        const invitation =
-          emailChanged && user.mustChangePassword
-            ? await this.passwordSetup.issue(manager, user.id, actor.id)
-            : null;
         return {
           item: this.toUserItem(user, dto.roleCode, role!.name),
-          invitation,
+          shouldSendInvitation: emailChanged && user.mustChangePassword,
         };
       });
-      const invitationStatus = result.invitation
-        ? await this.passwordSetup.deliver(result.invitation)
-        : null;
-      return { user: result.item, invitationStatus };
+      return {
+        user: result.item,
+        invitationStatus: result.shouldSendInvitation ? 'pending' : null,
+      };
     } catch (error) {
       this.rethrowDuplicateEmail(error);
       throw error;
@@ -235,7 +226,7 @@ export class UserManagementService {
         targetId: id,
         currentRole: currentRole.code,
         nextRole: currentRole.code,
-        nextStatus: this.deriveStatus(user),
+        nextStatus: this.deriveEditableStatus(user),
       });
       return this.passwordSetup.issue(manager, id, actor.id);
     });
@@ -260,6 +251,7 @@ export class UserManagementService {
           WHEN user.status = 'inactive' THEN 'inactive'
           WHEN user.manuallyLockedAt IS NOT NULL THEN 'locked'
           WHEN user.lockoutUntil > CURRENT_TIMESTAMP THEN 'locked'
+          WHEN user.mustChangePassword = true THEN 'pending_setup'
           ELSE 'active'
         END AS "accountStatus"`,
       ]);
@@ -313,7 +305,7 @@ export class UserManagementService {
   ): void {
     if (status === UserAccountStatus.ACTIVE) {
       queryBuilder.andWhere(
-        "user.status = 'active' AND user.manuallyLockedAt IS NULL AND (user.lockoutUntil IS NULL OR user.lockoutUntil <= CURRENT_TIMESTAMP)",
+        "user.status = 'active' AND user.mustChangePassword = false AND user.manuallyLockedAt IS NULL AND (user.lockoutUntil IS NULL OR user.lockoutUntil <= CURRENT_TIMESTAMP)",
       );
     } else if (status === UserAccountStatus.LOCKED) {
       queryBuilder.andWhere(
@@ -321,6 +313,10 @@ export class UserManagementService {
       );
     } else if (status === UserAccountStatus.INACTIVE) {
       queryBuilder.andWhere("user.status = 'inactive'");
+    } else if (status === UserAccountStatus.PENDING_SETUP) {
+      queryBuilder.andWhere(
+        "user.status = 'active' AND user.mustChangePassword = true AND user.manuallyLockedAt IS NULL AND (user.lockoutUntil IS NULL OR user.lockoutUntil <= CURRENT_TIMESTAMP)",
+      );
     }
   }
 
@@ -343,7 +339,7 @@ export class UserManagementService {
     return value.replace(/[\\%_]/g, (character) => `\\${character}`);
   }
 
-  private accountState(status: UserAccountStatus, actorId: string) {
+  private accountState(status: EditableUserAccountStatus, actorId: string) {
     if (status === UserAccountStatus.INACTIVE) {
       return {
         status: RecordStatus.INACTIVE,
@@ -366,6 +362,13 @@ export class UserManagementService {
   }
 
   private deriveStatus(user: User): UserAccountStatus {
+    const editableStatus = this.deriveEditableStatus(user);
+    if (editableStatus !== UserAccountStatus.ACTIVE) return editableStatus;
+    if (user.mustChangePassword) return UserAccountStatus.PENDING_SETUP;
+    return UserAccountStatus.ACTIVE;
+  }
+
+  private deriveEditableStatus(user: User): EditableUserAccountStatus {
     if (user.status === RecordStatus.INACTIVE)
       return UserAccountStatus.INACTIVE;
     if (

@@ -40,7 +40,7 @@ describe('user management policy', () => {
     ).not.toThrow();
   });
 
-  it.each([UserAccountStatus.LOCKED, UserAccountStatus.INACTIVE])(
+  it.each([UserAccountStatus.LOCKED, UserAccountStatus.INACTIVE] as const)(
     'blocks self status change to %s',
     (nextStatus) => {
       expect(() =>

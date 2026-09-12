@@ -1,5 +1,9 @@
 import { EntityManager } from 'typeorm';
-import { seedAuthTestAccount, SeedAccount } from './seed-auth-test-accounts';
+import {
+  SEED_ACCOUNTS,
+  seedAuthTestAccount,
+  SeedAccount,
+} from './seed-auth-test-accounts';
 
 function createManagerMock(
   queryImpl: (sql: string, params?: unknown[]) => unknown,
@@ -16,6 +20,21 @@ const account: SeedAccount = {
 };
 
 describe('seedAuthTestAccount', () => {
+  it('uses the canonical Kế hoạch names for planning test accounts', () => {
+    expect(SEED_ACCOUNTS).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          roleCode: 'TPKH',
+          fullName: 'Trưởng phòng Kế hoạch',
+        }),
+        expect.objectContaining({
+          roleCode: 'NVKH',
+          fullName: 'Nhân viên Kế hoạch',
+        }),
+      ]),
+    );
+  });
+
   it('throws when the role code does not exist', async () => {
     const manager = createManagerMock((sql: string) => {
       if (sql.includes('FROM roles')) return [];

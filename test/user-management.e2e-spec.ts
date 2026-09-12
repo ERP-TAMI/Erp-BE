@@ -117,7 +117,7 @@ describe('User management API (e2e)', () => {
     };
     userManagementService.create.mockResolvedValue({
       user: response.data[0],
-      invitationStatus: 'sent',
+      invitationStatus: 'pending',
     });
 
     await request(app.getHttpServer())
@@ -137,6 +137,11 @@ describe('User management API (e2e)', () => {
     await request(app.getHttpServer())
       .post('/system/users')
       .send({ ...input, password: 'must-not-be-accepted' })
+      .expect(400);
+
+    await request(app.getHttpServer())
+      .post('/system/users')
+      .send({ ...input, accountStatus: 'pending_setup' })
       .expect(400);
   });
 

@@ -3,6 +3,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsEmail,
   IsEnum,
+  IsIn,
   IsOptional,
   IsString,
   Matches,
@@ -10,7 +11,10 @@ import {
   MinLength,
 } from 'class-validator';
 import { UserRoleCode } from './query-users.dto';
-import { UserAccountStatus } from './user-account-status.enum';
+import {
+  EDITABLE_USER_ACCOUNT_STATUSES,
+  EditableUserAccountStatus,
+} from './user-account-status.enum';
 import { UserListItemResponseDto } from './user-list-response.dto';
 
 export class MutateUserDto {
@@ -46,17 +50,17 @@ export class MutateUserDto {
   @IsEnum(UserRoleCode)
   roleCode: UserRoleCode;
 
-  @ApiProperty({ enum: UserAccountStatus })
-  @IsEnum(UserAccountStatus)
-  accountStatus: UserAccountStatus;
+  @ApiProperty({ enum: EDITABLE_USER_ACCOUNT_STATUSES })
+  @IsIn(EDITABLE_USER_ACCOUNT_STATUSES)
+  accountStatus: EditableUserAccountStatus;
 }
 
 export class CreateUserResponseDto {
   @ApiProperty({ type: UserListItemResponseDto })
   user: UserListItemResponseDto;
 
-  @ApiProperty({ enum: ['sent', 'failed'] })
-  invitationStatus: 'sent' | 'failed';
+  @ApiProperty({ enum: ['pending'] })
+  invitationStatus: 'pending';
 }
 
 export class InvitationResponseDto {
@@ -68,6 +72,6 @@ export class UpdateUserResponseDto {
   @ApiProperty({ type: UserListItemResponseDto })
   user: UserListItemResponseDto;
 
-  @ApiPropertyOptional({ enum: ['sent', 'failed'], nullable: true })
-  invitationStatus: 'sent' | 'failed' | null;
+  @ApiPropertyOptional({ enum: ['pending'], nullable: true })
+  invitationStatus: 'pending' | null;
 }
