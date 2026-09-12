@@ -31,6 +31,7 @@
     "seed:master-data": "ts-node -r tsconfig-paths/register src/database/seeds/seed-master-data.ts",
     "seed:master-data:reset": "ts-node -r tsconfig-paths/register src/database/seeds/seed-master-data.ts --reset",
     "seed:po-demo": "ts-node -r tsconfig-paths/register src/database/seeds/seed-po-demo.ts",
+    "seed:boms": "ts-node -r tsconfig-paths/register src/database/seeds/seed-boms.ts",
     "verify:start-dev": "node scripts/verify-start-dev.js"
   },
   "dependencies": {

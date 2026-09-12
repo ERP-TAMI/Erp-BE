@@ -36,9 +36,19 @@ describe('BomsController', () => {
     },
   ];
 
+  const mockPaginatedResponse = {
+    data: mockBomList,
+    meta: {
+      total: 2,
+      page: 1,
+      limit: 20,
+      totalPages: 1,
+    },
+  };
+
   beforeEach(async () => {
     serviceMock = {
-      findAll: jest.fn().mockResolvedValue(mockBomList),
+      findAll: jest.fn().mockResolvedValue(mockPaginatedResponse),
       findOne: jest.fn().mockResolvedValue(mockBomList[0]),
     };
 
@@ -59,30 +69,22 @@ describe('BomsController', () => {
     expect(controller).toBeDefined();
   });
 
-  it('findAll should call service.findAll with query, user and headerRole', async () => {
+  it('findAll should call service.findAll with query and user', async () => {
     const query = { objectType: 'all' as const, search: 'Polo' };
     const req = { user: { roleCode: 'TPKH' }, headers: {} };
 
     const result = await controller.findAll(query, req);
 
-    expect(result).toEqual(mockBomList);
-    expect(serviceMock.findAll).toHaveBeenCalledWith(
-      query,
-      req.user,
-      undefined,
-    );
+    expect(result).toEqual(mockPaginatedResponse);
+    expect(serviceMock.findAll).toHaveBeenCalledWith(query, req.user);
   });
 
-  it('findOne should call service.findOne with id and auth context', async () => {
+  it('findOne should call service.findOne with id and user', async () => {
     const req = { user: { roleCode: 'SA' }, headers: {} };
 
     const result = await controller.findOne('po-bom-1', req);
 
     expect(result).toEqual(mockBomList[0]);
-    expect(serviceMock.findOne).toHaveBeenCalledWith(
-      'po-bom-1',
-      req.user,
-      undefined,
-    );
+    expect(serviceMock.findOne).toHaveBeenCalledWith('po-bom-1', req.user);
   });
 });

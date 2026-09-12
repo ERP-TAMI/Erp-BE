@@ -34,9 +34,19 @@ export async function seedDemoBoms(manager: EntityManager): Promise<void> {
     LIMIT 10
   `);
 
-  const materials = await manager.query(
-    `SELECT id, material_name FROM materials LIMIT 5`,
-  );
+  const materials = await manager.query(`
+    SELECT
+      m.id,
+      m.material_name,
+      mg.id as material_group_id,
+      mg.name as material_group_name,
+      u.id as unit_id,
+      u.name as unit_name
+    FROM materials m
+    LEFT JOIN material_groups mg ON mg.id = m.material_group_id
+    LEFT JOIN units u ON u.id = m.default_unit_id
+    LIMIT 5
+  `);
 
   const statuses = [
     'closed',
@@ -81,10 +91,19 @@ export async function seedDemoBoms(manager: EntityManager): Promise<void> {
         const consumption = 1.25 + idx * 0.4;
         await manager.query(
           `INSERT INTO bill_of_material_lines
-             (bill_of_material_id, material_id, material_name_snapshot, unit_snapshot, consumption_per_unit, unit_cost, order_index, created_at, updated_at)
-           VALUES ($1, $2, $3, 'Mét', $4, $5, $6, now(), now())
+             (bill_of_material_id, material_id, material_name_snapshot, material_group_snapshot, unit_snapshot, consumption_per_unit, unit_cost, order_index, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now(), now())
            ON CONFLICT DO NOTHING`,
-          [bomId, mat.id, mat.material_name, consumption, unitCost, idx],
+          [
+            bomId,
+            mat.id,
+            mat.material_name,
+            mat.material_group_name || null,
+            mat.unit_name || 'Mét',
+            consumption,
+            unitCost,
+            idx,
+          ],
         );
       }
     }
@@ -124,10 +143,18 @@ export async function seedDemoBoms(manager: EntityManager): Promise<void> {
           const mat = materials[mIdx];
           await manager.query(
             `INSERT INTO draft_bom_lines
-               (version_id, material_id, material_name_snapshot, consumption, order_index)
-             VALUES ($1, $2, $3, $4, $5)
+               (version_id, material_id, material_name_snapshot, material_group_id, unit_id, consumption, order_index)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
              ON CONFLICT DO NOTHING`,
-            [versionId, mat.id, mat.material_name, 1.2, mIdx],
+            [
+              versionId,
+              mat.id,
+              mat.material_name,
+              mat.material_group_id || null,
+              mat.unit_id || null,
+              1.2,
+              mIdx,
+            ],
           );
         }
       }

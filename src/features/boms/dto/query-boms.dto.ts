@@ -1,4 +1,5 @@
-import { IsOptional, IsString, IsIn } from 'class-validator';
+import { IsOptional, IsString, IsIn, IsInt, Min } from 'class-validator';
+import { Type } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 
 export class QueryBomsDto {
@@ -34,4 +35,24 @@ export class QueryBomsDto {
   @IsOptional()
   @IsString()
   colorName?: string;
+
+  @ApiPropertyOptional({
+    description: 'Trang hiện tại (bắt đầu từ 1)',
+    default: 1,
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page?: number = 1;
+
+  @ApiPropertyOptional({
+    description: 'Số lượng mục mỗi trang',
+    default: 10,
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  limit?: number = 10;
 }

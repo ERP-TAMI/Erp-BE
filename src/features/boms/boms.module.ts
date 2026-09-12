@@ -10,7 +10,6 @@ import { Style } from '../styles/entities/Style.entity';
 import { PurchaseOrder } from '../purchase-orders/entities/PurchaseOrder.entity';
 import { PurchaseOrderProduct } from '../purchase-orders/entities/PurchaseOrderProduct.entity';
 import { PurchaseOrderProductColor } from '../purchase-orders/entities/PurchaseOrderProductColor.entity';
-import { Material } from '../master-data/entities/Material.entity';
 
 @Module({
   imports: [
@@ -23,7 +22,6 @@ import { Material } from '../master-data/entities/Material.entity';
       PurchaseOrder,
       PurchaseOrderProduct,
       PurchaseOrderProductColor,
-      Material,
     ]),
   ],
   controllers: [BomsController],

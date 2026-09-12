@@ -49,3 +49,25 @@ export class BomListItemDto {
   @ApiPropertyOptional({ example: null, nullable: true })
   imageUrl?: string | null;
 }
+
+export class PaginationMetaDto {
+  @ApiProperty({ example: 15 })
+  total: number;
+
+  @ApiProperty({ example: 1 })
+  page: number;
+
+  @ApiProperty({ example: 10 })
+  limit: number;
+
+  @ApiProperty({ example: 2 })
+  totalPages: number;
+}
+
+export class PaginatedBomResponseDto {
+  @ApiProperty({ type: [BomListItemDto] })
+  data: BomListItemDto[];
+
+  @ApiProperty({ type: PaginationMetaDto })
+  meta: PaginationMetaDto;
+}

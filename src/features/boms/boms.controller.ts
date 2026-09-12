@@ -14,11 +14,13 @@ import {
   ApiResponse,
   ApiBearerAuth,
 } from '@nestjs/swagger';
+import { Auth } from '../../common/decorators/auth.decorator';
 import { BomsService } from './boms.service';
-import { QueryBomsDto, BomListItemDto } from './dto';
+import { QueryBomsDto, PaginatedBomResponseDto } from './dto';
 
 @ApiTags('boms')
 @ApiBearerAuth()
+@Auth()
 @Controller(['boms', 'api/boms', 'api/v1/boms'])
 export class BomsController {
   constructor(private readonly bomsService: BomsService) {}
@@ -28,21 +30,20 @@ export class BomsController {
   @ApiOperation({
     summary: 'Lấy danh sách Nguyên phụ liệu (BOM) gồm Mẫu Fit và Sản phẩm PO',
     description:
-      'Hỗ trợ lọc theo Đối tượng (fit/po), Trạng thái, Mã PO, Tìm kiếm Style/Sản phẩm và Màu sắc. ' +
+      'Yêu cầu xác thực JWT. Hỗ trợ phân trang và lọc theo Đối tượng (fit/po), Trạng thái, Mã PO, Tìm kiếm Style/Sản phẩm và Màu sắc. ' +
       'Giá thành chỉ hiển thị cho TPKH, Kế toán, SA/Giám đốc; NVKH và R&D nhận giá trị null.',
   })
   @ApiResponse({
     status: 200,
-    description: 'Danh sách BOM thành công',
-    type: [BomListItemDto],
+    description: 'Danh sách BOM phân trang thành công',
+    type: PaginatedBomResponseDto,
   })
   async findAll(
     @Query() query: QueryBomsDto,
     @Req() req?: any,
-  ): Promise<BomListItemDto[]> {
+  ): Promise<PaginatedBomResponseDto> {
     const user = req?.user;
-    const headerRole = (req?.headers?.['x-user-role'] as string) || undefined;
-    return this.bomsService.findAll(query, user, headerRole);
+    return this.bomsService.findAll(query, user);
   }
 
   @Get(':id')
@@ -55,7 +56,6 @@ export class BomsController {
     @Req() req?: any,
   ): Promise<any> {
     const user = req?.user;
-    const headerRole = (req?.headers?.['x-user-role'] as string) || undefined;
-    return this.bomsService.findOne(id, user, headerRole);
+    return this.bomsService.findOne(id, user);
   }
 }

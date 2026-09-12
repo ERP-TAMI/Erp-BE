@@ -11,7 +11,6 @@ import { Style } from '../styles/entities/Style.entity';
 import { PurchaseOrder } from '../purchase-orders/entities/PurchaseOrder.entity';
 import { PurchaseOrderProduct } from '../purchase-orders/entities/PurchaseOrderProduct.entity';
 import { PurchaseOrderProductColor } from '../purchase-orders/entities/PurchaseOrderProductColor.entity';
-import { Material } from '../master-data/entities/Material.entity';
 
 describe('BomsService', () => {
   let service: BomsService;
@@ -96,7 +95,6 @@ describe('BomsService', () => {
           provide: getRepositoryToken(PurchaseOrderProductColor),
           useValue: {},
         },
-        { provide: getRepositoryToken(Material), useValue: {} },
         { provide: DataSource, useValue: dataSourceMock },
       ],
     }).compile();
@@ -123,71 +121,93 @@ describe('BomsService', () => {
   });
 
   describe('findAll', () => {
-    it('returns both PO and Fit BOMs with costs for TPKH', async () => {
-      const items = await service.findAll(undefined, { roleCode: 'TPKH' });
-      expect(items).toHaveLength(2);
+    it('returns both PO and Fit BOMs with costs for PO only for TPKH', async () => {
+      const res = await service.findAll(undefined, { roleCode: 'TPKH' });
+      expect(res.data).toHaveLength(2);
+      expect(res.meta.total).toBe(2);
 
-      const poItem = items.find((i) => i.objectType === 'po');
-      const fitItem = items.find((i) => i.objectType === 'fit');
+      const poItem = res.data.find((i) => i.objectType === 'po');
+      const fitItem = res.data.find((i) => i.objectType === 'fit');
 
       expect(poItem).toBeDefined();
       expect(poItem?.objectCode).toBe('PO-2026-001');
       expect(poItem?.totalCostPerUnit).toBe(145000);
 
+      // Fit BOM has NO production cost according to business logic (always null)
       expect(fitItem).toBeDefined();
       expect(fitItem?.objectCode).toBe('FIT-2026-001');
-      expect(fitItem?.totalCostPerUnit).toBe(120000);
+      expect(fitItem?.totalCostPerUnit).toBeNull();
     });
 
     it('masks totalCostPerUnit to null for NVKH and RD', async () => {
-      const nvkhItems = await service.findAll(undefined, { roleCode: 'NVKH' });
-      expect(nvkhItems[0].totalCostPerUnit).toBeNull();
-      expect(nvkhItems[1].totalCostPerUnit).toBeNull();
+      const nvkhRes = await service.findAll(undefined, { roleCode: 'NVKH' });
+      expect(nvkhRes.data[0].totalCostPerUnit).toBeNull();
+      expect(nvkhRes.data[1].totalCostPerUnit).toBeNull();
 
-      const rdItems = await service.findAll(undefined, { roleCode: 'RD' });
-      expect(rdItems[0].totalCostPerUnit).toBeNull();
-      expect(rdItems[1].totalCostPerUnit).toBeNull();
+      const rdRes = await service.findAll(undefined, { roleCode: 'RD' });
+      expect(rdRes.data[0].totalCostPerUnit).toBeNull();
+      expect(rdRes.data[1].totalCostPerUnit).toBeNull();
     });
 
     it('filters by objectType: po', async () => {
-      const items = await service.findAll(
+      const res = await service.findAll(
         { objectType: 'po' },
         { roleCode: 'SA' },
       );
-      expect(items.every((i) => i.objectType === 'po')).toBe(true);
-      expect(items).toHaveLength(1);
+      expect(res.data.every((i) => i.objectType === 'po')).toBe(true);
+      expect(res.data).toHaveLength(1);
+      expect(res.meta.total).toBe(1);
     });
 
     it('filters by objectType: fit', async () => {
-      const items = await service.findAll(
+      const res = await service.findAll(
         { objectType: 'fit' },
         { roleCode: 'SA' },
       );
-      expect(items.every((i) => i.objectType === 'fit')).toBe(true);
-      expect(items).toHaveLength(1);
+      expect(res.data.every((i) => i.objectType === 'fit')).toBe(true);
+      expect(res.data).toHaveLength(1);
+      expect(res.meta.total).toBe(1);
     });
 
     it('filters by search keyword', async () => {
-      const items = await service.findAll(
-        { search: 'Polo' },
-        { roleCode: 'SA' },
-      );
-      expect(items).toHaveLength(2);
+      const res = await service.findAll({ search: 'Polo' }, { roleCode: 'SA' });
+      expect(res.data).toHaveLength(2);
 
       const nonExistent = await service.findAll(
         { search: 'NonExistent' },
         { roleCode: 'SA' },
       );
-      expect(nonExistent).toHaveLength(0);
+      expect(nonExistent.data).toHaveLength(0);
+      expect(nonExistent.meta.total).toBe(0);
     });
 
     it('filters by color', async () => {
-      const navyItems = await service.findAll(
+      const navyRes = await service.findAll(
         { colorName: 'Navy' },
         { roleCode: 'SA' },
       );
-      expect(navyItems).toHaveLength(1);
-      expect(navyItems[0].colorName).toBe('Navy');
+      expect(navyRes.data).toHaveLength(1);
+      expect(navyRes.data[0].colorName).toBe('Navy');
+    });
+
+    it('paginates correctly with page and limit', async () => {
+      const resPage1 = await service.findAll(
+        { page: 1, limit: 1 },
+        { roleCode: 'SA' },
+      );
+      expect(resPage1.data).toHaveLength(1);
+      expect(resPage1.meta.total).toBe(2);
+      expect(resPage1.meta.page).toBe(1);
+      expect(resPage1.meta.limit).toBe(1);
+      expect(resPage1.meta.totalPages).toBe(2);
+
+      const resPage2 = await service.findAll(
+        { page: 2, limit: 1 },
+        { roleCode: 'SA' },
+      );
+      expect(resPage2.data).toHaveLength(1);
+      expect(resPage2.meta.page).toBe(2);
+      expect(resPage2.data[0].id).not.toBe(resPage1.data[0].id);
     });
   });
 });
