@@ -55,4 +55,12 @@ export class QueryBomsDto {
   @IsInt()
   @Min(1)
   limit?: number = 10;
+
+  @ApiPropertyOptional({
+    description:
+      'Ngày hiệu lực cần truy vấn (YYYY-MM-DD), mặc định là ngày hiện tại',
+  })
+  @IsOptional()
+  @IsString()
+  targetDate?: string;
 }

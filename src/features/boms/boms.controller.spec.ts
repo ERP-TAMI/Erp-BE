@@ -58,6 +58,27 @@ describe('BomsController', () => {
       findAll: jest.fn().mockResolvedValue(mockPaginatedResponse),
       findOne: jest.fn().mockResolvedValue(mockBomList[0]),
       getStats: jest.fn().mockResolvedValue(mockStats),
+      listRevisions: jest
+        .fn()
+        .mockResolvedValue([{ id: 'rev-1', revisionNo: 1 }]),
+      createRevision: jest
+        .fn()
+        .mockResolvedValue({ id: 'rev-2', revisionNo: 2, status: 'draft' }),
+      updateDraftRevision: jest
+        .fn()
+        .mockResolvedValue({ id: 'rev-2', revisionNo: 2 }),
+      submitRevisionForReview: jest
+        .fn()
+        .mockResolvedValue({ id: 'rev-2', status: 'in_review' }),
+      approveRevision: jest
+        .fn()
+        .mockResolvedValue({ id: 'rev-2', status: 'approved' }),
+      rejectRevision: jest
+        .fn()
+        .mockResolvedValue({ id: 'rev-2', status: 'draft' }),
+      cancelRevision: jest
+        .fn()
+        .mockResolvedValue({ id: 'rev-2', status: 'cancelled' }),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -97,9 +118,116 @@ describe('BomsController', () => {
   it('findOne should call service.findOne with id and user', async () => {
     const req = { user: { roleCode: 'SA' }, headers: {} };
 
-    const result = await controller.findOne('po-bom-1', req);
+    const result = await controller.findOne('po-bom-1', undefined, req);
 
     expect(result).toEqual(mockBomList[0]);
-    expect(serviceMock.findOne).toHaveBeenCalledWith('po-bom-1', req.user);
+    expect(serviceMock.findOne).toHaveBeenCalledWith(
+      'po-bom-1',
+      req.user,
+      undefined,
+    );
+  });
+
+  it('listRevisions calls service.listRevisions', async () => {
+    const req = { user: { roleCode: 'SA' } };
+    const res = await controller.listRevisions('po-bom-1', req);
+    expect(res).toEqual([{ id: 'rev-1', revisionNo: 1 }]);
+    expect(serviceMock.listRevisions).toHaveBeenCalledWith(
+      'po-bom-1',
+      req.user,
+    );
+  });
+
+  it('createRevision calls service.createRevision', async () => {
+    const req = { user: { roleCode: 'TPKH' } };
+    const dto = { changeReason: 'New draft' };
+    const res = await controller.createRevision('po-bom-1', dto, req);
+    expect(res.revisionNo).toBe(2);
+    expect(serviceMock.createRevision).toHaveBeenCalledWith(
+      'po-bom-1',
+      dto,
+      req.user,
+    );
+  });
+
+  it('cloneRevision calls service.createRevision with cloneFromRevisionId', async () => {
+    const req = { user: { roleCode: 'TPKH' } };
+    const res = await controller.cloneRevision('po-bom-1', 'rev-1', {}, req);
+    expect(res.revisionNo).toBe(2);
+    expect(serviceMock.createRevision).toHaveBeenCalledWith(
+      'po-bom-1',
+      { cloneFromRevisionId: 'rev-1' },
+      req.user,
+    );
+  });
+
+  it('updateDraftRevision calls service.updateDraftRevision', async () => {
+    const req = { user: { roleCode: 'TPKH' } };
+    const dto = { lines: [{ materialNameSnapshot: 'Vải', unitSnapshot: 'M' }] };
+    const res = await controller.updateDraftRevision(
+      'po-bom-1',
+      'rev-2',
+      dto,
+      req,
+    );
+    expect(res.id).toBe('rev-2');
+    expect(serviceMock.updateDraftRevision).toHaveBeenCalledWith(
+      'po-bom-1',
+      'rev-2',
+      dto,
+      req.user,
+    );
+  });
+
+  it('submitRevision calls service.submitRevisionForReview', async () => {
+    const req = { user: { roleCode: 'TPKH' } };
+    const dto = { reason: 'Ready' };
+    const res = await controller.submitRevision('po-bom-1', 'rev-2', dto, req);
+    expect(res.status).toBe('in_review');
+    expect(serviceMock.submitRevisionForReview).toHaveBeenCalledWith(
+      'po-bom-1',
+      'rev-2',
+      dto,
+      req.user,
+    );
+  });
+
+  it('approveRevision calls service.approveRevision', async () => {
+    const req = { user: { roleCode: 'SA' } };
+    const dto = { effectiveFrom: '2026-06-01' };
+    const res = await controller.approveRevision('po-bom-1', 'rev-2', dto, req);
+    expect(res.status).toBe('approved');
+    expect(serviceMock.approveRevision).toHaveBeenCalledWith(
+      'po-bom-1',
+      'rev-2',
+      dto,
+      req.user,
+    );
+  });
+
+  it('rejectRevision calls service.rejectRevision', async () => {
+    const req = { user: { roleCode: 'SA' } };
+    const dto = { reason: 'Fix cost' };
+    const res = await controller.rejectRevision('po-bom-1', 'rev-2', dto, req);
+    expect(res.status).toBe('draft');
+    expect(serviceMock.rejectRevision).toHaveBeenCalledWith(
+      'po-bom-1',
+      'rev-2',
+      dto,
+      req.user,
+    );
+  });
+
+  it('cancelRevision calls service.cancelRevision', async () => {
+    const req = { user: { roleCode: 'TPKH' } };
+    const dto = { reason: 'Cancelled' };
+    const res = await controller.cancelRevision('po-bom-1', 'rev-2', dto, req);
+    expect(res.status).toBe('cancelled');
+    expect(serviceMock.cancelRevision).toHaveBeenCalledWith(
+      'po-bom-1',
+      'rev-2',
+      dto,
+      req.user,
+    );
   });
 });

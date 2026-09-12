@@ -8,7 +8,9 @@ import {
 } from './boms.service';
 import { BillOfMaterials } from './entities/BillOfMaterials.entity';
 import { BillOfMaterialLine } from './entities/BillOfMaterialLine.entity';
+import { BomRevision } from './entities/BomRevision.entity';
 import { FitBomLine } from '../fit-boms/entities/FitBomLine.entity';
+import { FitBomRevision } from '../fit-boms/entities/FitBomRevision.entity';
 import { Style } from '../styles/entities/Style.entity';
 
 describe('BomsService', () => {
@@ -16,7 +18,9 @@ describe('BomsService', () => {
   let dataSourceMock: any;
   let bomRepoMock: any;
   let bomLineRepoMock: any;
+  let bomRevisionRepoMock: any;
   let fitBomLineRepoMock: any;
+  let fitBomRevisionRepoMock: any;
   let styleRepoMock: any;
 
   const allCombinedRows = [
@@ -70,6 +74,34 @@ describe('BomsService', () => {
       find: jest.fn(),
     };
 
+    const mockRevision = {
+      id: 'rev-1',
+      revisionNo: 1,
+      status: 'approved',
+      effectiveFrom: null,
+      effectiveTo: null,
+    };
+
+    bomRevisionRepoMock = {
+      findOne: jest.fn().mockResolvedValue(mockRevision),
+      createQueryBuilder: jest.fn().mockReturnValue({
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        getOne: jest.fn().mockResolvedValue(mockRevision),
+      }),
+    };
+
+    fitBomRevisionRepoMock = {
+      findOne: jest.fn().mockResolvedValue(mockRevision),
+      createQueryBuilder: jest.fn().mockReturnValue({
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        getOne: jest.fn().mockResolvedValue(mockRevision),
+      }),
+    };
+
     styleRepoMock = {
       findOne: jest.fn(),
     };
@@ -114,7 +146,7 @@ describe('BomsService', () => {
                     r.object_code.toLowerCase().includes(val) ||
                     (r.color_name && r.color_name.toLowerCase().includes(val)),
                 );
-              } else {
+              } else if (!/^\d{4}-\d{2}-\d{2}$/.test(p)) {
                 rows = rows.filter(
                   (r) => r.status.toLowerCase() === p.toLowerCase(),
                 );
@@ -149,8 +181,16 @@ describe('BomsService', () => {
           useValue: bomLineRepoMock,
         },
         {
+          provide: getRepositoryToken(BomRevision),
+          useValue: bomRevisionRepoMock,
+        },
+        {
           provide: getRepositoryToken(FitBomLine),
           useValue: fitBomLineRepoMock,
+        },
+        {
+          provide: getRepositoryToken(FitBomRevision),
+          useValue: fitBomRevisionRepoMock,
         },
         { provide: getRepositoryToken(Style), useValue: styleRepoMock },
         { provide: DataSource, useValue: dataSourceMock },

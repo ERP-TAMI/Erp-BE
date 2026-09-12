@@ -85,17 +85,27 @@ export async function seedDemoBoms(manager: EntityManager): Promise<void> {
 
     const bomId = insertedBom[0]?.id;
     if (bomId && materials.length > 0) {
+      const insertedRev = await manager.query(
+        `INSERT INTO bom_revisions
+           (bill_of_material_id, revision_no, status, change_reason, created_at, approved_at)
+         VALUES ($1, 1, $2, 'Seed revision', now(), $3)
+         ON CONFLICT (bill_of_material_id, revision_no) DO UPDATE SET status = EXCLUDED.status
+         RETURNING id`,
+        [bomId, isClosed ? 'approved' : 'draft', isClosed ? new Date() : null],
+      );
+      const revisionId = insertedRev[0]?.id;
+
       for (let idx = 0; idx < Math.min(materials.length, 3); idx++) {
         const mat = materials[idx];
         const unitCost = 28000 + idx * 25000;
         const consumption = 1.25 + idx * 0.4;
         await manager.query(
           `INSERT INTO bill_of_material_lines
-             (bill_of_material_id, material_id, material_name_snapshot, material_group_snapshot, unit_snapshot, consumption_per_unit, unit_cost, order_index, created_at, updated_at)
+             (revision_id, material_id, material_name_snapshot, material_group_snapshot, unit_snapshot, consumption_per_unit, unit_cost, order_index, created_at, updated_at)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now(), now())
            ON CONFLICT DO NOTHING`,
           [
-            bomId,
+            revisionId,
             mat.id,
             mat.material_name,
             mat.material_group_name || null,
@@ -116,15 +126,25 @@ export async function seedDemoBoms(manager: EntityManager): Promise<void> {
   for (let idx = 0; idx < styles.length; idx++) {
     const st = styles[idx];
     if (materials.length > 0) {
+      const insertedFitRev = await manager.query(
+        `INSERT INTO fit_bom_revisions
+           (style_id, revision_no, status, change_reason, created_at, approved_at)
+         VALUES ($1, 1, 'approved', 'Seed fit revision', now(), now())
+         ON CONFLICT (style_id, revision_no) DO UPDATE SET status = EXCLUDED.status
+         RETURNING id`,
+        [st.id],
+      );
+      const fitRevId = insertedFitRev[0]?.id;
+
       for (let mIdx = 0; mIdx < Math.min(materials.length, 2); mIdx++) {
         const mat = materials[mIdx];
         await manager.query(
           `INSERT INTO fit_bom_lines
-             (style_id, material_id, material_name_snapshot, material_group_snapshot, unit_snapshot, material_group_id, unit_id, consumption, order_index, created_at, updated_at)
+             (revision_id, material_id, material_name_snapshot, material_group_snapshot, unit_snapshot, material_group_id, unit_id, consumption, order_index, created_at, updated_at)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now(), now())
            ON CONFLICT DO NOTHING`,
           [
-            st.id,
+            fitRevId,
             mat.id,
             mat.material_name,
             mat.material_group_name || null,

@@ -313,11 +313,11 @@ Table style_sample_images {
 Table fit_bom_lines {
   id uuid [pk, default: `gen_random_uuid()`]
   style_id uuid [not null]
-  material_id uuid
+  material_id uuid [note: 'nullable — snapshot pattern, no FK']
   material_name_snapshot varchar(255) [not null]
-  material_group_id uuid
+  material_group_id uuid [note: 'nullable — reverse lookup only, no FK']
   material_group_snapshot varchar(100)
-  unit_id uuid
+  unit_id uuid [note: 'nullable — reverse lookup only, no FK']
   unit_snapshot varchar(50)
   consumption numeric(18,4) [not null]
   waste_percent numeric(5,2) [not null, default: 0]
@@ -328,6 +328,8 @@ Table fit_bom_lines {
   indexes {
     (style_id, order_index)
   }
+
+  Note: 'Fit BOM lines — no costing. Snapshot pattern: snapshots are IMMUTABLE after revision is approved. IDs are kept for query/reporting only, NOT for updating snapshots. Material master uses soft-delete (active/inactive/discontinued).'
 }
 
 Table purchase_orders {
@@ -686,9 +688,11 @@ Table bills_of_materials {
 Table bill_of_material_lines {
   id uuid [pk, default: `gen_random_uuid()`]
   bill_of_material_id uuid [not null]
-  material_id uuid [not null]
+  material_id uuid [note: 'nullable — snapshot pattern, no FK']
   material_name_snapshot varchar(255) [not null]
+  material_group_id uuid [note: 'nullable — reverse lookup only, no FK']
   material_group_snapshot varchar(100)
+  unit_id uuid [note: 'nullable — reverse lookup only, no FK']
   unit_snapshot varchar(50) [not null]
   consumption_per_unit numeric(18,6)
   unit_cost numeric(18,2)
@@ -699,6 +703,8 @@ Table bill_of_material_lines {
     (bill_of_material_id, material_id) [unique]
     (bill_of_material_id, order_index) [unique]
   }
+
+  Note: 'Snapshot pattern — snapshots are IMMUTABLE after revision is approved. IDs are kept for query/reporting only (e.g. filter by material group), NOT for updating snapshots. Material master uses soft-delete.'
 }
 
 Table bill_of_material_status_history {

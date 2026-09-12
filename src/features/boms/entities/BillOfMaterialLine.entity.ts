@@ -1,15 +1,28 @@
-import { Entity, Column, PrimaryGeneratedColumn } from 'typeorm';
+import {
+  Entity,
+  Column,
+  PrimaryGeneratedColumn,
+  ManyToOne,
+  JoinColumn,
+} from 'typeorm';
+import { BomRevision } from './BomRevision.entity';
 
 @Entity('bill_of_material_lines')
 export class BillOfMaterialLine {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column({ type: 'uuid', name: 'bill_of_material_id' })
-  billOfMaterialId: string;
+  @Column({ type: 'uuid', name: 'revision_id' })
+  revisionId: string;
 
-  @Column({ type: 'uuid', name: 'material_id' })
-  materialId: string;
+  @ManyToOne(() => BomRevision, (rev) => rev.lines, {
+    onDelete: 'CASCADE',
+  })
+  @JoinColumn({ name: 'revision_id' })
+  revision: BomRevision;
+
+  @Column({ type: 'uuid', nullable: true, name: 'material_id' })
+  materialId: string | null;
 
   @Column({ type: 'varchar', length: 255, name: 'material_name_snapshot' })
   materialNameSnapshot: string;
@@ -20,10 +33,16 @@ export class BillOfMaterialLine {
     nullable: true,
     name: 'material_group_snapshot',
   })
-  materialGroupSnapshot: string;
+  materialGroupSnapshot: string | null;
 
   @Column({ type: 'varchar', length: 50, name: 'unit_snapshot' })
   unitSnapshot: string;
+
+  @Column({ type: 'uuid', nullable: true, name: 'material_group_id' })
+  materialGroupId: string | null;
+
+  @Column({ type: 'uuid', nullable: true, name: 'unit_id' })
+  unitId: string | null;
 
   @Column({
     type: 'numeric',
