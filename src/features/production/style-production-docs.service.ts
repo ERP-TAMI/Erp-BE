@@ -7,7 +7,7 @@ import {
   ConflictException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, In, Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 import * as ExcelJS from 'exceljs';
 import axios from 'axios';
 import { imageSize } from 'image-size';
@@ -20,9 +20,11 @@ import { StyleDocument } from '../styles/entities/StyleDocument.entity';
 import { Document } from '../documents/entities/Document.entity';
 import { BillOfMaterials } from '../boms/entities/BillOfMaterials.entity';
 import { BillOfMaterialLine } from '../boms/entities/BillOfMaterialLine.entity';
+import { normalizeBusinessDate } from '../boms/boms.service';
 import {
   ProductionDocStatus,
   DocumentPurpose,
+  RevisionStatus,
 } from '../../common/enums/database.enums';
 import {
   CreateStyleProductionDocDto,
@@ -120,9 +122,19 @@ export class StyleProductionDocsService {
     if (!boms.length) return [];
 
     const bomIds = boms.map((b) => b.id);
-    const lines = await this.bomLineRepo.find({
-      where: { billOfMaterialId: In(bomIds) },
-    });
+    const today = normalizeBusinessDate();
+    const lines = await this.bomLineRepo
+      .createQueryBuilder('line')
+      .innerJoin('line.revision', 'r')
+      .where('r.bill_of_material_id IN (:...bomIds)', { bomIds })
+      .andWhere('r.status = :status', { status: RevisionStatus.APPROVED })
+      .andWhere('(r.effective_from IS NULL OR r.effective_from <= :today)', {
+        today,
+      })
+      .andWhere('(r.effective_to IS NULL OR :today < r.effective_to)', {
+        today,
+      })
+      .getMany();
 
     const codes = new Set<string>();
     for (const line of lines) {

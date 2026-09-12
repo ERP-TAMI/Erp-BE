@@ -1,6 +1,7 @@
 export enum RecordStatus {
   ACTIVE = 'active',
   INACTIVE = 'inactive',
+  DISCONTINUED = 'discontinued',
 }
 
 export enum PoStatus {
@@ -64,6 +65,14 @@ export enum BomStatus {
   WAIT_ACCOUNTING = 'wait_accounting',
   WAIT_SA_APPROVE = 'wait_sa_approve',
   CLOSED = 'closed',
+}
+
+export enum RevisionStatus {
+  DRAFT = 'draft',
+  IN_REVIEW = 'in_review',
+  APPROVED = 'approved',
+  SUPERSEDED = 'superseded',
+  CANCELLED = 'cancelled',
 }
 
 export enum NotificationChannel {

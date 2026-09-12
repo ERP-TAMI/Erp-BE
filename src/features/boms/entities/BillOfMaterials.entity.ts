@@ -1,5 +1,6 @@
-import { Entity, Column, PrimaryGeneratedColumn } from 'typeorm';
+import { Entity, Column, PrimaryGeneratedColumn, OneToMany } from 'typeorm';
 import { BomStatus } from '../../../common/enums/database.enums';
+import { BomRevision } from './BomRevision.entity';
 
 @Entity('bills_of_materials')
 export class BillOfMaterials {
@@ -56,4 +57,7 @@ export class BillOfMaterials {
 
   @Column({ type: 'timestamptz', name: 'updated_at' })
   updatedAt: Date;
+
+  @OneToMany(() => BomRevision, (rev) => rev.billOfMaterial)
+  revisions: BomRevision[];
 }

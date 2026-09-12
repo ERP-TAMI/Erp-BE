@@ -15,7 +15,7 @@ import { WorkshopsModule } from './features/master-data/workshops/workshops.modu
 import { SizeChartsModule } from './features/master-data/size-charts/size-charts.module';
 import { DocumentsModule } from './features/documents/documents.module';
 import { StylesModule } from './features/styles/styles.module';
-import { DraftBomsModule } from './features/draft-boms/draft-boms.module';
+import { FitBomsModule } from './features/fit-boms/fit-boms.module';
 import { PurchaseOrdersModule } from './features/purchase-orders/purchase-orders.module';
 import { BomsModule } from './features/boms/boms.module';
 import { ProductionModule } from './features/production/production.module';
@@ -42,7 +42,7 @@ const imports = [
   DocumentsModule,
   StylesModule,
   StorageModule,
-  DraftBomsModule,
+  FitBomsModule,
   PurchaseOrdersModule,
   BomsModule,
   ProductionModule,

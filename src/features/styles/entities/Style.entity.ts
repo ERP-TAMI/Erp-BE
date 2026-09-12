@@ -5,8 +5,10 @@ import {
   CreateDateColumn,
   UpdateDateColumn,
   Index,
+  OneToMany,
 } from 'typeorm';
 import { StyleStatus } from '../../../common/enums/database.enums';
+import { FitBomRevision } from '../../fit-boms/entities/FitBomRevision.entity';
 
 @Entity('styles')
 @Index('ix_styles_lookup', ['status', 'category', 'createdAt', 'id'])
@@ -58,4 +60,7 @@ export class Style {
 
   @UpdateDateColumn({ type: 'timestamptz', name: 'updated_at' })
   updatedAt: Date;
+
+  @OneToMany(() => FitBomRevision, (rev) => rev.style)
+  fitBomRevisions: FitBomRevision[];
 }

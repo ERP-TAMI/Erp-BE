@@ -3,7 +3,7 @@ import { AUTH_ENTITIES } from '../features/auth/entities';
 import { MASTERDATA_ENTITIES } from '../features/master-data/entities';
 import { DOCUMENTS_ENTITIES } from '../features/documents/entities';
 import { STYLES_ENTITIES } from '../features/styles/entities';
-import { DRAFTBOMS_ENTITIES } from '../features/draft-boms/entities';
+import { FITBOMS_ENTITIES } from '../features/fit-boms/entities';
 import { PURCHASEORDERS_ENTITIES } from '../features/purchase-orders/entities';
 import { BOMS_ENTITIES } from '../features/boms/entities';
 import { PRODUCTION_ENTITIES } from '../features/production/entities';
@@ -16,7 +16,7 @@ const entities = [
   ...MASTERDATA_ENTITIES,
   ...DOCUMENTS_ENTITIES,
   ...STYLES_ENTITIES,
-  ...DRAFTBOMS_ENTITIES,
+  ...FITBOMS_ENTITIES,
   ...PURCHASEORDERS_ENTITIES,
   ...BOMS_ENTITIES,
   ...PRODUCTION_ENTITIES,
@@ -39,6 +39,8 @@ describe('schema entities', () => {
         'materials',
         'purchase_order_products',
         'bills_of_materials',
+        'bom_revisions',
+        'fit_bom_revisions',
         'audit_events',
       ]),
     );
