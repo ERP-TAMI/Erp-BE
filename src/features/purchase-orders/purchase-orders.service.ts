@@ -20,6 +20,7 @@ import {
   STORAGE_SERVICE,
   StorageService,
 } from '../storage/storage.interface';
+import { isResolvableObjectKey } from '../storage/storage-key.util';
 import { PurchaseOrder } from './entities/PurchaseOrder.entity';
 import { PurchaseOrderStatusHistory } from './entities/PurchaseOrderStatusHistory.entity';
 import { PurchaseOrderDocument } from './entities/PurchaseOrderDocument.entity';
@@ -62,6 +63,7 @@ import {
   UpdatePurchaseOrderDto,
   QueryPurchaseOrderDto,
   QueryPoDocumentDto,
+  QueryPoProductDto,
   UpdatePoStatusDto,
   LinkPoDocumentDto,
   CreatePoProductDto,
@@ -1615,13 +1617,26 @@ export class PurchaseOrdersService {
   /**
    * Lấy danh sách sản phẩm trong PO kèm đếm thống kê và thông tin truy vết Style nguồn
    */
-  async getProducts(poId: string) {
-    const products = await this.productRepo.find({
+  async getProducts(poId: string, query: QueryPoProductDto = {}) {
+    const page = query.page && query.page > 0 ? query.page : 1;
+    const limit =
+      query.limit && query.limit > 0 ? Math.min(query.limit, 100) : 20;
+
+    const [products, total] = await this.productRepo.findAndCount({
       where: { purchaseOrderId: poId },
       order: { createdAt: 'ASC' },
+      skip: (page - 1) * limit,
+      take: limit,
     });
 
-    if (products.length === 0) return [];
+    const meta = {
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit) || 0,
+    };
+
+    if (products.length === 0) return { items: [], ...meta };
 
     const productIds = products.map((p) => p.id);
     const styleIds = products
@@ -1764,52 +1779,66 @@ export class PurchaseOrdersService {
       {},
     );
 
-    return products.map((prod) => {
-      const sourceStyle = prod.sourceStyleId
-        ? stylesMap.get(prod.sourceStyleId)
-        : null;
-      const productColors = colorsByProductId[prod.id] || [];
-      const totalQuantity = productColors.reduce(
-        (sum, c) => sum + (Number(c.totalQuantity) || 0),
-        0,
-      );
+    const items = await Promise.all(
+      products.map(async (prod) => {
+        const sourceStyle = prod.sourceStyleId
+          ? stylesMap.get(prod.sourceStyleId)
+          : null;
+        const productColors = colorsByProductId[prod.id] || [];
+        const totalQuantity = productColors.reduce(
+          (sum, c) => sum + (Number(c.totalQuantity) || 0),
+          0,
+        );
 
-      // Liệt kê tường minh thay vì `...prod`: entity còn mang các cột nội bộ
-      // (rowVersion, previousStatus, createdBy/updatedBy, closedBy...) không
-      // nên lọt ra API.
-      return {
-        id: prod.id,
-        purchaseOrderId: prod.purchaseOrderId,
-        sourceStyleId: prod.sourceStyleId,
-        productCode: prod.productCode,
-        productName: prod.productName,
-        category: prod.category,
-        materialNote: prod.materialNote,
-        deadline: prod.deadline,
-        structureImageVersionId: prod.structureImageVersionId,
-        status: prod.status,
-        cancellationReason: prod.cancellationReason,
-        closedAt: prod.closedAt,
-        as3bCmBaseDays: prod.as3bCmBaseDays,
-        importedAt: prod.importedAt,
-        createdAt: prod.createdAt,
-        updatedAt: prod.updatedAt,
-        totalQuantity,
-        colors: productColors,
-        sourceStyle: sourceStyle
-          ? {
-              id: sourceStyle.id,
-              styleCode: sourceStyle.styleCode,
-              styleName: sourceStyle.styleName,
-              category: sourceStyle.category,
-            }
-          : null,
-        stepsCount: stepsCountMap[prod.id] || 0,
-        samplesCount: samplesCountMap[prod.id] || 0,
-        documentsCount: docsCountMap[prod.id] || 0,
-        documents: productDocsMap[prod.id] || [],
-      };
-    });
+        // structureImageVersionId lưu object key S3, không phải URL. Client
+        // không tự ký được nên phải resolve ở đây, giống baseImageKey của
+        // Style. Khóa `/uploads/...` cũ thì bỏ qua — tệp không có trên S3.
+        const structureImageUrl = isResolvableObjectKey(
+          prod.structureImageVersionId,
+        )
+          ? await this.storage.getPresignedGetUrl(prod.structureImageVersionId)
+          : null;
+
+        // Liệt kê tường minh thay vì `...prod`: entity còn mang các cột nội bộ
+        // (rowVersion, previousStatus, createdBy/updatedBy, closedBy...) không
+        // nên lọt ra API.
+        return {
+          id: prod.id,
+          purchaseOrderId: prod.purchaseOrderId,
+          sourceStyleId: prod.sourceStyleId,
+          productCode: prod.productCode,
+          productName: prod.productName,
+          category: prod.category,
+          materialNote: prod.materialNote,
+          deadline: prod.deadline,
+          structureImageVersionId: prod.structureImageVersionId,
+          structureImageUrl,
+          status: prod.status,
+          cancellationReason: prod.cancellationReason,
+          closedAt: prod.closedAt,
+          as3bCmBaseDays: prod.as3bCmBaseDays,
+          importedAt: prod.importedAt,
+          createdAt: prod.createdAt,
+          updatedAt: prod.updatedAt,
+          totalQuantity,
+          colors: productColors,
+          sourceStyle: sourceStyle
+            ? {
+                id: sourceStyle.id,
+                styleCode: sourceStyle.styleCode,
+                styleName: sourceStyle.styleName,
+                category: sourceStyle.category,
+              }
+            : null,
+          stepsCount: stepsCountMap[prod.id] || 0,
+          samplesCount: samplesCountMap[prod.id] || 0,
+          documentsCount: docsCountMap[prod.id] || 0,
+          documents: productDocsMap[prod.id] || [],
+        };
+      }),
+    );
+
+    return { items, ...meta };
   }
 
   /**

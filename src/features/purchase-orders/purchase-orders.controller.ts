@@ -36,6 +36,7 @@ import {
   UpdatePurchaseOrderDto,
   QueryPurchaseOrderDto,
   QueryPoDocumentDto,
+  QueryPoProductDto,
   UpdatePoStatusDto,
   LinkPoDocumentDto,
   UpdatePoDocumentDto,
@@ -166,10 +167,15 @@ export class PurchaseOrdersController {
   // ─── PO Products / Lines Endpoints ──────────────────────────────────────────
 
   @Get(':id/products')
-  @ApiOperation({ summary: 'Lấy danh sách sản phẩm thuộc đơn hàng PO' })
+  @ApiOperation({
+    summary: 'Lấy danh sách sản phẩm thuộc đơn hàng PO (có phân trang)',
+  })
   @ApiResponse({ status: 200, description: 'Danh sách sản phẩm trong PO' })
-  async getProducts(@Param('id', ParseUUIDPipe) id: string) {
-    return this.service.getProducts(id);
+  async getProducts(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query() query: QueryPoProductDto,
+  ) {
+    return this.service.getProducts(id, query);
   }
 
   @Post(':id/products')

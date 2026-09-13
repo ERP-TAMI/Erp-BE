@@ -11,6 +11,7 @@ import { Style } from './entities/Style.entity';
 import { StyleStatus } from '../../common/enums/database.enums';
 import { CreateStyleDto, UpdateStyleDto, StyleQueryDto } from './dto';
 import { STORAGE_SERVICE, StorageService } from '../storage/storage.interface';
+import { isResolvableObjectKey } from '../storage/storage-key.util';
 
 export interface PaginatedResult<T> {
   data: T[];
@@ -37,6 +38,12 @@ export class StylesService {
   // API response must resolve it fresh via this method right before sending.
   async withResolvedBaseImage(style: Style): Promise<Style> {
     if (!style.baseImageKey) return style;
+    // Dữ liệu cũ còn giữ đường dẫn ổ đĩa ("/uploads/style-images/..."). Ký URL
+    // cho nó chỉ tạo ra link trỏ vào key không tồn tại trên S3 (và có cả dấu
+    // gạch đôi), nên trả null để client hiển thị ảnh mặc định.
+    if (!isResolvableObjectKey(style.baseImageKey)) {
+      return { ...style, baseImageKey: null };
+    }
     const baseImageKey = await this.storage.getPresignedGetUrl(
       style.baseImageKey,
     );
