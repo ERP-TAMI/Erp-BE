@@ -45,8 +45,8 @@ export class SmtpMailService implements OnModuleDestroy {
       from,
       to: input.email,
       subject: 'Thiết lập mật khẩu tài khoản TAMI ERP',
-      text: `Xin chào ${input.fullName},\n\nTài khoản TAMI ERP của bạn đã được tạo. Hãy đặt mật khẩu tại: ${setupUrl.toString()}\n\nLiên kết hết hạn sau 24 giờ và chỉ dùng được một lần. ${availabilityNote}`,
-      html: `<p>Xin chào ${escapeHtml(input.fullName)},</p><p>Tài khoản TAMI ERP của bạn đã được tạo.</p><p><a href="${escapeHtml(setupUrl.toString())}">Đặt mật khẩu</a></p><p>Liên kết hết hạn sau 24 giờ và chỉ dùng được một lần.</p><p>${escapeHtml(availabilityNote)}</p>`,
+      text: `Xin chào ${input.fullName},\n\nBạn được yêu cầu thiết lập mật khẩu cho tài khoản TAMI ERP. Hãy đặt mật khẩu tại: ${setupUrl.toString()}\n\nLiên kết hết hạn sau 24 giờ và chỉ dùng được một lần. ${availabilityNote}`,
+      html: `<p>Xin chào ${escapeHtml(input.fullName)},</p><p>Bạn được yêu cầu thiết lập mật khẩu cho tài khoản TAMI ERP.</p><p><a href="${escapeHtml(setupUrl.toString())}">Đặt mật khẩu</a></p><p>Liên kết hết hạn sau 24 giờ và chỉ dùng được một lần.</p><p>${escapeHtml(availabilityNote)}</p>`,
     });
   }
 

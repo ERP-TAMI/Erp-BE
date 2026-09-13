@@ -324,29 +324,35 @@ export class UserManagementService {
           (!!user.manuallyLockedAt ||
             !!user.lockoutUntil ||
             user.loginFailedCount > 0));
+      const repeatsRestriction =
+        dto.accountStatus === previousStatus &&
+        (dto.accountStatus === UserAccountStatus.LOCKED ||
+          dto.accountStatus === UserAccountStatus.INACTIVE);
 
-      if (!changesState) {
+      if (!changesState && !repeatsRestriction) {
         return {
           response: { user: this.toUserItem(user, role.code, role.name) },
           accountRestrictionNotification: null,
         };
       }
 
-      const state = this.accountState(dto.accountStatus, actor.id);
-      Object.assign(user, {
-        status: state.status,
-        manuallyLockedAt: state.manuallyLockedAt,
-        manuallyLockedBy: state.manuallyLockedBy,
-        lockoutUntil: null,
-        loginFailedCount: 0,
-        authVersion: user.authVersion + 1,
-      });
-      await userRepository.save(user);
-      await this.revokeSessions(
-        manager,
-        id,
-        this.accountSessionRevokeReason(dto.accountStatus, previousStatus),
-      );
+      if (changesState) {
+        const state = this.accountState(dto.accountStatus, actor.id);
+        Object.assign(user, {
+          status: state.status,
+          manuallyLockedAt: state.manuallyLockedAt,
+          manuallyLockedBy: state.manuallyLockedBy,
+          lockoutUntil: null,
+          loginFailedCount: 0,
+          authVersion: user.authVersion + 1,
+        });
+        await userRepository.save(user);
+        await this.revokeSessions(
+          manager,
+          id,
+          this.accountSessionRevokeReason(dto.accountStatus, previousStatus),
+        );
+      }
       await this.audit.recordUserChange(manager, {
         actorId: actor.id,
         actorRole: actor.roleCode,

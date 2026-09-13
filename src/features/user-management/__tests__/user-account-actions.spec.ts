@@ -141,6 +141,37 @@ describe('UserManagementService account actions', () => {
     expect(mail.sendAccountLockedEmail).toHaveBeenCalledTimes(1);
   });
 
+  it('records and emails a new reason when an already locked account is locked again', async () => {
+    Object.assign(target, {
+      manuallyLockedAt: new Date(),
+      manuallyLockedBy: 'old-actor',
+      lockoutUntil: null,
+      loginFailedCount: 0,
+    });
+
+    const result = await service.updateAccountStatus(
+      target.id,
+      {
+        accountStatus: UserAccountStatus.LOCKED,
+        reason: 'Bổ sung kết quả điều tra',
+      },
+      { id: 'it-actor', roleCode: UserRoleCode.IT },
+    );
+
+    expect(userRepository.save).not.toHaveBeenCalled();
+    expect(sessionRepository.update).not.toHaveBeenCalled();
+    expect(audit.recordUserChange).toHaveBeenCalledWith(
+      manager,
+      expect.objectContaining({ reason: 'Bổ sung kết quả điều tra' }),
+    );
+    expect(mail.sendAccountLockedEmail).toHaveBeenCalledWith({
+      email: target.email,
+      fullName: target.fullName,
+      reason: 'Bổ sung kết quả điều tra',
+    });
+    expect(result.user.accountStatus).toBe(UserAccountStatus.LOCKED);
+  });
+
   it('disables an account and clears both manual and temporary lock state', async () => {
     target.manuallyLockedAt = new Date();
     target.manuallyLockedBy = 'old-actor';
@@ -167,6 +198,38 @@ describe('UserManagementService account actions', () => {
       fullName: target.fullName,
       reason: 'Đã nghỉ việc',
     });
+  });
+
+  it('records and emails a new reason when an inactive account is disabled again', async () => {
+    Object.assign(target, {
+      status: RecordStatus.INACTIVE,
+      manuallyLockedAt: null,
+      manuallyLockedBy: null,
+      lockoutUntil: null,
+      loginFailedCount: 0,
+    });
+
+    const result = await service.updateAccountStatus(
+      target.id,
+      {
+        accountStatus: UserAccountStatus.INACTIVE,
+        reason: 'Cập nhật lý do nghỉ việc',
+      },
+      { id: 'it-actor', roleCode: UserRoleCode.IT },
+    );
+
+    expect(userRepository.save).not.toHaveBeenCalled();
+    expect(sessionRepository.update).not.toHaveBeenCalled();
+    expect(audit.recordUserChange).toHaveBeenCalledWith(
+      manager,
+      expect.objectContaining({ reason: 'Cập nhật lý do nghỉ việc' }),
+    );
+    expect(mail.sendAccountDisabledEmail).toHaveBeenCalledWith({
+      email: target.email,
+      fullName: target.fullName,
+      reason: 'Cập nhật lý do nghỉ việc',
+    });
+    expect(result.user.accountStatus).toBe(UserAccountStatus.INACTIVE);
   });
 
   it.each([

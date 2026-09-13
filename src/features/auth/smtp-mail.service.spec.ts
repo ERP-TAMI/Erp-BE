@@ -50,6 +50,8 @@ describe('SmtpMailService', () => {
     );
     const message = sendMail.mock.calls[0][0];
     expect(message.text).toContain('token=opaque-token');
+    expect(message.text).not.toContain('đã được tạo');
+    expect(message.html).not.toContain('đã được tạo');
     expect(message.html).toContain('&lt;Người dùng&gt;');
     expect(JSON.stringify(message)).not.toContain('secret-from-env');
     expect(message.text.toLowerCase()).not.toContain('mật khẩu tạm');
