@@ -1,9 +1,8 @@
 import { Transform } from 'class-transformer';
-import { ApiProperty, ApiPropertyOptional, OmitType } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsEmail,
   IsEnum,
-  IsIn,
   IsOptional,
   IsString,
   Matches,
@@ -11,10 +10,6 @@ import {
   MinLength,
 } from 'class-validator';
 import { UserRoleCode } from './query-users.dto';
-import {
-  EDITABLE_USER_ACCOUNT_STATUSES,
-  EditableUserAccountStatus,
-} from './user-account-status.enum';
 import { UserListItemResponseDto } from './user-list-response.dto';
 
 export class MutateUserDto {
@@ -49,25 +44,9 @@ export class MutateUserDto {
   @ApiProperty({ enum: UserRoleCode })
   @IsEnum(UserRoleCode)
   roleCode: UserRoleCode;
-
-  @ApiProperty({ enum: EDITABLE_USER_ACCOUNT_STATUSES })
-  @IsIn(EDITABLE_USER_ACCOUNT_STATUSES)
-  accountStatus: EditableUserAccountStatus;
 }
 
-export class UpdateUserDto extends OmitType(MutateUserDto, [
-  'accountStatus',
-] as const) {
-  @ApiPropertyOptional({
-    enum: EDITABLE_USER_ACCOUNT_STATUSES,
-    deprecated: true,
-    description:
-      'Rolling-deployment compatibility only. Use /account-status to change status.',
-  })
-  @IsOptional()
-  @IsIn(EDITABLE_USER_ACCOUNT_STATUSES)
-  accountStatus?: EditableUserAccountStatus;
-}
+export class UpdateUserDto extends MutateUserDto {}
 
 export class CreateUserResponseDto {
   @ApiProperty({ type: UserListItemResponseDto })

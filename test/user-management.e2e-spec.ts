@@ -115,7 +115,6 @@ describe('User management API (e2e)', () => {
       email: 'USER@Example.COM',
       phone: '',
       roleCode: 'NVKH',
-      accountStatus: 'active',
     };
     userManagementService.create.mockResolvedValue({
       user: response.data[0],
@@ -141,10 +140,12 @@ describe('User management API (e2e)', () => {
       .send({ ...input, password: 'must-not-be-accepted' })
       .expect(400);
 
-    await request(app.getHttpServer())
-      .post('/system/users')
-      .send({ ...input, accountStatus: 'pending_setup' })
-      .expect(400);
+    for (const accountStatus of ['active', 'locked', 'inactive']) {
+      await request(app.getHttpServer())
+        .post('/system/users')
+        .send({ ...input, accountStatus })
+        .expect(400);
+    }
   });
 
   it('updates and resends password setup email through protected endpoints', async () => {
@@ -186,7 +187,7 @@ describe('User management API (e2e)', () => {
     await request(app.getHttpServer())
       .patch(`/system/users/${id}`)
       .send({ ...input, accountStatus: 'active' })
-      .expect(200);
+      .expect(400);
   });
 
   it('validates account status reasons and accepts password reset asynchronously', async () => {
@@ -215,7 +216,7 @@ describe('User management API (e2e)', () => {
 
     for (const payload of [
       { accountStatus: 'locked' },
-      { accountStatus: 'inactive', reason: '   ' },
+      { accountStatus: 'inactive', reason: 'Đã nghỉ việc' },
       { accountStatus: 'pending_setup', reason: 'Không hợp lệ' },
     ]) {
       await request(app.getHttpServer())

@@ -117,34 +117,4 @@ describe('SmtpMailService', () => {
       '<Nghi ngờ truy cập trái phép>',
     );
   });
-
-  it('emails a disabled user with an escaped user-facing reason', async () => {
-    const values: Record<string, string> = {
-      MAIL_HOST: 'smtp.gmail.com',
-      MAIL_PORT: '587',
-      MAIL_USERNAME: 'sender@example.test',
-      MAIL_PASSWORD: 'secret-from-env',
-    };
-    const config = {
-      getOrThrow: jest.fn((key: string) => values[key]),
-      get: jest.fn((key: string) => values[key]),
-    } as unknown as ConfigService;
-    const service = new SmtpMailService(config);
-
-    await service.sendAccountDisabledEmail({
-      email: 'disabled.user@example.test',
-      fullName: '<Người dùng>',
-      reason: '<Đã nghỉ việc>',
-    });
-
-    expect(sendMail).toHaveBeenCalledWith(
-      expect.objectContaining({
-        to: 'disabled.user@example.test',
-        subject: 'Tài khoản TAMI ERP đã bị vô hiệu hóa',
-        text: expect.stringContaining('Đã nghỉ việc'),
-        html: expect.stringContaining('&lt;Đã nghỉ việc&gt;'),
-      }),
-    );
-    expect(sendMail.mock.calls[0][0].html).not.toContain('<Đã nghỉ việc>');
-  });
 });

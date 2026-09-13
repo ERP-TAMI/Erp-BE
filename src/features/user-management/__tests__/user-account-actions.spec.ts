@@ -82,7 +82,6 @@ describe('UserManagementService account actions', () => {
     } as unknown as jest.Mocked<AuditService>;
     mail = {
       sendAccountLockedEmail: jest.fn().mockResolvedValue(undefined),
-      sendAccountDisabledEmail: jest.fn().mockResolvedValue(undefined),
     } as unknown as jest.Mocked<SmtpMailService>;
     service = new UserManagementService(
       {} as Repository<User>,
@@ -172,96 +171,56 @@ describe('UserManagementService account actions', () => {
     expect(result.user.accountStatus).toBe(UserAccountStatus.LOCKED);
   });
 
-  it('disables an account and clears both manual and temporary lock state', async () => {
-    target.manuallyLockedAt = new Date();
-    target.manuallyLockedBy = 'old-actor';
+  it('activates a locked account without reviving old sessions and records a valid audit reason', async () => {
+    Object.assign(target, { manuallyLockedAt: new Date() });
 
     const result = await service.updateAccountStatus(
       target.id,
-      { accountStatus: UserAccountStatus.INACTIVE, reason: 'Đã nghỉ việc' },
-      { id: 'it-actor', roleCode: UserRoleCode.IT },
+      { accountStatus: UserAccountStatus.ACTIVE },
+      { id: 'sa-actor', roleCode: UserRoleCode.SA },
     );
 
-    expect(target.status).toBe(RecordStatus.INACTIVE);
+    expect(target.status).toBe(RecordStatus.ACTIVE);
     expect(target.manuallyLockedAt).toBeNull();
     expect(target.lockoutUntil).toBeNull();
     expect(target.loginFailedCount).toBe(0);
     expect(target.authVersion).toBe(2);
-    expect(sessionRepository.update).toHaveBeenCalledWith(
-      expect.objectContaining({ userId: target.id }),
-      expect.objectContaining({ revokeReason: 'account_inactive' }),
-    );
-    expect(result.user.accountStatus).toBe(UserAccountStatus.INACTIVE);
-    expect(mail.sendAccountLockedEmail).not.toHaveBeenCalled();
-    expect(mail.sendAccountDisabledEmail).toHaveBeenCalledWith({
-      email: target.email,
-      fullName: target.fullName,
-      reason: 'Đã nghỉ việc',
-    });
-  });
-
-  it('records and emails a new reason when an inactive account is disabled again', async () => {
-    Object.assign(target, {
-      status: RecordStatus.INACTIVE,
-      manuallyLockedAt: null,
-      manuallyLockedBy: null,
-      lockoutUntil: null,
-      loginFailedCount: 0,
-    });
-
-    const result = await service.updateAccountStatus(
-      target.id,
-      {
-        accountStatus: UserAccountStatus.INACTIVE,
-        reason: 'Cập nhật lý do nghỉ việc',
-      },
-      { id: 'it-actor', roleCode: UserRoleCode.IT },
-    );
-
-    expect(userRepository.save).not.toHaveBeenCalled();
-    expect(sessionRepository.update).not.toHaveBeenCalled();
+    expect(sessionRepository.update).toHaveBeenCalledTimes(1);
     expect(audit.recordUserChange).toHaveBeenCalledWith(
       manager,
-      expect.objectContaining({ reason: 'Cập nhật lý do nghỉ việc' }),
+      expect.objectContaining({
+        reason: expect.any(String),
+      }),
     );
-    expect(mail.sendAccountDisabledEmail).toHaveBeenCalledWith({
-      email: target.email,
-      fullName: target.fullName,
-      reason: 'Cập nhật lý do nghỉ việc',
-    });
-    expect(result.user.accountStatus).toBe(UserAccountStatus.INACTIVE);
+    expect(
+      audit.recordUserChange.mock.calls[0][1].reason?.trim().length,
+    ).toBeGreaterThan(0);
+    expect(result.user.accountStatus).toBe(UserAccountStatus.ACTIVE);
   });
 
-  it.each([
-    ['a locked account', { manuallyLockedAt: new Date() }],
-    ['an inactive account', { status: RecordStatus.INACTIVE }],
-  ])(
-    'activates %s without reviving old sessions and records a valid audit reason',
-    async (_label, state) => {
-      Object.assign(target, state);
+  it.each([UserAccountStatus.ACTIVE, UserAccountStatus.LOCKED] as const)(
+    'keeps a legacy inactive account read-only when requesting %s',
+    async (nextStatus) => {
+      target.status = RecordStatus.INACTIVE;
 
-      const result = await service.updateAccountStatus(
-        target.id,
-        { accountStatus: UserAccountStatus.ACTIVE },
-        { id: 'sa-actor', roleCode: UserRoleCode.SA },
-      );
+      await expect(
+        service.updateAccountStatus(
+          target.id,
+          {
+            accountStatus: nextStatus,
+            reason:
+              nextStatus === UserAccountStatus.LOCKED
+                ? 'Yêu cầu khóa'
+                : undefined,
+          },
+          { id: 'sa-actor', roleCode: UserRoleCode.SA },
+        ),
+      ).rejects.toMatchObject({ status: 409 });
 
-      expect(target.status).toBe(RecordStatus.ACTIVE);
-      expect(target.manuallyLockedAt).toBeNull();
-      expect(target.lockoutUntil).toBeNull();
-      expect(target.loginFailedCount).toBe(0);
-      expect(target.authVersion).toBe(2);
-      expect(sessionRepository.update).toHaveBeenCalledTimes(1);
-      expect(audit.recordUserChange).toHaveBeenCalledWith(
-        manager,
-        expect.objectContaining({
-          reason: expect.any(String),
-        }),
-      );
-      expect(
-        audit.recordUserChange.mock.calls[0][1].reason?.trim().length,
-      ).toBeGreaterThan(0);
-      expect(result.user.accountStatus).toBe(UserAccountStatus.ACTIVE);
+      expect(target.status).toBe(RecordStatus.INACTIVE);
+      expect(userRepository.save).not.toHaveBeenCalled();
+      expect(sessionRepository.update).not.toHaveBeenCalled();
+      expect(audit.recordUserChange).not.toHaveBeenCalled();
     },
   );
 
@@ -283,26 +242,6 @@ describe('UserManagementService account actions', () => {
     expect(sessionRepository.update).not.toHaveBeenCalled();
     expect(audit.recordUserChange).not.toHaveBeenCalled();
     expect(result.user.accountStatus).toBe(UserAccountStatus.ACTIVE);
-  });
-
-  it('rejects locking an inactive account instead of reactivating it indirectly', async () => {
-    target.status = RecordStatus.INACTIVE;
-
-    await expect(
-      service.updateAccountStatus(
-        target.id,
-        {
-          accountStatus: UserAccountStatus.LOCKED,
-          reason: 'Yêu cầu khóa',
-        },
-        { id: 'sa-actor', roleCode: UserRoleCode.SA },
-      ),
-    ).rejects.toMatchObject({ status: 409 });
-
-    expect(target.status).toBe(RecordStatus.INACTIVE);
-    expect(userRepository.save).not.toHaveBeenCalled();
-    expect(sessionRepository.update).not.toHaveBeenCalled();
-    expect(audit.recordUserChange).not.toHaveBeenCalled();
   });
 
   it('resets password immediately, revokes sessions and queues one setup email', async () => {

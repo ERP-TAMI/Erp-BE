@@ -101,7 +101,6 @@ describe('UserManagementService mutations', () => {
         email: 'new@example.com',
         phone: null,
         roleCode: UserRoleCode.NVKH,
-        accountStatus: UserAccountStatus.ACTIVE,
       },
       { id: 'actor-id', roleCode: UserRoleCode.IT },
     );
@@ -322,53 +321,5 @@ describe('UserManagementService mutations', () => {
     );
     expect(revokeActiveSetupTokens).toHaveBeenCalledWith(manager, target.id);
     expect(result.invitationStatus).toBeNull();
-  });
-
-  it('rejects a status change through the profile update compatibility field', async () => {
-    const target = user({ mustChangePassword: false });
-    const roleQueryBuilder = {
-      innerJoin: jest.fn().mockReturnThis(),
-      where: jest.fn().mockReturnThis(),
-      select: jest.fn().mockReturnThis(),
-      getRawOne: jest.fn().mockResolvedValue({
-        code: UserRoleCode.NVKH,
-        name: role.name,
-      }),
-    };
-    const userRepository = {
-      findOne: jest.fn().mockResolvedValue(target),
-      save: jest.fn(),
-    } as unknown as jest.Mocked<Repository<User>>;
-    const roleRepository = {
-      createQueryBuilder: jest.fn().mockReturnValue(roleQueryBuilder),
-    } as unknown as jest.Mocked<Repository<Role>>;
-    const manager = {
-      getRepository: jest.fn((entity) =>
-        entity === User ? userRepository : roleRepository,
-      ),
-    } as unknown as EntityManager;
-    dataSource.transaction = jest.fn(async (run) => run(manager)) as never;
-    const service = new UserManagementService(
-      users,
-      dataSource,
-      passwordSetup,
-      {} as never,
-      {} as never,
-    );
-
-    await expect(
-      service.update(
-        target.id,
-        {
-          fullName: target.fullName,
-          email: target.email,
-          phone: target.phone,
-          roleCode: UserRoleCode.NVKH,
-          accountStatus: UserAccountStatus.LOCKED,
-        },
-        { id: 'it-id', roleCode: UserRoleCode.IT },
-      ),
-    ).rejects.toMatchObject({ status: 400 });
-    expect(userRepository.save).not.toHaveBeenCalled();
   });
 });

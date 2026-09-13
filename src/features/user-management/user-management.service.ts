@@ -100,7 +100,6 @@ export class UserManagementService {
           undefined,
           manager.getRepository(User),
         );
-        const state = this.accountState(dto.accountStatus, actor.id);
         const passwordHash = await hashPassword(
           randomBytes(32).toString('hex'),
         );
@@ -110,9 +109,9 @@ export class UserManagementService {
             email: dto.email,
             phone: dto.phone,
             passwordHash,
-            status: state.status,
-            manuallyLockedAt: state.manuallyLockedAt,
-            manuallyLockedBy: state.manuallyLockedBy,
+            status: RecordStatus.ACTIVE,
+            manuallyLockedAt: null,
+            manuallyLockedBy: null,
             loginFailedCount: 0,
             lockoutUntil: null,
             mustChangePassword: true,
@@ -164,14 +163,7 @@ export class UserManagementService {
         });
         if (!user) this.throwUserNotFound();
         const currentRole = await this.currentRole(id, manager);
-        const currentStatus = this.deriveEditableStatus(user);
-        if (dto.accountStatus && dto.accountStatus !== currentStatus) {
-          throw new BadRequestException({
-            code: ErrorCode.BAD_REQUEST,
-            message:
-              'Hãy dùng thao tác trạng thái tài khoản để khóa hoặc vô hiệu hóa người dùng.',
-          });
-        }
+        const currentStatus = this.deriveAccountStatus(user);
         assertCanUpdateUser({
           actorId: actor.id,
           actorRole: actor.roleCode,
@@ -264,7 +256,7 @@ export class UserManagementService {
         targetId: id,
         currentRole: currentRole.code,
         nextRole: currentRole.code,
-        nextStatus: this.deriveEditableStatus(user),
+        nextStatus: this.deriveAccountStatus(user),
       });
       return this.passwordSetup.issue(manager, id, actor.id);
     });
@@ -279,14 +271,10 @@ export class UserManagementService {
     actor: { id: string; roleCode: string },
   ): Promise<AccountStatusActionResponseDto> {
     const reason = dto.reason?.trim();
-    if (
-      (dto.accountStatus === UserAccountStatus.LOCKED ||
-        dto.accountStatus === UserAccountStatus.INACTIVE) &&
-      !reason
-    ) {
+    if (dto.accountStatus === UserAccountStatus.LOCKED && !reason) {
       throw new BadRequestException({
         code: ErrorCode.BAD_REQUEST,
-        message: 'Lý do là bắt buộc khi khóa hoặc vô hiệu hóa tài khoản.',
+        message: 'Lý do là bắt buộc khi khóa tài khoản.',
       });
     }
 
@@ -305,15 +293,12 @@ export class UserManagementService {
         targetRole: role.code,
       });
 
-      const previousStatus = this.deriveEditableStatus(user);
-      if (
-        previousStatus === UserAccountStatus.INACTIVE &&
-        dto.accountStatus === UserAccountStatus.LOCKED
-      ) {
+      const previousStatus = this.deriveAccountStatus(user);
+      if (previousStatus === UserAccountStatus.INACTIVE) {
         throw new ConflictException({
           code: ErrorCode.CONFLICT,
           message:
-            'Tài khoản đã vô hiệu hóa phải được kích hoạt lại trước khi khóa.',
+            'Tài khoản vô hiệu hóa cũ chỉ được giữ để tra cứu và không thể thay đổi trạng thái.',
         });
       }
       const changesState =
@@ -326,8 +311,7 @@ export class UserManagementService {
             user.loginFailedCount > 0));
       const repeatsRestriction =
         dto.accountStatus === previousStatus &&
-        (dto.accountStatus === UserAccountStatus.LOCKED ||
-          dto.accountStatus === UserAccountStatus.INACTIVE);
+        dto.accountStatus === UserAccountStatus.LOCKED;
 
       if (!changesState && !repeatsRestriction) {
         return {
@@ -350,7 +334,7 @@ export class UserManagementService {
         await this.revokeSessions(
           manager,
           id,
-          this.accountSessionRevokeReason(dto.accountStatus, previousStatus),
+          this.accountSessionRevokeReason(dto.accountStatus),
         );
       }
       await this.audit.recordUserChange(manager, {
@@ -359,11 +343,7 @@ export class UserManagementService {
         targetId: user.id,
         targetLabel: user.email,
         eventType: AuditEventType.STATUS_CHANGED,
-        reason: this.accountStatusAuditReason(
-          dto.accountStatus,
-          previousStatus,
-          reason,
-        ),
+        reason: this.accountStatusAuditReason(reason),
         changes: [
           {
             fieldName: 'accountStatus',
@@ -376,10 +356,8 @@ export class UserManagementService {
       return {
         response: { user: this.toUserItem(user, role.code, role.name) },
         accountRestrictionNotification:
-          dto.accountStatus === UserAccountStatus.LOCKED ||
-          dto.accountStatus === UserAccountStatus.INACTIVE
+          dto.accountStatus === UserAccountStatus.LOCKED
             ? {
-                accountStatus: dto.accountStatus,
                 userId: user.id,
                 email: user.email,
                 fullName: user.fullName,
@@ -584,17 +562,13 @@ export class UserManagementService {
   }
 
   private sendAccountRestrictionEmailInBackground(input: {
-    accountStatus: UserAccountStatus.LOCKED | UserAccountStatus.INACTIVE;
     userId: string;
     email: string;
     fullName: string;
     reason: string;
   }): void {
-    const { accountStatus, userId, ...emailPayload } = input;
-    const delivery =
-      accountStatus === UserAccountStatus.LOCKED
-        ? this.mail.sendAccountLockedEmail(emailPayload)
-        : this.mail.sendAccountDisabledEmail(emailPayload);
+    const { userId, ...emailPayload } = input;
+    const delivery = this.mail.sendAccountLockedEmail(emailPayload);
     void delivery.catch((error: unknown) => {
       const errorMessage =
         error instanceof Error ? error.message : String(error);
@@ -619,38 +593,17 @@ export class UserManagementService {
 
   private accountSessionRevokeReason(
     nextStatus: EditableUserAccountStatus,
-    previousStatus: EditableUserAccountStatus,
   ): string {
     if (nextStatus === UserAccountStatus.LOCKED) return 'account_locked';
-    if (nextStatus === UserAccountStatus.INACTIVE) return 'account_inactive';
-    return previousStatus === UserAccountStatus.INACTIVE
-      ? 'account_reactivated'
-      : 'account_unlocked';
+    return 'account_unlocked';
   }
 
-  private accountStatusAuditReason(
-    nextStatus: EditableUserAccountStatus,
-    previousStatus: EditableUserAccountStatus,
-    reason?: string,
-  ): string {
+  private accountStatusAuditReason(reason?: string): string {
     if (reason) return reason;
-    if (
-      nextStatus === UserAccountStatus.ACTIVE &&
-      previousStatus === UserAccountStatus.INACTIVE
-    ) {
-      return 'Quản trị viên kích hoạt lại tài khoản.';
-    }
     return 'Quản trị viên mở khóa tài khoản.';
   }
 
   private accountState(status: EditableUserAccountStatus, actorId: string) {
-    if (status === UserAccountStatus.INACTIVE) {
-      return {
-        status: RecordStatus.INACTIVE,
-        manuallyLockedAt: null,
-        manuallyLockedBy: null,
-      };
-    }
     if (status === UserAccountStatus.LOCKED) {
       return {
         status: RecordStatus.ACTIVE,
@@ -666,13 +619,13 @@ export class UserManagementService {
   }
 
   private deriveStatus(user: User): UserAccountStatus {
-    const editableStatus = this.deriveEditableStatus(user);
-    if (editableStatus !== UserAccountStatus.ACTIVE) return editableStatus;
+    const accountStatus = this.deriveAccountStatus(user);
+    if (accountStatus !== UserAccountStatus.ACTIVE) return accountStatus;
     if (user.mustChangePassword) return UserAccountStatus.PENDING_SETUP;
     return UserAccountStatus.ACTIVE;
   }
 
-  private deriveEditableStatus(user: User): EditableUserAccountStatus {
+  private deriveAccountStatus(user: User): UserAccountStatus {
     if (user.status === RecordStatus.INACTIVE)
       return UserAccountStatus.INACTIVE;
     if (

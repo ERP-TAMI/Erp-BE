@@ -39,7 +39,7 @@ export class SmtpMailService implements OnModuleDestroy {
     setupUrl.searchParams.set('token', input.token);
     const availabilityNote = input.accountAvailable
       ? 'Sau khi đặt mật khẩu, bạn có thể đăng nhập vào hệ thống.'
-      : 'Sau khi đặt mật khẩu, tài khoản vẫn đang bị khóa hoặc vô hiệu hóa. Vui lòng liên hệ quản trị viên để được mở tài khoản.';
+      : 'Sau khi đặt mật khẩu, tài khoản hiện chưa thể đăng nhập. Vui lòng liên hệ quản trị viên để được mở tài khoản.';
 
     await this.getTransporter(user, pass).sendMail({
       from,
@@ -58,18 +58,6 @@ export class SmtpMailService implements OnModuleDestroy {
     return this.sendAccountRestrictionEmail(input, {
       subject: 'Tài khoản TAMI ERP đã bị khóa',
       description: 'Tài khoản TAMI ERP của bạn đã bị quản trị viên khóa.',
-    });
-  }
-
-  async sendAccountDisabledEmail(input: {
-    email: string;
-    fullName: string;
-    reason: string;
-  }): Promise<void> {
-    return this.sendAccountRestrictionEmail(input, {
-      subject: 'Tài khoản TAMI ERP đã bị vô hiệu hóa',
-      description:
-        'Tài khoản TAMI ERP của bạn đã bị quản trị viên vô hiệu hóa.',
     });
   }
 

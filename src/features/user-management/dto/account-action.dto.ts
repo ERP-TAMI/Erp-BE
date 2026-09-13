@@ -27,7 +27,6 @@ export class AccountStatusActionDto {
   @ValidateIf(
     (dto: AccountStatusActionDto) =>
       dto.accountStatus === UserAccountStatus.LOCKED ||
-      dto.accountStatus === UserAccountStatus.INACTIVE ||
       dto.reason !== undefined,
   )
   @IsString()
