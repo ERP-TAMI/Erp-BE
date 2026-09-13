@@ -101,6 +101,19 @@ export class S3StorageService implements StorageService {
     return Buffer.from(bytes ?? []);
   }
 
+  async getObjectHead(objectKey: string, length: number): Promise<Buffer> {
+    const result = await this.client.send(
+      new GetObjectCommand({
+        Bucket: this.bucket,
+        Key: objectKey,
+        // S3 trả 206 kèm đúng khúc yêu cầu; object nhỏ hơn thì trả phần có thật.
+        Range: `bytes=0-${Math.max(0, length - 1)}`,
+      }),
+    );
+    const bytes = await result.Body?.transformToByteArray();
+    return Buffer.from(bytes ?? []);
+  }
+
   private parseTotalSizeFromContentRange(
     contentRange?: string,
   ): number | undefined {

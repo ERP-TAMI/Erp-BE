@@ -107,6 +107,12 @@ export const ALLOWED_PO_MIME_BY_EXTENSION: Record<string, string[]> = {
 
 const PO_DOCUMENT_MAX_SIZE_BYTES = 25 * 1024 * 1024;
 
+/** Đủ cho mọi chữ ký magic (dài nhất 12 byte) và cho mẫu 4096 byte của tệp văn bản. */
+const MAGIC_BYTES_SAMPLE_SIZE = 4096;
+
+/** Các đuôi mà bộ kiểm tra quét toàn bộ nội dung, không chỉ phần đầu. */
+const TEXT_EXTENSIONS_SCANNED_IN_FULL = new Set(['.txt', '.csv']);
+
 export interface PaginatedPoResult<T> {
   items: T[];
   total: number;
@@ -821,6 +827,63 @@ export class PurchaseOrdersService {
     });
   }
 
+  /**
+   * Đọc đủ byte để kiểm tra chữ ký tệp, không hơn.
+   *
+   * Chữ ký magic dài nhất là 12 byte (WEBP), nên với tệp nhị phân chỉ cần khúc
+   * đầu. Trước đây cả ba luồng confirm đều kéo nguyên tệp từ S3 về chỉ để xem
+   * mấy byte đó: đo thực tế, confirm một tệp 5 MB mất 17,9 giây trong tổng 19
+   * giây, trong khi trình duyệt đẩy tệp lên S3 chỉ hết 0,98 giây.
+   *
+   * Riêng nhóm văn bản vẫn tải đầy đủ, vì bộ kiểm tra quét NUL byte trên toàn
+   * bộ nội dung chứ không chỉ phần đầu.
+   */
+  private async readBytesForMagicCheck(
+    objectKey: string,
+    ext: string,
+  ): Promise<Buffer> {
+    if (TEXT_EXTENSIONS_SCANNED_IN_FULL.has(ext)) {
+      return this.storage.getObjectBuffer(objectKey);
+    }
+    return this.storage.getObjectHead(objectKey, MAGIC_BYTES_SAMPLE_SIZE);
+  }
+
+  /**
+   * Chặn `objectKey` trỏ ra ngoài phạm vi đang thao tác.
+   *
+   * Client tự gửi objectKey lên; trước đây không có ràng buộc nào, nên gắn tệp
+   * của PO khác (hay của module Style) vào PO này chỉ bị chặn nhờ UNIQUE index
+   * trên document_versions.storage_key — một rào cản tình cờ, và nó không chặn
+   * được object mồ côi vì loại đó chưa có bản ghi trong DB.
+   */
+  private assertObjectKeyInScope(
+    objectKey: string,
+    expectedPrefix: string,
+  ): void {
+    if (!objectKey.startsWith(expectedPrefix)) {
+      throw new BadRequestException(
+        'objectKey không thuộc phạm vi tải lên này, vui lòng lấy lại link upload.',
+      );
+    }
+  }
+
+  /**
+   * Đổi lỗi trùng storage_key thành 400 có thông báo đọc được.
+   *
+   * Không bọc thì TypeORM ném QueryFailedError ra ngoài thành 500 kèm nguyên
+   * tên ràng buộc trong DB.
+   */
+  private rethrowDuplicateStorageKey(error: unknown): never {
+    const message =
+      error instanceof Error ? error.message : String(error ?? '');
+    if (message.includes('document_versions_storage_key_key')) {
+      throw new BadRequestException(
+        'Tệp này đã được đăng ký trong hệ thống, không thể đính kèm lại.',
+      );
+    }
+    throw error;
+  }
+
   validateFileMagicBytes(ext: string, buffer: Buffer): void {
     if (!buffer || buffer.length === 0) {
       throw new BadRequestException('Tệp rỗng hoặc không có dữ liệu.');
@@ -1014,6 +1077,11 @@ export class PurchaseOrdersService {
     }
     this.checkPoNotLocked(po, 'tải lên tài liệu mới');
 
+    this.assertObjectKeyInScope(
+      dto.objectKey,
+      `purchase-orders/${poId}/documents/`,
+    );
+
     const head = await this.storage.headObject(dto.objectKey);
     if (!head.exists) {
       throw new BadRequestException(
@@ -1024,67 +1092,69 @@ export class PurchaseOrdersService {
     // Server never receives the raw upload (client PUTs straight to S3 with a
     // presigned URL), so the magic-bytes check that used to run on the multer
     // buffer must run here instead, against the bytes actually stored on S3.
-    const ext = path.extname(dto.fileName) || '';
-    const buffer = await this.storage.getObjectBuffer(dto.objectKey);
+    const ext = (path.extname(dto.fileName) || '').toLowerCase();
+    const buffer = await this.readBytesForMagicCheck(dto.objectKey, ext);
     this.validateFileMagicBytes(ext, buffer);
 
     const now = new Date();
 
-    return this.dataSource.transaction(async (manager) => {
-      const docRepo = manager.getRepository(Document);
-      const versionRepo = manager.getRepository(DocumentVersion);
-      const poDocRepo = manager.getRepository(PurchaseOrderDocument);
+    return this.dataSource
+      .transaction(async (manager) => {
+        const docRepo = manager.getRepository(Document);
+        const versionRepo = manager.getRepository(DocumentVersion);
+        const poDocRepo = manager.getRepository(PurchaseOrderDocument);
 
-      const doc = await docRepo.save(
-        docRepo.create({
-          documentCode: `DOC-PO-${Date.now().toString().slice(-6)}`,
-          title: dto.fileName,
-          createdBy: userId || (null as any),
-          createdAt: now,
-        }),
-      );
+        const doc = await docRepo.save(
+          docRepo.create({
+            documentCode: `DOC-PO-${Date.now().toString().slice(-6)}`,
+            title: dto.fileName,
+            createdBy: userId || (null as any),
+            createdAt: now,
+          }),
+        );
 
-      const version = await versionRepo.save(
-        versionRepo.create({
+        const version = await versionRepo.save(
+          versionRepo.create({
+            documentId: doc.id,
+            versionNo: 1,
+            originalFileName: dto.fileName,
+            storageKey: dto.objectKey,
+            mimeType: dto.mimeType,
+            byteSize: dto.sizeBytes,
+            status: UploadStatus.READY,
+            uploadedBy: userId || (null as any),
+            uploadedAt: now,
+          }),
+        );
+
+        doc.currentVersionId = version.id;
+        await docRepo.save(doc);
+
+        await poDocRepo.save(
+          poDocRepo.create({
+            purchaseOrderId: poId,
+            documentId: doc.id,
+            purpose: dto.purpose,
+            linkedBy: userId || (null as any),
+            linkedAt: now,
+          }),
+        );
+
+        return {
           documentId: doc.id,
-          versionNo: 1,
-          originalFileName: dto.fileName,
-          storageKey: dto.objectKey,
-          mimeType: dto.mimeType,
-          byteSize: dto.sizeBytes,
-          status: UploadStatus.READY,
-          uploadedBy: userId || (null as any),
-          uploadedAt: now,
-        }),
-      );
-
-      doc.currentVersionId = version.id;
-      await docRepo.save(doc);
-
-      await poDocRepo.save(
-        poDocRepo.create({
-          purchaseOrderId: poId,
-          documentId: doc.id,
-          purpose: dto.purpose,
-          linkedBy: userId || (null as any),
+          documentCode: doc.documentCode,
+          title: doc.title,
+          purpose: String(dto.purpose),
           linkedAt: now,
-        }),
-      );
-
-      return {
-        documentId: doc.id,
-        documentCode: doc.documentCode,
-        title: doc.title,
-        purpose: String(dto.purpose),
-        linkedAt: now,
-        fileUrl: await this.storage.getPresignedGetUrl(
-          dto.objectKey,
-          PRESIGN_GET_EXPIRY_SECONDS,
-        ),
-        fileName: dto.fileName,
-        fileSize: dto.sizeBytes,
-      };
-    });
+          fileUrl: await this.storage.getPresignedGetUrl(
+            dto.objectKey,
+            PRESIGN_GET_EXPIRY_SECONDS,
+          ),
+          fileName: dto.fileName,
+          fileSize: dto.sizeBytes,
+        };
+      })
+      .catch((e) => this.rethrowDuplicateStorageKey(e));
   }
 
   private formatExcelCellValue(cell: any): string {
@@ -2756,6 +2826,11 @@ export class PurchaseOrdersService {
       );
     }
 
+    this.assertObjectKeyInScope(
+      dto.objectKey,
+      `purchase-orders/${poId}/products/${productId}/documents/`,
+    );
+
     const head = await this.storage.headObject(dto.objectKey);
     if (!head.exists) {
       throw new BadRequestException(
@@ -2766,71 +2841,73 @@ export class PurchaseOrdersService {
     // Server never receives the raw upload (client PUTs straight to S3 with a
     // presigned URL), so the magic-bytes check that used to run on the multer
     // buffer must run here instead, against the bytes actually stored on S3.
-    const ext = path.extname(dto.fileName) || '';
-    const buffer = await this.storage.getObjectBuffer(dto.objectKey);
+    const ext = (path.extname(dto.fileName) || '').toLowerCase();
+    const buffer = await this.readBytesForMagicCheck(dto.objectKey, ext);
     this.validateFileMagicBytes(ext, buffer);
 
     const now = new Date();
 
-    return this.dataSource.transaction(async (manager) => {
-      const docRepo = manager.getRepository(Document);
-      const versionRepo = manager.getRepository(DocumentVersion);
-      const productDocRepo = manager.getRepository(
-        PurchaseOrderProductDocument,
-      );
+    return this.dataSource
+      .transaction(async (manager) => {
+        const docRepo = manager.getRepository(Document);
+        const versionRepo = manager.getRepository(DocumentVersion);
+        const productDocRepo = manager.getRepository(
+          PurchaseOrderProductDocument,
+        );
 
-      const doc = await docRepo.save(
-        docRepo.create({
-          documentCode: `DOC-PROD-${Date.now().toString().slice(-6)}`,
-          title: dto.fileName,
-          createdBy: userId || (null as any),
-          createdAt: now,
-        }),
-      );
+        const doc = await docRepo.save(
+          docRepo.create({
+            documentCode: `DOC-PROD-${Date.now().toString().slice(-6)}`,
+            title: dto.fileName,
+            createdBy: userId || (null as any),
+            createdAt: now,
+          }),
+        );
 
-      const version = await versionRepo.save(
-        versionRepo.create({
-          documentId: doc.id,
-          versionNo: 1,
-          originalFileName: dto.fileName,
-          storageKey: dto.objectKey,
-          mimeType: dto.mimeType,
-          byteSize: dto.sizeBytes,
-          status: UploadStatus.READY,
-          uploadedBy: userId || (null as any),
-          uploadedAt: now,
-        }),
-      );
+        const version = await versionRepo.save(
+          versionRepo.create({
+            documentId: doc.id,
+            versionNo: 1,
+            originalFileName: dto.fileName,
+            storageKey: dto.objectKey,
+            mimeType: dto.mimeType,
+            byteSize: dto.sizeBytes,
+            status: UploadStatus.READY,
+            uploadedBy: userId || (null as any),
+            uploadedAt: now,
+          }),
+        );
 
-      doc.currentVersionId = version.id;
-      await docRepo.save(doc);
+        doc.currentVersionId = version.id;
+        await docRepo.save(doc);
 
-      await productDocRepo.save(
-        productDocRepo.create({
+        await productDocRepo.save(
+          productDocRepo.create({
+            productId,
+            documentId: doc.id,
+            sourcePoDocument: false,
+            purpose: dto.purpose,
+            linkedBy: userId || (null as any),
+            linkedAt: now,
+          }),
+        );
+
+        return {
           productId,
           documentId: doc.id,
-          sourcePoDocument: false,
-          purpose: dto.purpose,
-          linkedBy: userId || (null as any),
+          documentCode: doc.documentCode,
+          title: doc.title,
+          purpose: String(dto.purpose),
           linkedAt: now,
-        }),
-      );
-
-      return {
-        productId,
-        documentId: doc.id,
-        documentCode: doc.documentCode,
-        title: doc.title,
-        purpose: String(dto.purpose),
-        linkedAt: now,
-        fileUrl: await this.storage.getPresignedGetUrl(
-          dto.objectKey,
-          PRESIGN_GET_EXPIRY_SECONDS,
-        ),
-        fileName: dto.fileName,
-        fileSize: dto.sizeBytes,
-      };
-    });
+          fileUrl: await this.storage.getPresignedGetUrl(
+            dto.objectKey,
+            PRESIGN_GET_EXPIRY_SECONDS,
+          ),
+          fileName: dto.fileName,
+          fileSize: dto.sizeBytes,
+        };
+      })
+      .catch((e) => this.rethrowDuplicateStorageKey(e));
   }
 
   /**
@@ -2869,6 +2946,11 @@ export class PurchaseOrdersService {
       throw new NotFoundException('Không tìm thấy tài liệu.');
     }
 
+    this.assertObjectKeyInScope(
+      dto.objectKey,
+      `purchase-orders/${poId}/products/${productId}/documents/`,
+    );
+
     const head = await this.storage.headObject(dto.objectKey);
     if (!head.exists) {
       throw new BadRequestException(
@@ -2876,8 +2958,8 @@ export class PurchaseOrdersService {
       );
     }
 
-    const ext = path.extname(dto.fileName) || '';
-    const buffer = await this.storage.getObjectBuffer(dto.objectKey);
+    const ext = (path.extname(dto.fileName) || '').toLowerCase();
+    const buffer = await this.readBytesForMagicCheck(dto.objectKey, ext);
     this.validateFileMagicBytes(ext, buffer);
 
     const existingVersions = await this.docVersionRepo.find({
@@ -2892,57 +2974,59 @@ export class PurchaseOrdersService {
 
     const now = new Date();
 
-    return this.dataSource.transaction(async (manager) => {
-      const docRepo = manager.getRepository(Document);
-      const versionRepo = manager.getRepository(DocumentVersion);
+    return this.dataSource
+      .transaction(async (manager) => {
+        const docRepo = manager.getRepository(Document);
+        const versionRepo = manager.getRepository(DocumentVersion);
 
-      const newVersion = await versionRepo.save(
-        versionRepo.create({
+        const newVersion = await versionRepo.save(
+          versionRepo.create({
+            documentId,
+            versionNo: nextVersionNo,
+            originalFileName: dto.fileName,
+            storageKey: dto.objectKey,
+            mimeType: dto.mimeType,
+            byteSize: dto.sizeBytes,
+            status: UploadStatus.READY,
+            uploadedBy: userId || (null as any),
+            uploadedAt: now,
+          }),
+        );
+
+        doc.currentVersionId = newVersion.id;
+        await docRepo.save(doc);
+
+        const allVersions = [newVersion, ...existingVersions];
+
+        return {
+          productId,
           documentId,
-          versionNo: nextVersionNo,
-          originalFileName: dto.fileName,
-          storageKey: dto.objectKey,
-          mimeType: dto.mimeType,
-          byteSize: dto.sizeBytes,
-          status: UploadStatus.READY,
-          uploadedBy: userId || (null as any),
-          uploadedAt: now,
-        }),
-      );
-
-      doc.currentVersionId = newVersion.id;
-      await docRepo.save(doc);
-
-      const allVersions = [newVersion, ...existingVersions];
-
-      return {
-        productId,
-        documentId,
-        documentCode: doc.documentCode,
-        title: doc.title,
-        purpose: String(prodDoc.purpose),
-        sourcePoDocument: prodDoc.sourcePoDocument,
-        linkedAt: prodDoc.linkedAt,
-        fileName: dto.fileName,
-        fileUrl: await this.storage.getPresignedGetUrl(
-          dto.objectKey,
-          PRESIGN_GET_EXPIRY_SECONDS,
-        ),
-        fileSize: dto.sizeBytes,
-        currentVersionNo: nextVersionNo,
-        versions: allVersions.map((v) => ({
-          id: v.id,
-          versionNo: v.versionNo,
-          originalFileName: v.originalFileName,
-          fileUrl: v.storageKey,
-          fileSize: v.byteSize ? Number(v.byteSize) : null,
-          mimeType: v.mimeType,
-          changeReason: v.changeReason,
-          uploadedAt: v.uploadedAt,
-          uploadedBy: v.uploadedBy,
-        })),
-      };
-    });
+          documentCode: doc.documentCode,
+          title: doc.title,
+          purpose: String(prodDoc.purpose),
+          sourcePoDocument: prodDoc.sourcePoDocument,
+          linkedAt: prodDoc.linkedAt,
+          fileName: dto.fileName,
+          fileUrl: await this.storage.getPresignedGetUrl(
+            dto.objectKey,
+            PRESIGN_GET_EXPIRY_SECONDS,
+          ),
+          fileSize: dto.sizeBytes,
+          currentVersionNo: nextVersionNo,
+          versions: allVersions.map((v) => ({
+            id: v.id,
+            versionNo: v.versionNo,
+            originalFileName: v.originalFileName,
+            fileUrl: v.storageKey,
+            fileSize: v.byteSize ? Number(v.byteSize) : null,
+            mimeType: v.mimeType,
+            changeReason: v.changeReason,
+            uploadedAt: v.uploadedAt,
+            uploadedBy: v.uploadedBy,
+          })),
+        };
+      })
+      .catch((e) => this.rethrowDuplicateStorageKey(e));
   }
 
   /**

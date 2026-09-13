@@ -202,6 +202,7 @@ describe('PurchaseOrdersService', () => {
       getObjectBuffer: jest
         .fn()
         .mockResolvedValue(Buffer.from('%PDF-1.5 test')),
+      getObjectHead: jest.fn().mockResolvedValue(Buffer.from('%PDF-1.5 test')),
     };
 
     txDocRepoMock = {
@@ -907,7 +908,7 @@ describe('PurchaseOrdersService', () => {
         id: 'po-1',
         status: PoStatus.DRAFT,
       });
-      storageMock.getObjectBuffer.mockResolvedValueOnce(
+      storageMock.getObjectHead.mockResolvedValueOnce(
         Buffer.from('not actually a pdf'),
       );
 
@@ -1111,7 +1112,7 @@ describe('PurchaseOrdersService', () => {
         purchaseOrderId: 'po-1',
         status: ProductStatus.DRAFT,
       });
-      storageMock.getObjectBuffer.mockResolvedValueOnce(
+      storageMock.getObjectHead.mockResolvedValueOnce(
         Buffer.from('not actually a pdf'),
       );
 

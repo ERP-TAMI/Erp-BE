@@ -16,6 +16,7 @@ describe('StorageController', () => {
       deleteObject: jest.fn().mockResolvedValue(undefined),
       headObject: jest.fn(),
       getObjectBuffer: jest.fn().mockResolvedValue(Buffer.from('')),
+      getObjectHead: jest.fn().mockResolvedValue(Buffer.from('')),
     };
 
     const module: TestingModule = await Test.createTestingModule({
