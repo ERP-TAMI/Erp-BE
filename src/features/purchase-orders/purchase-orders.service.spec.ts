@@ -57,7 +57,9 @@ describe('PurchaseOrdersService', () => {
 
   const mockPoDocRepo = {
     find: jest.fn(),
+    findAndCount: jest.fn(),
     findOne: jest.fn(),
+    count: jest.fn(),
     create: jest.fn(),
     save: jest.fn(),
     remove: jest.fn(),
@@ -66,6 +68,7 @@ describe('PurchaseOrdersService', () => {
   const mockProductRepo = {
     find: jest.fn(),
     findOne: jest.fn(),
+    count: jest.fn(),
     create: jest.fn(),
     save: jest.fn(),
     remove: jest.fn(),
@@ -184,6 +187,12 @@ describe('PurchaseOrdersService', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
+
+    // findOne chỉ trả thông tin chung kèm hai số đếm, nên mọi test đi qua nó
+    // đều cần count có giá trị mặc định.
+    mockProductRepo.count.mockResolvedValue(0);
+    mockPoDocRepo.count.mockResolvedValue(0);
+    mockPoDocRepo.findAndCount.mockResolvedValue([[], 0]);
 
     storageMock = {
       getPresignedPutUrl: jest.fn().mockResolvedValue('https://s3.example/put'),

@@ -61,6 +61,7 @@ import {
   CreatePurchaseOrderDto,
   UpdatePurchaseOrderDto,
   QueryPurchaseOrderDto,
+  QueryPoDocumentDto,
   UpdatePoStatusDto,
   LinkPoDocumentDto,
   CreatePoProductDto,
@@ -141,6 +142,16 @@ export interface PoDocumentPreviewResponse {
   text?: string;
 }
 
+/**
+ * Thông tin chung của một đơn hàng PO.
+ *
+ * Cố ý KHÔNG kèm products / documents / statusHistory: mỗi tab ở màn chi tiết
+ * tự gọi endpoint riêng của nó (`:id/products`, `:id/documents`, `:id/history`).
+ * Trước đây gói tất cả vào một response khiến mỗi lần mở PO phải nạp cả sản
+ * phẩm, tài liệu, lịch sử và presign S3 cho từng tài liệu — dù người dùng chỉ
+ * xem thông tin chung. Hai trường *Count ở đây đủ để tab hiển thị con số mà
+ * không phải tải danh sách.
+ */
 export interface PurchaseOrderDetailResponse {
   id: string;
   poCode: string;
@@ -157,26 +168,20 @@ export interface PurchaseOrderDetailResponse {
   createdBy: string | null;
   createdAt: Date;
   updatedAt: Date;
-  products: PurchaseOrderProduct[];
-  documents: {
-    documentId: string;
-    documentCode: string | null;
-    title: string;
-    purpose: string;
-    linkedAt: Date;
-    fileUrl?: string | null;
-    fileName?: string | null;
-    fileSize?: number | null;
-  }[];
-  statusHistory: {
-    id: string;
-    oldStatus: PoStatus | null;
-    newStatus: PoStatus;
-    action: string;
-    reason: string | null;
-    changedBy: string | null;
-    changedAt: Date;
-  }[];
+  productsCount: number;
+  documentsCount: number;
+}
+
+/** Một tài liệu đã gắn vào PO, kèm link tải đã ký sẵn. */
+export interface PoDocumentResponse {
+  documentId: string;
+  documentCode: string | null;
+  title: string;
+  purpose: string;
+  linkedAt: Date;
+  fileUrl?: string | null;
+  fileName?: string | null;
+  fileSize?: number | null;
 }
 
 function toYmdString(val: string | Date): string {
@@ -425,39 +430,102 @@ export class PurchaseOrdersService {
     };
   }
 
+  /**
+   * Thông tin chung của PO. Chỉ đọc bảng purchase_orders cộng hai câu đếm —
+   * không nạp sản phẩm, tài liệu hay lịch sử, và không gọi S3.
+   */
   async findOne(id: string): Promise<PurchaseOrderDetailResponse> {
     const po = await this.poRepo.findOne({ where: { id } });
     if (!po) {
       throw new NotFoundException(`Không tìm thấy đơn hàng PO với ID: ${id}`);
     }
 
-    const poDocs = await this.poDocRepo.find({
-      where: { purchaseOrderId: id },
-      order: { linkedAt: 'DESC' },
+    const [productsCount, documentsCount] = await Promise.all([
+      this.productRepo.count({ where: { purchaseOrderId: id } }),
+      this.poDocRepo.count({ where: { purchaseOrderId: id } }),
+    ]);
+
+    return {
+      id: po.id,
+      poCode: po.poCode,
+      customerPoCode: po.customerPoCode,
+      customerId: po.customerId,
+      customerNameSnapshot: po.customerNameSnapshot,
+      receivedDate: po.receivedDate,
+      deadline: po.deadline || null,
+      note: po.note,
+      status: po.status,
+      cancellationReason: po.cancellationReason,
+      closedAt: po.closedAt,
+      closedBy: po.closedBy,
+      createdBy: po.createdBy,
+      createdAt: po.createdAt,
+      updatedAt: po.updatedAt,
+      productsCount,
+      documentsCount,
+    };
+  }
+
+  /**
+   * Danh sách tài liệu đã gắn vào PO.
+   *
+   * URL tải được ký lại ở mỗi lần đọc — không bao giờ lưu presigned URL xuống
+   * DB vì nó hết hạn sau PRESIGN_GET_EXPIRY_SECONDS.
+   */
+  async getDocuments(
+    id: string,
+    query: QueryPoDocumentDto = {},
+  ): Promise<PaginatedPoResult<PoDocumentResponse>> {
+    const po = await this.poRepo.findOne({
+      where: { id },
+      select: { id: true },
     });
-
-    const docIds = poDocs.map((pd) => pd.documentId);
-    let docsMap: Map<string, Document> = new Map();
-    let docVersionsMap: Map<string, DocumentVersion> = new Map();
-
-    if (docIds.length > 0) {
-      const docs = await this.docRepo.find({ where: { id: In(docIds) } });
-      docsMap = new Map(docs.map((d) => [d.id, d]));
-
-      const versionIds = docs
-        .map((d) => d.currentVersionId)
-        .filter((vId): vId is string => Boolean(vId));
-      if (versionIds.length > 0) {
-        const versions = await this.docVersionRepo.find({
-          where: { id: In(versionIds) },
-        });
-        docVersionsMap = new Map(versions.map((v) => [v.id, v]));
-      }
+    if (!po) {
+      throw new NotFoundException(`Không tìm thấy đơn hàng PO với ID: ${id}`);
     }
 
-    // Resolved fresh on every read — never persist a presigned URL, it expires
-    // after PRESIGN_GET_EXPIRY_SECONDS.
-    const formattedDocs = await Promise.all(
+    const page = query.page && query.page > 0 ? query.page : 1;
+    const limit =
+      query.limit && query.limit > 0 ? Math.min(query.limit, 100) : 20;
+
+    const where = {
+      purchaseOrderId: id,
+      ...(query.purpose ? { purpose: query.purpose } : {}),
+    };
+
+    const [poDocs, total] = await this.poDocRepo.findAndCount({
+      where,
+      order: { linkedAt: 'DESC' },
+      skip: (page - 1) * limit,
+      take: limit,
+    });
+
+    const emptyResult = {
+      items: [] as PoDocumentResponse[],
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit) || 0,
+    };
+    if (poDocs.length === 0) return emptyResult;
+
+    const docIds = poDocs.map((pd) => pd.documentId);
+    const docs = await this.docRepo.find({ where: { id: In(docIds) } });
+    const docsMap = new Map(docs.map((d) => [d.id, d]));
+
+    const versionIds = docs
+      .map((d) => d.currentVersionId)
+      .filter((vId): vId is string => Boolean(vId));
+    const docVersionsMap =
+      versionIds.length > 0
+        ? new Map(
+            (
+              await this.docVersionRepo.find({ where: { id: In(versionIds) } })
+            ).map((v) => [v.id, v]),
+          )
+        : new Map<string, DocumentVersion>();
+
+    const items = await Promise.all(
       poDocs.map(async (pd) => {
         const masterDoc = docsMap.get(pd.documentId);
         const version = masterDoc?.currentVersionId
@@ -478,43 +546,12 @@ export class PurchaseOrdersService {
       }),
     );
 
-    const products = await this.productRepo.find({
-      where: { purchaseOrderId: id },
-      order: { createdAt: 'ASC' },
-    });
-
-    const history = await this.historyRepo.find({
-      where: { purchaseOrderId: id },
-      order: { changedAt: 'DESC' },
-    });
-
     return {
-      id: po.id,
-      poCode: po.poCode,
-      customerPoCode: po.customerPoCode,
-      customerId: po.customerId,
-      customerNameSnapshot: po.customerNameSnapshot,
-      receivedDate: po.receivedDate,
-      deadline: po.deadline || null,
-      note: po.note,
-      status: po.status,
-      cancellationReason: po.cancellationReason,
-      closedAt: po.closedAt,
-      closedBy: po.closedBy,
-      createdBy: po.createdBy,
-      createdAt: po.createdAt,
-      updatedAt: po.updatedAt,
-      products,
-      documents: formattedDocs,
-      statusHistory: history.map((h) => ({
-        id: h.id,
-        oldStatus: h.oldStatus,
-        newStatus: h.newStatus,
-        action: h.action,
-        reason: h.reason,
-        changedBy: h.changedBy,
-        changedAt: h.changedAt,
-      })),
+      items,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit) || 0,
     };
   }
 
@@ -1046,155 +1083,6 @@ export class PurchaseOrdersService {
         fileSize: dto.sizeBytes,
       };
     });
-  }
-
-  async uploadDocument(
-    poId: string,
-    file: {
-      originalname: string;
-      mimetype: string;
-      size: number;
-      buffer: Buffer;
-    },
-    purpose: string = 'other',
-    userId?: string,
-  ): Promise<{
-    documentId: string;
-    documentCode: string | null;
-    title: string;
-    purpose: string;
-    linkedAt: Date;
-    fileUrl: string;
-    fileName: string;
-    fileSize: number;
-  }> {
-    const po = await this.poRepo.findOne({ where: { id: poId } });
-    if (!po) {
-      throw new NotFoundException(`Không tìm thấy đơn hàng PO với ID: ${poId}`);
-    }
-
-    this.checkPoNotLocked(po, 'tải lên tài liệu mới');
-
-    const validPurposes = Object.values(DocumentPurpose);
-    const targetPurpose = (purpose || DocumentPurpose.OTHER) as DocumentPurpose;
-    if (!validPurposes.includes(targetPurpose)) {
-      throw new BadRequestException(
-        `Mục đích sử dụng tài liệu không hợp lệ. Các giá trị hợp lệ: ${validPurposes.join(', ')}`,
-      );
-    }
-
-    const ext = path.extname(file.originalname) || '';
-    this.validateFileMagicBytes(ext, file.buffer);
-
-    const uploadDir = path.join(process.cwd(), 'uploads', 'po-documents');
-    if (!fs.existsSync(uploadDir)) {
-      await fsPromises.mkdir(uploadDir, { recursive: true });
-    }
-
-    const filename = `${randomUUID()}${ext}`;
-    const filePath = path.join(uploadDir, filename);
-
-    if (file.buffer) {
-      await fsPromises.writeFile(filePath, file.buffer);
-    }
-
-    const storageKey = `/uploads/po-documents/${filename}`;
-    const now = new Date();
-
-    try {
-      const doc = this.docRepo.create({
-        documentCode: `DOC-PO-${Date.now().toString().slice(-6)}`,
-        title: file.originalname,
-        createdBy: userId || (null as any),
-        createdAt: now,
-      });
-      const savedDoc = (await this.docRepo.save(doc)) as unknown as Document;
-
-      const version = this.docVersionRepo.create({
-        documentId: savedDoc.id,
-        versionNo: 1,
-        originalFileName: file.originalname,
-        storageKey,
-        mimeType: file.mimetype || 'application/octet-stream',
-        byteSize: file.size || 0,
-        status: UploadStatus.READY,
-        uploadedBy: userId || (null as any),
-        uploadedAt: now,
-      });
-      const savedVersion = (await this.docVersionRepo.save(
-        version,
-      )) as unknown as DocumentVersion;
-
-      savedDoc.currentVersionId = savedVersion.id;
-      await this.docRepo.save(savedDoc);
-
-      const poDoc = this.poDocRepo.create({
-        purchaseOrderId: poId,
-        documentId: savedDoc.id,
-        purpose: targetPurpose,
-        linkedBy: userId || (null as any),
-        linkedAt: now,
-      });
-      await this.poDocRepo.save(poDoc);
-
-      return {
-        documentId: savedDoc.id,
-        documentCode: savedDoc.documentCode,
-        title: savedDoc.title,
-        purpose: String(targetPurpose),
-        linkedAt: now,
-        fileUrl: storageKey,
-        fileName: file.originalname,
-        fileSize: file.size,
-      };
-    } catch (error) {
-      if (fs.existsSync(filePath)) {
-        await fsPromises.unlink(filePath).catch(() => {});
-      }
-      throw error;
-    }
-  }
-
-  async uploadMultipleDocuments(
-    poId: string,
-    files: any[],
-    purpose: string = 'other',
-    userId?: string,
-  ): Promise<
-    {
-      documentId: string;
-      documentCode: string | null;
-      title: string;
-      purpose: string;
-      linkedAt: Date;
-      fileUrl: string;
-      fileName: string;
-      fileSize: number;
-    }[]
-  > {
-    const po = await this.poRepo.findOne({ where: { id: poId } });
-    if (!po) {
-      throw new NotFoundException(`Không tìm thấy đơn hàng PO với ID: ${poId}`);
-    }
-    this.checkPoNotLocked(po, 'tải lên tài liệu mới');
-
-    const results: {
-      documentId: string;
-      documentCode: string | null;
-      title: string;
-      purpose: string;
-      linkedAt: Date;
-      fileUrl: string;
-      fileName: string;
-      fileSize: number;
-    }[] = [];
-
-    for (const file of files) {
-      const doc = await this.uploadDocument(poId, file, purpose, userId);
-      results.push(doc);
-    }
-
-    return results;
   }
 
   private formatExcelCellValue(cell: any): string {
@@ -1886,8 +1774,26 @@ export class PurchaseOrdersService {
         0,
       );
 
+      // Liệt kê tường minh thay vì `...prod`: entity còn mang các cột nội bộ
+      // (rowVersion, previousStatus, createdBy/updatedBy, closedBy...) không
+      // nên lọt ra API.
       return {
-        ...prod,
+        id: prod.id,
+        purchaseOrderId: prod.purchaseOrderId,
+        sourceStyleId: prod.sourceStyleId,
+        productCode: prod.productCode,
+        productName: prod.productName,
+        category: prod.category,
+        materialNote: prod.materialNote,
+        deadline: prod.deadline,
+        structureImageVersionId: prod.structureImageVersionId,
+        status: prod.status,
+        cancellationReason: prod.cancellationReason,
+        closedAt: prod.closedAt,
+        as3bCmBaseDays: prod.as3bCmBaseDays,
+        importedAt: prod.importedAt,
+        createdAt: prod.createdAt,
+        updatedAt: prod.updatedAt,
         totalQuantity,
         colors: productColors,
         sourceStyle: sourceStyle
@@ -3008,264 +2914,6 @@ export class PurchaseOrdersService {
         })),
       };
     });
-  }
-
-  /**
-   * Tải lên tài liệu đính kèm trực tiếp cho Sản phẩm PO
-   */
-  async uploadProductDocument(
-    poId: string,
-    productId: string,
-    file: any,
-    purpose: string = 'other',
-    userId?: string,
-  ) {
-    const product = await this.productRepo.findOne({
-      where: { id: productId, purchaseOrderId: poId },
-    });
-    if (!product) {
-      throw new NotFoundException(
-        `Không tìm thấy sản phẩm #${productId} trong đơn hàng PO`,
-      );
-    }
-    if (product.status === ProductStatus.CLOSED) {
-      throw new BadRequestException(
-        'Sản phẩm đã bị khóa, không thể tải lên tài liệu mới.',
-      );
-    }
-
-    const validPurposes = Object.values(DocumentPurpose);
-    const targetPurpose = (purpose || DocumentPurpose.OTHER) as DocumentPurpose;
-    if (!validPurposes.includes(targetPurpose)) {
-      throw new BadRequestException(
-        `Mục đích sử dụng tài liệu không hợp lệ. Các giá trị hợp lệ: ${validPurposes.join(', ')}`,
-      );
-    }
-
-    const ext = path.extname(file.originalname) || '';
-    this.validateFileMagicBytes(ext, file.buffer);
-
-    const uploadDir = path.join(process.cwd(), 'uploads', 'po-documents');
-    if (!fs.existsSync(uploadDir)) {
-      await fsPromises.mkdir(uploadDir, { recursive: true });
-    }
-
-    const filename = `${randomUUID()}${ext}`;
-    const filePath = path.join(uploadDir, filename);
-
-    if (file.buffer) {
-      await fsPromises.writeFile(filePath, file.buffer);
-    }
-
-    const storageKey = `/uploads/po-documents/${filename}`;
-    const now = new Date();
-
-    try {
-      const doc = this.docRepo.create({
-        documentCode: `DOC-PROD-${Date.now().toString().slice(-6)}`,
-        title: file.originalname,
-        createdBy: userId || (null as any),
-        createdAt: now,
-      });
-      const savedDoc = (await this.docRepo.save(doc)) as unknown as Document;
-
-      const version = this.docVersionRepo.create({
-        documentId: savedDoc.id,
-        versionNo: 1,
-        originalFileName: file.originalname,
-        storageKey,
-        mimeType: file.mimetype || 'application/octet-stream',
-        byteSize: file.size || 0,
-        status: UploadStatus.READY,
-        uploadedBy: userId || (null as any),
-        uploadedAt: now,
-      });
-      const savedVersion = (await this.docVersionRepo.save(
-        version,
-      )) as unknown as DocumentVersion;
-
-      savedDoc.currentVersionId = savedVersion.id;
-      await this.docRepo.save(savedDoc);
-
-      // Lưu liên kết kho PO
-      const poDoc = this.poDocRepo.create({
-        purchaseOrderId: poId,
-        documentId: savedDoc.id,
-        purpose: targetPurpose,
-        linkedBy: userId || (null as any),
-        linkedAt: now,
-      });
-      await this.poDocRepo.save(poDoc);
-
-      // Lưu liên kết sản phẩm
-      const productDoc = this.productDocRepo.create({
-        productId,
-        documentId: savedDoc.id,
-        sourcePoDocument: false,
-        purpose: targetPurpose,
-        linkedBy: userId,
-        linkedAt: now,
-      });
-      await this.productDocRepo.save(productDoc);
-
-      return {
-        productId,
-        documentId: savedDoc.id,
-        documentCode: savedDoc.documentCode,
-        title: savedDoc.title,
-        purpose: String(targetPurpose),
-        sourcePoDocument: false,
-        linkedAt: now,
-        fileName: file.originalname,
-        fileUrl: storageKey,
-        fileSize: file.size,
-        currentVersionNo: 1,
-        versions: [
-          {
-            id: savedVersion.id,
-            versionNo: 1,
-            originalFileName: file.originalname,
-            fileUrl: storageKey,
-            fileSize: file.size,
-            mimeType: file.mimetype,
-            changeReason: null,
-            uploadedAt: now,
-            uploadedBy: userId,
-          },
-        ],
-      };
-    } catch (error) {
-      if (fs.existsSync(filePath)) {
-        await fsPromises.unlink(filePath).catch(() => {});
-      }
-      throw error;
-    }
-  }
-
-  /**
-   * Cập nhật phiên bản mới cho tài liệu của sản phẩm
-   */
-  async uploadDocumentVersion(
-    poId: string,
-    productId: string,
-    documentId: string,
-    file: any,
-    changeReason?: string,
-    userId?: string,
-  ) {
-    if (!changeReason || !changeReason.trim()) {
-      throw new BadRequestException(
-        'Vui lòng nhập lý do / ghi chú thay đổi phiên bản từ khách hàng.',
-      );
-    }
-
-    const product = await this.productRepo.findOne({
-      where: { id: productId, purchaseOrderId: poId },
-    });
-    if (!product) {
-      throw new NotFoundException(
-        `Không tìm thấy sản phẩm #${productId} trong đơn hàng PO`,
-      );
-    }
-    if (product.status === ProductStatus.CLOSED) {
-      throw new BadRequestException(
-        'Sản phẩm đã bị khóa, không thể cập nhật phiên bản mới.',
-      );
-    }
-
-    const prodDoc = await this.productDocRepo.findOne({
-      where: { productId, documentId },
-    });
-    if (!prodDoc) {
-      throw new NotFoundException('Tài liệu không thuộc sản phẩm này.');
-    }
-
-    const doc = await this.docRepo.findOne({ where: { id: documentId } });
-    if (!doc) {
-      throw new NotFoundException('Không tìm thấy tài liệu.');
-    }
-
-    const existingVersions = await this.docVersionRepo.find({
-      where: { documentId },
-      order: { versionNo: 'DESC' },
-    });
-    const maxVersion =
-      existingVersions.length > 0
-        ? Math.max(...existingVersions.map((v) => v.versionNo))
-        : 0;
-    const nextVersionNo = maxVersion + 1;
-
-    const ext = path.extname(file.originalname) || '';
-    this.validateFileMagicBytes(ext, file.buffer);
-
-    const uploadDir = path.join(process.cwd(), 'uploads', 'po-documents');
-    if (!fs.existsSync(uploadDir)) {
-      await fsPromises.mkdir(uploadDir, { recursive: true });
-    }
-
-    const filename = `${randomUUID()}${ext}`;
-    const filePath = path.join(uploadDir, filename);
-
-    if (file.buffer) {
-      await fsPromises.writeFile(filePath, file.buffer);
-    }
-
-    const storageKey = `/uploads/po-documents/${filename}`;
-    const now = new Date();
-
-    try {
-      const newVersion = this.docVersionRepo.create({
-        documentId,
-        versionNo: nextVersionNo,
-        originalFileName: file.originalname,
-        storageKey,
-        mimeType: file.mimetype || 'application/octet-stream',
-        byteSize: file.size || 0,
-        status: UploadStatus.READY,
-        changeReason: changeReason?.trim() || undefined,
-        uploadedBy: userId || (null as any),
-        uploadedAt: now,
-      });
-      const savedVersion = (await this.docVersionRepo.save(
-        newVersion,
-      )) as unknown as DocumentVersion;
-
-      doc.currentVersionId = savedVersion.id;
-      await this.docRepo.save(doc);
-
-      const allVersions = [savedVersion, ...existingVersions];
-
-      return {
-        productId,
-        documentId: doc.id,
-        documentCode: doc.documentCode,
-        title: doc.title,
-        purpose: String(prodDoc.purpose),
-        sourcePoDocument: prodDoc.sourcePoDocument,
-        linkedAt: prodDoc.linkedAt,
-        fileName: file.originalname,
-        fileUrl: storageKey,
-        fileSize: file.size,
-        currentVersionNo: nextVersionNo,
-        changeReason: savedVersion.changeReason,
-        versions: allVersions.map((v) => ({
-          id: v.id,
-          versionNo: v.versionNo,
-          originalFileName: v.originalFileName,
-          fileUrl: v.storageKey,
-          fileSize: v.byteSize ? Number(v.byteSize) : null,
-          mimeType: v.mimeType,
-          changeReason: v.changeReason,
-          uploadedAt: v.uploadedAt,
-          uploadedBy: v.uploadedBy,
-        })),
-      };
-    } catch (error) {
-      if (fs.existsSync(filePath)) {
-        await fsPromises.unlink(filePath).catch(() => {});
-      }
-      throw error;
-    }
   }
 
   /**

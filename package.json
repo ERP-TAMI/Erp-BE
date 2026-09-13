@@ -31,7 +31,8 @@
     "seed:master-data": "ts-node -r tsconfig-paths/register src/database/seeds/seed-master-data.ts",
     "seed:master-data:reset": "ts-node -r tsconfig-paths/register src/database/seeds/seed-master-data.ts --reset",
     "seed:po-demo": "ts-node -r tsconfig-paths/register src/database/seeds/seed-po-demo.ts",
-    "verify:start-dev": "node scripts/verify-start-dev.js"
+    "verify:start-dev": "node scripts/verify-start-dev.js",
+    "migrate:legacy-uploads": "ts-node -r tsconfig-paths/register src/database/scripts/migrate-legacy-uploads-to-s3.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.600.0",
