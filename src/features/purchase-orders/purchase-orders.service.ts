@@ -1980,41 +1980,64 @@ export class PurchaseOrdersService {
         {} as Record<string, DocumentVersion[]>,
       );
 
-      docsWithInfo = productDocs.map((pd) => {
-        const masterDoc = docsMap.get(pd.documentId);
-        const docVersions = versionsByDoc[pd.documentId] || [];
-        const currentVersion =
-          (masterDoc?.currentVersionId &&
-            docVersions.find((v) => v.id === masterDoc.currentVersionId)) ||
-          docVersions[0] ||
-          null;
+      docsWithInfo = await Promise.all(
+        productDocs.map(async (pd) => {
+          const masterDoc = docsMap.get(pd.documentId);
+          const docVersions = versionsByDoc[pd.documentId] || [];
+          const currentVersion =
+            (masterDoc?.currentVersionId &&
+              docVersions.find((v) => v.id === masterDoc.currentVersionId)) ||
+            docVersions[0] ||
+            null;
 
-        return {
-          ...pd,
-          title:
-            masterDoc?.title || currentVersion?.originalFileName || 'Tài liệu',
-          documentCode: masterDoc?.documentCode || null,
-          fileName:
-            currentVersion?.originalFileName || masterDoc?.title || null,
-          fileUrl: currentVersion?.storageKey || null,
-          fileSize: currentVersion?.byteSize
-            ? Number(currentVersion.byteSize)
-            : null,
-          currentVersionNo: currentVersion?.versionNo || 1,
-          changeReason: currentVersion?.changeReason || null,
-          versions: docVersions.map((v) => ({
-            id: v.id,
-            versionNo: v.versionNo,
-            originalFileName: v.originalFileName,
-            fileUrl: v.storageKey,
-            fileSize: v.byteSize ? Number(v.byteSize) : null,
-            mimeType: v.mimeType,
-            changeReason: v.changeReason,
-            uploadedAt: v.uploadedAt,
-            uploadedBy: v.uploadedBy,
-          })),
-        };
-      });
+          // fileUrl trước đây trả thẳng storageKey — đó là object key của S3,
+          // không phải URL, nên mọi link tải/xem tài liệu của sản phẩm đều hỏng.
+          // Ký lại ở mỗi lần đọc, giống cách tài liệu PO và ảnh Style vẫn làm.
+          const signedCurrentUrl = isResolvableObjectKey(
+            currentVersion?.storageKey,
+          )
+            ? await this.storage.getPresignedGetUrl(currentVersion.storageKey)
+            : null;
+
+          const signedVersions = await Promise.all(
+            docVersions.map(async (v) => ({
+              id: v.id,
+              versionNo: v.versionNo,
+              originalFileName: v.originalFileName,
+              fileUrl: isResolvableObjectKey(v.storageKey)
+                ? await this.storage.getPresignedGetUrl(v.storageKey)
+                : null,
+              fileSize: v.byteSize ? Number(v.byteSize) : null,
+              mimeType: v.mimeType,
+              changeReason: v.changeReason,
+              uploadedAt: v.uploadedAt,
+              uploadedBy: v.uploadedBy,
+            })),
+          );
+
+          return {
+            documentId: pd.documentId,
+            productId: pd.productId,
+            purpose: pd.purpose,
+            linkedAt: pd.linkedAt,
+            sourcePoDocument: pd.sourcePoDocument ?? null,
+            title:
+              masterDoc?.title ||
+              currentVersion?.originalFileName ||
+              'Tài liệu',
+            documentCode: masterDoc?.documentCode || null,
+            fileName:
+              currentVersion?.originalFileName || masterDoc?.title || null,
+            fileUrl: signedCurrentUrl,
+            fileSize: currentVersion?.byteSize
+              ? Number(currentVersion.byteSize)
+              : null,
+            currentVersionNo: currentVersion?.versionNo || 1,
+            changeReason: currentVersion?.changeReason || null,
+            versions: signedVersions,
+          };
+        }),
+      );
     }
 
     // Lấy thông tin sizes của các colors
@@ -2058,8 +2081,28 @@ export class PurchaseOrdersService {
       });
     }
 
+    // Liệt kê tường minh thay vì `...product`, cùng lý do như getProducts:
+    // entity còn mang rowVersion, previousStatus, createdBy/updatedBy, closedBy.
     return {
-      ...product,
+      id: product.id,
+      purchaseOrderId: product.purchaseOrderId,
+      sourceStyleId: product.sourceStyleId,
+      productCode: product.productCode,
+      productName: product.productName,
+      category: product.category,
+      materialNote: product.materialNote,
+      deadline: product.deadline,
+      structureImageVersionId: product.structureImageVersionId,
+      structureImageUrl: isResolvableObjectKey(product.structureImageVersionId)
+        ? await this.storage.getPresignedGetUrl(product.structureImageVersionId)
+        : null,
+      status: product.status,
+      cancellationReason: product.cancellationReason,
+      closedAt: product.closedAt,
+      as3bCmBaseDays: product.as3bCmBaseDays,
+      importedAt: product.importedAt,
+      createdAt: product.createdAt,
+      updatedAt: product.updatedAt,
       totalQuantity,
       colors: colorsWithSizes,
       sourceStyle: sourceStyle
@@ -3013,17 +3056,21 @@ export class PurchaseOrdersService {
           ),
           fileSize: dto.sizeBytes,
           currentVersionNo: nextVersionNo,
-          versions: allVersions.map((v) => ({
-            id: v.id,
-            versionNo: v.versionNo,
-            originalFileName: v.originalFileName,
-            fileUrl: v.storageKey,
-            fileSize: v.byteSize ? Number(v.byteSize) : null,
-            mimeType: v.mimeType,
-            changeReason: v.changeReason,
-            uploadedAt: v.uploadedAt,
-            uploadedBy: v.uploadedBy,
-          })),
+          versions: await Promise.all(
+            allVersions.map(async (v) => ({
+              id: v.id,
+              versionNo: v.versionNo,
+              originalFileName: v.originalFileName,
+              fileUrl: isResolvableObjectKey(v.storageKey)
+                ? await this.storage.getPresignedGetUrl(v.storageKey)
+                : null,
+              fileSize: v.byteSize ? Number(v.byteSize) : null,
+              mimeType: v.mimeType,
+              changeReason: v.changeReason,
+              uploadedAt: v.uploadedAt,
+              uploadedBy: v.uploadedBy,
+            })),
+          ),
         };
       })
       .catch((e) => this.rethrowDuplicateStorageKey(e));
