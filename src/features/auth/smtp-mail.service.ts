@@ -50,6 +50,50 @@ export class SmtpMailService implements OnModuleDestroy {
     });
   }
 
+  async sendAccountLockedEmail(input: {
+    email: string;
+    fullName: string;
+    reason: string;
+  }): Promise<void> {
+    return this.sendAccountRestrictionEmail(input, {
+      subject: 'Tài khoản TAMI ERP đã bị khóa',
+      description: 'Tài khoản TAMI ERP của bạn đã bị quản trị viên khóa.',
+    });
+  }
+
+  async sendAccountDisabledEmail(input: {
+    email: string;
+    fullName: string;
+    reason: string;
+  }): Promise<void> {
+    return this.sendAccountRestrictionEmail(input, {
+      subject: 'Tài khoản TAMI ERP đã bị vô hiệu hóa',
+      description:
+        'Tài khoản TAMI ERP của bạn đã bị quản trị viên vô hiệu hóa.',
+    });
+  }
+
+  private async sendAccountRestrictionEmail(
+    input: { email: string; fullName: string; reason: string },
+    content: { subject: string; description: string },
+  ): Promise<void> {
+    const user =
+      this.config.get<string>('MAIL_USERNAME') ||
+      this.config.getOrThrow<string>('MAIL_USER');
+    const pass =
+      this.config.get<string>('MAIL_PASSWORD') ||
+      this.config.getOrThrow<string>('MAIL_PASS');
+    const from = this.config.get<string>('MAIL_FROM') || user;
+
+    await this.getTransporter(user, pass).sendMail({
+      from,
+      to: input.email,
+      subject: content.subject,
+      text: `Xin chào ${input.fullName},\n\n${content.description}\n\nLý do: ${input.reason}\n\nVui lòng liên hệ quản trị viên nếu bạn cần hỗ trợ.`,
+      html: `<p>Xin chào ${escapeHtml(input.fullName)},</p><p>${escapeHtml(content.description)}</p><p><strong>Lý do:</strong> ${escapeHtml(input.reason)}</p><p>Vui lòng liên hệ quản trị viên nếu bạn cần hỗ trợ.</p>`,
+    });
+  }
+
   private getTransporter(user: string, pass: string): nodemailer.Transporter {
     if (!this.transporter) {
       this.transporter = nodemailer.createTransport({

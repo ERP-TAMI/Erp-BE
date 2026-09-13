@@ -129,7 +129,7 @@ describe('AuthService', () => {
       expect(patch.lockoutUntil.getTime()).toBeGreaterThan(Date.now());
     });
 
-    it('rejects a locked account with ACCOUNT_LOCKED, even before checking the password', async () => {
+    it('rejects a temporary lockout with ACCOUNT_TEMPORARILY_LOCKED before checking the password', async () => {
       const user = buildUser({
         lockoutUntil: new Date(Date.now() + 60_000),
       });
@@ -138,8 +138,24 @@ describe('AuthService', () => {
 
       await expect(
         service.login(user.email, 'whatever', {}),
-      ).rejects.toMatchObject({ response: { code: ErrorCode.ACCOUNT_LOCKED } });
+      ).rejects.toMatchObject({
+        response: { code: ErrorCode.ACCOUNT_TEMPORARILY_LOCKED },
+      });
       expect(verifySpy).not.toHaveBeenCalled();
+    });
+
+    it('rejects an administrator lock with ACCOUNT_MANUALLY_LOCKED', async () => {
+      const user = buildUser({ manuallyLockedAt: new Date() });
+      userRepository.findOne.mockResolvedValue(user);
+
+      await expect(
+        service.login(user.email, 'whatever', {}),
+      ).rejects.toMatchObject({
+        response: {
+          code: ErrorCode.ACCOUNT_MANUALLY_LOCKED,
+          message: 'Tài khoản đã bị quản trị viên khóa.',
+        },
+      });
     });
 
     it('rejects an inactive account with ACCOUNT_INACTIVE', async () => {
@@ -226,7 +242,7 @@ describe('AuthService', () => {
       );
 
       await expect(service.refresh('raw-token', {})).rejects.toMatchObject({
-        response: { code: ErrorCode.ACCOUNT_LOCKED },
+        response: { code: ErrorCode.ACCOUNT_TEMPORARILY_LOCKED },
       });
     });
   });

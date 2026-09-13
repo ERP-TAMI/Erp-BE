@@ -193,14 +193,14 @@ export class AuthService {
 
     if (user.manuallyLockedAt) {
       throw new ForbiddenException({
-        code: ErrorCode.ACCOUNT_LOCKED,
+        code: ErrorCode.ACCOUNT_MANUALLY_LOCKED,
         message: 'Tài khoản đã bị quản trị viên khóa.',
       });
     }
 
     if (user.lockoutUntil && user.lockoutUntil.getTime() > Date.now()) {
       throw new ForbiddenException({
-        code: ErrorCode.ACCOUNT_LOCKED,
+        code: ErrorCode.ACCOUNT_TEMPORARILY_LOCKED,
         message:
           'Tài khoản đang tạm khoá do đăng nhập sai nhiều lần. Vui lòng thử lại sau.',
       });

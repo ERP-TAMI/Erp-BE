@@ -55,3 +55,22 @@ export function assertCanUpdateUser(input: {
   }
   forbidden('Bạn không có quyền sửa người dùng này.');
 }
+
+export function assertCanManageAccountAction(input: {
+  actorId: string;
+  actorRole: string;
+  targetId: string;
+  targetRole: UserRoleCode;
+}): void {
+  if (input.actorId === input.targetId) {
+    forbidden('Bạn không được thực hiện thao tác bảo mật trên chính mình.');
+  }
+  if (input.actorRole === UserRoleCode.SA) return;
+  if (
+    input.actorRole === UserRoleCode.IT &&
+    IT_MANAGED_ROLES.has(input.targetRole)
+  ) {
+    return;
+  }
+  forbidden('Bạn không có quyền thực hiện thao tác này với người dùng.');
+}

@@ -37,7 +37,13 @@ describe('UserManagementService', () => {
     users = {
       createQueryBuilder: jest.fn().mockReturnValue(queryBuilder),
     } as unknown as jest.Mocked<Repository<User>>;
-    service = new UserManagementService(users, {} as never, {} as never);
+    service = new UserManagementService(
+      users,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+    );
   });
 
   it('returns an allowlisted, paginated user response', async () => {

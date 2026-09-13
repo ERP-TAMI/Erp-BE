@@ -1,6 +1,8 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -20,20 +22,32 @@ import {
 import {
   CreateUserResponseDto,
   MutateUserDto,
+  UpdateUserDto,
   UpdateUserResponseDto,
 } from './dto/mutate-user.dto';
 import { Role } from '../auth/entities/Role.entity';
 import { UserRole } from '../auth/entities/UserRole.entity';
 import { UserSession } from '../auth/entities/UserSession.entity';
-import { RecordStatus } from '../../common/enums/database.enums';
+import {
+  AuditEventType,
+  RecordStatus,
+} from '../../common/enums/database.enums';
 import { ErrorCode } from '../../common/enums/error-code.enum';
 import { hashPassword } from '../../common/security/password.util';
 import { PasswordSetupService } from '../auth/password-setup.service';
 import { PasswordSetupEmailStatus } from '../auth/password-setup-email-status.enum';
 import {
+  assertCanManageAccountAction,
   assertCanCreateUser,
   assertCanUpdateUser,
 } from './user-management.policy';
+import {
+  AccountStatusActionDto,
+  AccountStatusActionResponseDto,
+  PasswordResetResponseDto,
+} from './dto/account-action.dto';
+import { AuditService } from '../audit/audit.service';
+import { SmtpMailService } from '../auth/smtp-mail.service';
 
 type UserListRawRow = {
   id: string;
@@ -59,11 +73,15 @@ const DISPLAY_ROLE_JOIN = `role.id = (
 
 @Injectable()
 export class UserManagementService {
+  private readonly logger = new Logger(UserManagementService.name);
+
   constructor(
     @InjectRepository(User)
     private readonly users: Repository<User>,
     @InjectDataSource() private readonly dataSource: DataSource,
     private readonly passwordSetup: PasswordSetupService,
+    private readonly audit: AuditService,
+    private readonly mail: SmtpMailService,
   ) {}
 
   async create(
@@ -134,7 +152,7 @@ export class UserManagementService {
 
   async update(
     id: string,
-    dto: MutateUserDto,
+    dto: UpdateUserDto,
     actor: { id: string; roleCode: string },
   ): Promise<UpdateUserResponseDto> {
     try {
@@ -146,45 +164,35 @@ export class UserManagementService {
         });
         if (!user) this.throwUserNotFound();
         const currentRole = await this.currentRole(id, manager);
+        const currentStatus = this.deriveEditableStatus(user);
+        if (dto.accountStatus && dto.accountStatus !== currentStatus) {
+          throw new BadRequestException({
+            code: ErrorCode.BAD_REQUEST,
+            message:
+              'Hãy dùng thao tác trạng thái tài khoản để khóa hoặc vô hiệu hóa người dùng.',
+          });
+        }
         assertCanUpdateUser({
           actorId: actor.id,
           actorRole: actor.roleCode,
           targetId: id,
           currentRole: currentRole.code,
           nextRole: dto.roleCode,
-          nextStatus: dto.accountStatus,
+          nextStatus: currentStatus,
         });
         await this.assertEmailAvailable(dto.email, id, userRepository);
         const role = await manager.getRepository(Role).findOne({
           where: { code: dto.roleCode },
         });
         if (!role) this.throwRoleNotFound();
-        const currentStatus = this.deriveEditableStatus(user);
         const previousEmail = user.email;
         const emailChanged = previousEmail !== dto.email;
         const securityChanged =
-          emailChanged ||
-          currentRole.code !== dto.roleCode ||
-          currentStatus !== dto.accountStatus;
-        const preserveExistingLock =
-          dto.accountStatus === UserAccountStatus.LOCKED &&
-          currentStatus === UserAccountStatus.LOCKED;
-        const state = preserveExistingLock
-          ? {
-              status: RecordStatus.ACTIVE,
-              manuallyLockedAt: user.manuallyLockedAt,
-              manuallyLockedBy: user.manuallyLockedBy,
-            }
-          : this.accountState(dto.accountStatus, actor.id);
+          emailChanged || currentRole.code !== dto.roleCode;
         Object.assign(user, {
           fullName: dto.fullName,
           email: dto.email,
           phone: dto.phone,
-          status: state.status,
-          manuallyLockedAt: state.manuallyLockedAt,
-          manuallyLockedBy: state.manuallyLockedBy,
-          lockoutUntil: preserveExistingLock ? user.lockoutUntil : null,
-          loginFailedCount: preserveExistingLock ? user.loginFailedCount : 0,
           authVersion: securityChanged
             ? user.authVersion + 1
             : user.authVersion,
@@ -262,6 +270,186 @@ export class UserManagementService {
     });
     return {
       invitationStatus: await this.passwordSetup.deliver(invitation),
+    };
+  }
+
+  async updateAccountStatus(
+    id: string,
+    dto: AccountStatusActionDto,
+    actor: { id: string; roleCode: string },
+  ): Promise<AccountStatusActionResponseDto> {
+    const reason = dto.reason?.trim();
+    if (
+      (dto.accountStatus === UserAccountStatus.LOCKED ||
+        dto.accountStatus === UserAccountStatus.INACTIVE) &&
+      !reason
+    ) {
+      throw new BadRequestException({
+        code: ErrorCode.BAD_REQUEST,
+        message: 'Lý do là bắt buộc khi khóa hoặc vô hiệu hóa tài khoản.',
+      });
+    }
+
+    const result = await this.dataSource.transaction(async (manager) => {
+      const userRepository = manager.getRepository(User);
+      const user = await userRepository.findOne({
+        where: { id },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!user) this.throwUserNotFound();
+      const role = await this.currentRole(id, manager);
+      assertCanManageAccountAction({
+        actorId: actor.id,
+        actorRole: actor.roleCode,
+        targetId: id,
+        targetRole: role.code,
+      });
+
+      const previousStatus = this.deriveEditableStatus(user);
+      if (
+        previousStatus === UserAccountStatus.INACTIVE &&
+        dto.accountStatus === UserAccountStatus.LOCKED
+      ) {
+        throw new ConflictException({
+          code: ErrorCode.CONFLICT,
+          message:
+            'Tài khoản đã vô hiệu hóa phải được kích hoạt lại trước khi khóa.',
+        });
+      }
+      const changesState =
+        dto.accountStatus !== previousStatus ||
+        (dto.accountStatus === UserAccountStatus.LOCKED &&
+          !user.manuallyLockedAt) ||
+        (dto.accountStatus === UserAccountStatus.ACTIVE &&
+          (!!user.manuallyLockedAt ||
+            !!user.lockoutUntil ||
+            user.loginFailedCount > 0));
+
+      if (!changesState) {
+        return {
+          response: { user: this.toUserItem(user, role.code, role.name) },
+          accountRestrictionNotification: null,
+        };
+      }
+
+      const state = this.accountState(dto.accountStatus, actor.id);
+      Object.assign(user, {
+        status: state.status,
+        manuallyLockedAt: state.manuallyLockedAt,
+        manuallyLockedBy: state.manuallyLockedBy,
+        lockoutUntil: null,
+        loginFailedCount: 0,
+        authVersion: user.authVersion + 1,
+      });
+      await userRepository.save(user);
+      await this.revokeSessions(
+        manager,
+        id,
+        this.accountSessionRevokeReason(dto.accountStatus, previousStatus),
+      );
+      await this.audit.recordUserChange(manager, {
+        actorId: actor.id,
+        actorRole: actor.roleCode,
+        targetId: user.id,
+        targetLabel: user.email,
+        eventType: AuditEventType.STATUS_CHANGED,
+        reason: this.accountStatusAuditReason(
+          dto.accountStatus,
+          previousStatus,
+          reason,
+        ),
+        changes: [
+          {
+            fieldName: 'accountStatus',
+            oldValue: previousStatus,
+            newValue: dto.accountStatus,
+          },
+        ],
+      });
+
+      return {
+        response: { user: this.toUserItem(user, role.code, role.name) },
+        accountRestrictionNotification:
+          dto.accountStatus === UserAccountStatus.LOCKED ||
+          dto.accountStatus === UserAccountStatus.INACTIVE
+            ? {
+                accountStatus: dto.accountStatus,
+                userId: user.id,
+                email: user.email,
+                fullName: user.fullName,
+                reason: reason!,
+              }
+            : null,
+      };
+    });
+
+    if (result.accountRestrictionNotification) {
+      this.sendAccountRestrictionEmailInBackground(
+        result.accountRestrictionNotification,
+      );
+    }
+    return result.response;
+  }
+
+  async resetPassword(
+    id: string,
+    actor: { id: string; roleCode: string },
+  ): Promise<PasswordResetResponseDto> {
+    const result = await this.dataSource.transaction(async (manager) => {
+      const userRepository = manager.getRepository(User);
+      const user = await userRepository.findOne({
+        where: { id },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!user) this.throwUserNotFound();
+      const role = await this.currentRole(id, manager);
+      assertCanManageAccountAction({
+        actorId: actor.id,
+        actorRole: actor.roleCode,
+        targetId: id,
+        targetRole: role.code,
+      });
+      if (user.mustChangePassword) {
+        throw new BadRequestException({
+          code: ErrorCode.BAD_REQUEST,
+          message:
+            'Người dùng đang chờ đặt mật khẩu. Hãy dùng thao tác gửi lại email.',
+        });
+      }
+
+      user.passwordHash = await hashPassword(randomBytes(32).toString('hex'));
+      user.mustChangePassword = true;
+      user.authVersion += 1;
+      await userRepository.save(user);
+      await this.revokeSessions(manager, id, 'password_reset');
+      await this.audit.recordUserChange(manager, {
+        actorId: actor.id,
+        actorRole: actor.roleCode,
+        targetId: user.id,
+        targetLabel: user.email,
+        eventType: AuditEventType.UPDATED,
+        reason: 'Quản trị viên yêu cầu đặt lại mật khẩu.',
+        changes: [
+          {
+            fieldName: 'passwordSetupRequired',
+            oldValue: false,
+            newValue: true,
+          },
+        ],
+      });
+      const invitation = await this.passwordSetup.issue(manager, id, actor.id);
+      return { user, role, invitation };
+    });
+
+    this.deliverInBackground(result.invitation);
+    return {
+      user: this.toUserItem(
+        result.user,
+        result.role.code,
+        result.role.name,
+        PasswordSetupEmailStatus.PENDING,
+      ),
+      invitationStatus: 'pending',
     };
   }
 
@@ -387,6 +575,66 @@ export class UserManagementService {
     invitation: Awaited<ReturnType<PasswordSetupService['issue']>>,
   ): void {
     void this.passwordSetup.deliver(invitation);
+  }
+
+  private sendAccountRestrictionEmailInBackground(input: {
+    accountStatus: UserAccountStatus.LOCKED | UserAccountStatus.INACTIVE;
+    userId: string;
+    email: string;
+    fullName: string;
+    reason: string;
+  }): void {
+    const { accountStatus, userId, ...emailPayload } = input;
+    const delivery =
+      accountStatus === UserAccountStatus.LOCKED
+        ? this.mail.sendAccountLockedEmail(emailPayload)
+        : this.mail.sendAccountDisabledEmail(emailPayload);
+    void delivery.catch((error: unknown) => {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      this.logger.error(
+        `Account restriction email failed for user ${userId}: ${errorMessage}`,
+      );
+    });
+  }
+
+  private async revokeSessions(
+    manager: DataSource['manager'],
+    userId: string,
+    revokeReason: string,
+  ): Promise<void> {
+    await manager
+      .getRepository(UserSession)
+      .update(
+        { userId, revokedAt: IsNull() },
+        { revokedAt: new Date(), revokeReason },
+      );
+  }
+
+  private accountSessionRevokeReason(
+    nextStatus: EditableUserAccountStatus,
+    previousStatus: EditableUserAccountStatus,
+  ): string {
+    if (nextStatus === UserAccountStatus.LOCKED) return 'account_locked';
+    if (nextStatus === UserAccountStatus.INACTIVE) return 'account_inactive';
+    return previousStatus === UserAccountStatus.INACTIVE
+      ? 'account_reactivated'
+      : 'account_unlocked';
+  }
+
+  private accountStatusAuditReason(
+    nextStatus: EditableUserAccountStatus,
+    previousStatus: EditableUserAccountStatus,
+    reason?: string,
+  ): string {
+    if (reason) return reason;
+    if (
+      nextStatus === UserAccountStatus.ACTIVE &&
+      previousStatus === UserAccountStatus.INACTIVE
+    ) {
+      return 'Quản trị viên kích hoạt lại tài khoản.';
+    }
+    return 'Quản trị viên mở khóa tài khoản.';
   }
 
   private accountState(status: EditableUserAccountStatus, actorId: string) {

@@ -1,5 +1,5 @@
 import { Transform } from 'class-transformer';
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional, OmitType } from '@nestjs/swagger';
 import {
   IsEmail,
   IsEnum,
@@ -53,6 +53,20 @@ export class MutateUserDto {
   @ApiProperty({ enum: EDITABLE_USER_ACCOUNT_STATUSES })
   @IsIn(EDITABLE_USER_ACCOUNT_STATUSES)
   accountStatus: EditableUserAccountStatus;
+}
+
+export class UpdateUserDto extends OmitType(MutateUserDto, [
+  'accountStatus',
+] as const) {
+  @ApiPropertyOptional({
+    enum: EDITABLE_USER_ACCOUNT_STATUSES,
+    deprecated: true,
+    description:
+      'Rolling-deployment compatibility only. Use /account-status to change status.',
+  })
+  @IsOptional()
+  @IsIn(EDITABLE_USER_ACCOUNT_STATUSES)
+  accountStatus?: EditableUserAccountStatus;
 }
 
 export class CreateUserResponseDto {

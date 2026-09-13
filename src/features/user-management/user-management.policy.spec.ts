@@ -2,6 +2,7 @@ import { ForbiddenException } from '@nestjs/common';
 import { UserRoleCode } from './dto/query-users.dto';
 import { UserAccountStatus } from './dto/user-account-status.enum';
 import {
+  assertCanManageAccountAction,
   assertCanCreateUser,
   assertCanUpdateUser,
 } from './user-management.policy';
@@ -65,6 +66,61 @@ describe('user management policy', () => {
         currentRole: UserRoleCode.IT,
         nextRole: UserRoleCode.NVKH,
         nextStatus: UserAccountStatus.ACTIVE,
+      }),
+    ).toThrow(ForbiddenException);
+  });
+
+  it.each(Object.values(UserRoleCode))(
+    'allows SA to manage another %s account',
+    (targetRole) => {
+      expect(() =>
+        assertCanManageAccountAction({
+          actorId: 'sa-actor',
+          actorRole: UserRoleCode.SA,
+          targetId: 'target',
+          targetRole,
+        }),
+      ).not.toThrow();
+    },
+  );
+
+  it.each([
+    UserRoleCode.TPKH,
+    UserRoleCode.NVKH,
+    UserRoleCode.RD,
+    UserRoleCode.ACCOUNTING,
+  ])('allows IT to manage a %s account', (targetRole) => {
+    expect(() =>
+      assertCanManageAccountAction({
+        actorId: 'it-actor',
+        actorRole: UserRoleCode.IT,
+        targetId: 'target',
+        targetRole,
+      }),
+    ).not.toThrow();
+  });
+
+  it.each([UserRoleCode.SA, UserRoleCode.IT])(
+    'blocks IT from managing a %s account',
+    (targetRole) => {
+      expect(() =>
+        assertCanManageAccountAction({
+          actorId: 'it-actor',
+          actorRole: UserRoleCode.IT,
+          targetId: 'target',
+          targetRole,
+        }),
+      ).toThrow(ForbiddenException);
+    },
+  );
+
+  it('blocks every actor from managing their own account', () => {
+    expect(() =>
+      assertCanManageAccountAction({
+        actorId: 'same-id',
+        actorRole: UserRoleCode.SA,
+        targetId: 'same-id',
+        targetRole: UserRoleCode.SA,
       }),
     ).toThrow(ForbiddenException);
   });
