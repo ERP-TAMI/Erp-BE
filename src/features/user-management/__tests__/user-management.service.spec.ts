@@ -28,13 +28,16 @@ describe('UserManagementService', () => {
           roleCode: 'IT',
           roleName: 'Công nghệ thông tin',
           accountStatus: UserAccountStatus.ACTIVE,
+          passwordSetupRequired: false,
+          passwordSetupEmailStatus: 'failed',
+          passwordSetupEmailAttemptedAt: new Date('2026-09-12T12:00:00.000Z'),
         },
       ]),
     } as unknown as jest.Mocked<SelectQueryBuilder<User>>;
     users = {
       createQueryBuilder: jest.fn().mockReturnValue(queryBuilder),
     } as unknown as jest.Mocked<Repository<User>>;
-    service = new UserManagementService(users);
+    service = new UserManagementService(users, {} as never, {} as never);
   });
 
   it('returns an allowlisted, paginated user response', async () => {
@@ -47,6 +50,9 @@ describe('UserManagementService', () => {
           phone: '0901234567',
           role: { code: 'IT', name: 'Công nghệ thông tin' },
           accountStatus: UserAccountStatus.ACTIVE,
+          passwordSetupRequired: false,
+          passwordSetupEmailStatus: 'failed',
+          passwordSetupEmailAttemptedAt: '2026-09-12T12:00:00.000Z',
         },
       ],
       meta: { total: 1, page: 1, limit: 10, totalPages: 1 },
@@ -55,6 +61,12 @@ describe('UserManagementService', () => {
     expect(queryBuilder.skip).toHaveBeenCalledWith(0);
     expect(queryBuilder.take).toHaveBeenCalledWith(10);
     expect(queryBuilder.orderBy).toHaveBeenCalledWith('user.fullName', 'ASC');
+    expect(queryBuilder.select).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.stringContaining('delivery_status'),
+        expect.stringContaining('delivery_attempted_at'),
+      ]),
+    );
   });
 
   it('escapes SQL wildcard characters in a case-insensitive text search', async () => {
@@ -76,8 +88,13 @@ describe('UserManagementService', () => {
   });
 
   it.each([
-    [UserAccountStatus.ACTIVE, "user.status = 'active'", 'lockoutUntil'],
+    [UserAccountStatus.ACTIVE, "user.status = 'active'", 'mustChangePassword'],
     [UserAccountStatus.LOCKED, "user.status = 'active'", 'lockoutUntil'],
+    [
+      UserAccountStatus.PENDING_SETUP,
+      "user.status = 'active'",
+      'mustChangePassword',
+    ],
     [UserAccountStatus.INACTIVE, "user.status = 'inactive'", undefined],
   ])(
     'filters the derived %s account status',
