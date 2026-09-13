@@ -30,6 +30,8 @@ export class PasswordSetupService {
   constructor(
     @InjectRepository(UserPasswordSetupToken)
     private readonly tokens: Repository<UserPasswordSetupToken>,
+    @InjectRepository(User)
+    private readonly users: Repository<User>,
     @InjectDataSource() private readonly dataSource: DataSource,
     private readonly mail: SmtpMailService,
   ) {}
@@ -86,11 +88,7 @@ export class PasswordSetupService {
         email: invitation.user.email,
         fullName: invitation.user.fullName,
         token: invitation.token,
-        accountAvailable:
-          invitation.user.status === RecordStatus.ACTIVE &&
-          !invitation.user.manuallyLockedAt &&
-          (!invitation.user.lockoutUntil ||
-            invitation.user.lockoutUntil.getTime() <= Date.now()),
+        accountAvailable: this.isAccountAvailable(invitation.user),
       });
       deliveryStatus = PasswordSetupEmailStatus.SENT;
     } catch (error) {
@@ -128,6 +126,10 @@ export class PasswordSetupService {
       where: { tokenHash: hashPasswordSetupToken(token) },
     });
     this.assertUsable(setupToken);
+    const user = await this.users.findOne({
+      where: { id: setupToken.userId },
+    });
+    this.assertPendingUser(user, ErrorCode.PASSWORD_SETUP_TOKEN_INVALID);
     return { valid: true, expiresAt: setupToken.expiresAt.toISOString() };
   }
 
@@ -167,18 +169,34 @@ export class PasswordSetupService {
   }
 
   private assertPendingUser(
-    user: User,
+    user: User | null,
     code: ErrorCode = ErrorCode.BAD_REQUEST,
   ): void {
-    if (!user.mustChangePassword) {
+    const invalidLink = code === ErrorCode.PASSWORD_SETUP_TOKEN_INVALID;
+    if (!user?.mustChangePassword) {
       throw new BadRequestException({
         code,
-        message:
-          code === ErrorCode.PASSWORD_SETUP_TOKEN_INVALID
-            ? 'Liên kết đặt mật khẩu không hợp lệ.'
-            : 'Người dùng đã thiết lập mật khẩu.',
+        message: invalidLink
+          ? 'Liên kết đặt mật khẩu không hợp lệ.'
+          : 'Người dùng đã thiết lập mật khẩu.',
       });
     }
+    if (!this.isAccountAvailable(user)) {
+      throw new BadRequestException({
+        code,
+        message: invalidLink
+          ? 'Liên kết đặt mật khẩu không hợp lệ.'
+          : 'Tài khoản không hoạt động hoặc đang bị khóa.',
+      });
+    }
+  }
+
+  private isAccountAvailable(user: User): boolean {
+    return (
+      user.status === RecordStatus.ACTIVE &&
+      !user.manuallyLockedAt &&
+      (!user.lockoutUntil || user.lockoutUntil.getTime() <= Date.now())
+    );
   }
 
   private assertUsable(

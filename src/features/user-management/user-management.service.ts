@@ -337,6 +337,9 @@ export class UserManagementService {
           this.accountSessionRevokeReason(dto.accountStatus),
         );
       }
+      if (dto.accountStatus === UserAccountStatus.LOCKED) {
+        await this.passwordSetup.revokeActive(manager, id);
+      }
       await this.audit.recordUserChange(manager, {
         actorId: actor.id,
         actorRole: actor.roleCode,

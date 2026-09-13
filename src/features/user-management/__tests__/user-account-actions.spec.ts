@@ -76,6 +76,7 @@ describe('UserManagementService account actions', () => {
     passwordSetup = {
       issue: jest.fn().mockResolvedValue({ user: target, token: 'raw-token' }),
       deliver: jest.fn().mockResolvedValue('sent'),
+      revokeActive: jest.fn().mockResolvedValue(undefined),
     } as unknown as jest.Mocked<PasswordSetupService>;
     audit = {
       recordUserChange: jest.fn().mockResolvedValue(undefined),
@@ -109,6 +110,7 @@ describe('UserManagementService account actions', () => {
       expect.objectContaining({ userId: target.id }),
       expect.objectContaining({ revokeReason: 'account_locked' }),
     );
+    expect(passwordSetup.revokeActive).toHaveBeenCalledWith(manager, target.id);
     expect(audit.recordUserChange).toHaveBeenCalledWith(
       manager,
       expect.objectContaining({
@@ -168,6 +170,7 @@ describe('UserManagementService account actions', () => {
       fullName: target.fullName,
       reason: 'Bổ sung kết quả điều tra',
     });
+    expect(passwordSetup.revokeActive).toHaveBeenCalledWith(manager, target.id);
     expect(result.user.accountStatus).toBe(UserAccountStatus.LOCKED);
   });
 
