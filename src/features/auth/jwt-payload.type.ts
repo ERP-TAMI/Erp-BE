@@ -3,6 +3,7 @@ export type JwtPayload = {
   email: string;
   roleCode: string;
   permissions: string[];
+  authVersion: number;
 };
 
 export type RequestUser = {

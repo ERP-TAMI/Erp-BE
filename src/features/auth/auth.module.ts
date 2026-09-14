@@ -7,6 +7,8 @@ import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { DEFAULT_ACCESS_TOKEN_EXPIRY } from './auth.constants';
+import { PasswordSetupService } from './password-setup.service';
+import { SmtpMailService } from './smtp-mail.service';
 
 @Module({
   imports: [
@@ -23,7 +25,7 @@ import { DEFAULT_ACCESS_TOKEN_EXPIRY } from './auth.constants';
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy],
-  exports: [AuthService],
+  providers: [AuthService, JwtStrategy, PasswordSetupService, SmtpMailService],
+  exports: [AuthService, PasswordSetupService],
 })
 export class AuthModule {}

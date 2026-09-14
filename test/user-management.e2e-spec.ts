@@ -20,11 +20,17 @@ describe('User management API (e2e)', () => {
         phone: null,
         role: { code: 'IT', name: 'Công nghệ thông tin' },
         accountStatus: UserAccountStatus.ACTIVE,
+        passwordSetupRequired: false,
       },
     ],
     meta: { total: 1, page: 1, limit: 10, totalPages: 1 },
   };
-  const userManagementService = { findAll: jest.fn() };
+  const userManagementService = {
+    findAll: jest.fn(),
+    create: jest.fn(),
+    update: jest.fn(),
+    resendPasswordSetup: jest.fn(),
+  };
   let currentPermissions: string[];
   let app: INestApplication;
 
@@ -41,6 +47,8 @@ describe('User management API (e2e)', () => {
       .useValue({
         canActivate: (context: ExecutionContext) => {
           context.switchToHttp().getRequest().user = {
+            id: '11111111-1111-4111-8111-111111111111',
+            roleCode: 'SA',
             permissions: currentPermissions,
           };
           return true;
@@ -97,5 +105,81 @@ describe('User management API (e2e)', () => {
 
     await request(app.getHttpServer()).get('/system/users').expect(403);
     expect(userManagementService.findAll).not.toHaveBeenCalled();
+  });
+
+  it('creates a user without accepting a password field', async () => {
+    const input = {
+      fullName: 'Nguyễn Văn A',
+      email: 'USER@Example.COM',
+      phone: '',
+      roleCode: 'NVKH',
+      accountStatus: 'active',
+    };
+    userManagementService.create.mockResolvedValue({
+      user: response.data[0],
+      invitationStatus: 'pending',
+    });
+
+    await request(app.getHttpServer())
+      .post('/system/users')
+      .send(input)
+      .expect(201);
+
+    expect(userManagementService.create).toHaveBeenCalledWith(
+      {
+        ...input,
+        email: 'user@example.com',
+        phone: null,
+      },
+      expect.objectContaining({ roleCode: 'SA' }),
+    );
+
+    await request(app.getHttpServer())
+      .post('/system/users')
+      .send({ ...input, password: 'must-not-be-accepted' })
+      .expect(400);
+
+    await request(app.getHttpServer())
+      .post('/system/users')
+      .send({ ...input, accountStatus: 'pending_setup' })
+      .expect(400);
+  });
+
+  it('updates and resends password setup email through protected endpoints', async () => {
+    const id = '22222222-2222-4222-8222-222222222222';
+    const input = {
+      fullName: 'Nguyễn Văn B',
+      email: 'b@example.com',
+      phone: '0901234567',
+      roleCode: 'TPKH',
+      accountStatus: 'locked',
+    };
+    userManagementService.update.mockResolvedValue({
+      user: response.data[0],
+      invitationStatus: null,
+    });
+    userManagementService.resendPasswordSetup.mockResolvedValue({
+      invitationStatus: 'sent',
+    });
+
+    await request(app.getHttpServer())
+      .patch(`/system/users/${id}`)
+      .send(input)
+      .expect(200)
+      .expect({ user: response.data[0], invitationStatus: null });
+    await request(app.getHttpServer())
+      .post(`/system/users/${id}/password-setup-email`)
+      .expect(200)
+      .expect({ invitationStatus: 'sent' });
+
+    expect(userManagementService.update).toHaveBeenCalledWith(
+      id,
+      input,
+      expect.objectContaining({ roleCode: 'SA' }),
+    );
+    expect(userManagementService.resendPasswordSetup).toHaveBeenCalledWith(
+      id,
+      expect.objectContaining({ roleCode: 'SA' }),
+    );
   });
 });

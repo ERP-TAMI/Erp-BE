@@ -1,11 +1,12 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { UserAccountStatus } from './user-account-status.enum';
+import { PasswordSetupEmailStatus } from '../../auth/password-setup-email-status.enum';
 
 export class UserRoleResponseDto {
   @ApiProperty({ example: 'IT' })
   code: string;
 
-  @ApiProperty({ example: 'Công nghệ thông tin' })
+  @ApiProperty({ example: 'IT' })
   name: string;
 }
 
@@ -27,6 +28,15 @@ export class UserListItemResponseDto {
 
   @ApiProperty({ enum: UserAccountStatus })
   accountStatus: UserAccountStatus;
+
+  @ApiProperty()
+  passwordSetupRequired: boolean;
+
+  @ApiPropertyOptional({ enum: PasswordSetupEmailStatus, nullable: true })
+  passwordSetupEmailStatus: PasswordSetupEmailStatus | null;
+
+  @ApiPropertyOptional({ format: 'date-time', nullable: true })
+  passwordSetupEmailAttemptedAt: string | null;
 }
 
 export class UserListMetaResponseDto {

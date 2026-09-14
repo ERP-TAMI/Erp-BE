@@ -27,13 +27,38 @@ import {
   REFRESH_TOKEN_TTL_DAYS,
 } from './auth.constants';
 import { RequestUser } from './jwt-payload.type';
+import {
+  CompletePasswordSetupDto,
+  PasswordSetupValidationResponseDto,
+  ValidatePasswordSetupDto,
+} from './dto/password-setup.dto';
+import { PasswordSetupService } from './password-setup.service';
 
 type AuthenticatedRequest = Request & { user: RequestUser };
 
 @ApiTags('Auth')
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(
+    private readonly authService: AuthService,
+    private readonly passwordSetupService: PasswordSetupService,
+  ) {}
+
+  @Post('password-setup/validate')
+  @HttpCode(HttpStatus.OK)
+  @ApiOkResponse({ type: PasswordSetupValidationResponseDto })
+  validatePasswordSetup(
+    @Body() dto: ValidatePasswordSetupDto,
+  ): Promise<PasswordSetupValidationResponseDto> {
+    return this.passwordSetupService.validate(dto.token);
+  }
+
+  @Post('password-setup/complete')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiNoContentResponse({ description: 'Password configured successfully' })
+  completePasswordSetup(@Body() dto: CompletePasswordSetupDto): Promise<void> {
+    return this.passwordSetupService.complete(dto.token, dto.password);
+  }
 
   @Post('login')
   @HttpCode(HttpStatus.OK)

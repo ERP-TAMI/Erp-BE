@@ -52,7 +52,9 @@ export class AuthService {
     password: string,
     meta: SessionMeta,
   ): Promise<LoginResult> {
-    const user = await this.userRepository.findOne({ where: { email } });
+    const user = await this.userRepository.findOne({
+      where: { email: email.trim().toLowerCase() },
+    });
     if (!user) {
       throw new UnauthorizedException({
         code: ErrorCode.INVALID_CREDENTIALS,
@@ -189,6 +191,13 @@ export class AuthService {
       });
     }
 
+    if (user.manuallyLockedAt) {
+      throw new ForbiddenException({
+        code: ErrorCode.ACCOUNT_LOCKED,
+        message: 'Tài khoản đã bị quản trị viên khóa.',
+      });
+    }
+
     if (user.lockoutUntil && user.lockoutUntil.getTime() > Date.now()) {
       throw new ForbiddenException({
         code: ErrorCode.ACCOUNT_LOCKED,
@@ -217,6 +226,7 @@ export class AuthService {
       email: user.email,
       roleCode: roleInfo.roleCode,
       permissions: roleInfo.permissions,
+      authVersion: user.authVersion,
     };
     const accessToken = this.jwtService.sign(payload);
 
