@@ -13,6 +13,8 @@ import {
 import { User } from '../src/features/auth/entities/User.entity';
 import { UserPasswordSetupToken } from '../src/features/auth/entities/UserPasswordSetupToken.entity';
 import { UserSession } from '../src/features/auth/entities/UserSession.entity';
+import { Role } from '../src/features/auth/entities/Role.entity';
+import { UserRole } from '../src/features/auth/entities/UserRole.entity';
 import { SmtpMailService } from '../src/features/auth/smtp-mail.service';
 import { Notification } from '../src/features/notifications/entities/Notification.entity';
 import { NotificationDeliverie } from '../src/features/notifications/entities/NotificationDeliverie.entity';
@@ -72,6 +74,9 @@ databaseE2e('Auth database API (e2e)', () => {
       await dataSource
         .getRepository(UserPasswordSetupToken)
         .delete({ userId: In(createdUserIds) });
+      await dataSource
+        .getRepository(UserRole)
+        .delete({ userId: In(createdUserIds) });
       await dataSource.getRepository(User).delete({ id: In(createdUserIds) });
     }
     await app.close();
@@ -100,6 +105,77 @@ databaseE2e('Auth database API (e2e)', () => {
     createdUserIds.push(user.id);
     return user;
   }
+
+  async function assignRole(userId: string, roleCode: string) {
+    const role = await dataSource
+      .getRepository(Role)
+      .findOneByOrFail({ code: roleCode });
+    await dataSource.getRepository(UserRole).save({
+      userId,
+      roleId: role.id,
+      assignedAt: new Date(),
+    });
+  }
+
+  it('updates the current profile and changes password without ending the current session', async () => {
+    const oldPassword = 'current password';
+    const newPassword = 'updated password';
+    const user = await createActiveUser('profile', oldPassword);
+    await assignRole(user.id, 'NVKH');
+
+    const login = await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ email: user.email, password: oldPassword })
+      .expect(200);
+    const accessToken = login.body.accessToken as string;
+
+    await request(app.getHttpServer())
+      .patch('/auth/me')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .send({ fullName: '  Hồ sơ đã cập nhật  ', phone: ' 0905 123 456 ' })
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          email: user.email,
+          fullName: 'Hồ sơ đã cập nhật',
+          phone: '0905 123 456',
+          roleCode: 'NVKH',
+        });
+      });
+
+    await request(app.getHttpServer())
+      .patch('/auth/me/password')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .send({ currentPassword: 'wrong password', newPassword })
+      .expect(400)
+      .expect(({ body }) => {
+        expect(body.code).toBe('CURRENT_PASSWORD_INCORRECT');
+      });
+
+    await request(app.getHttpServer())
+      .patch('/auth/me/password')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .send({ currentPassword: oldPassword, newPassword })
+      .expect(204);
+
+    await request(app.getHttpServer())
+      .get('/auth/me')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .expect(200);
+    await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ email: user.email, password: oldPassword })
+      .expect(401);
+    await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ email: user.email, password: newPassword })
+      .expect(200);
+
+    const updatedUser = await dataSource
+      .getRepository(User)
+      .findOneByOrFail({ id: user.id });
+    expect(updatedUser.authVersion).toBe(1);
+  });
 
   it('allows only one concurrent reset completion and revokes existing sessions', async () => {
     const oldPassword = 'old password';

@@ -336,6 +336,7 @@ export class AuthService {
       id: user.id,
       email: user.email,
       fullName: user.fullName,
+      phone: user.phone,
       roleCode: roleInfo.roleCode,
       roleName: roleInfo.roleName,
       permissions: roleInfo.permissions,
