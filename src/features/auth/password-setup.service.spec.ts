@@ -24,6 +24,7 @@ function buildToken(overrides: Partial<UserPasswordSetupToken> = {}) {
     tokenHash: 'a'.repeat(64),
     expiresAt: new Date(Date.now() + 60_000),
     usedAt: null,
+    revokedAt: null,
     createdBy: 'actor-id',
     createdAt: new Date(),
     ...overrides,
@@ -60,7 +61,12 @@ describe('PasswordSetupService', () => {
     mail = {
       sendPasswordSetupEmail: jest.fn().mockResolvedValue(undefined),
     } as unknown as jest.Mocked<SmtpMailService>;
-    service = new PasswordSetupService(tokenRepository, dataSource, mail);
+    service = new PasswordSetupService(
+      tokenRepository,
+      userRepository,
+      dataSource,
+      mail,
+    );
   });
 
   it('stores only a token hash and sends the raw token by email', async () => {
@@ -94,10 +100,14 @@ describe('PasswordSetupService', () => {
     await service.revokeActive(manager, buildUser().id);
 
     expect(tokenRepository.update).toHaveBeenCalledWith(
-      { userId: buildUser().id, usedAt: expect.anything() },
-      { usedAt: expect.any(Date) },
+      {
+        userId: buildUser().id,
+        usedAt: expect.anything(),
+        revokedAt: expect.anything(),
+      },
+      { revokedAt: expect.any(Date) },
     );
-    const revokedAt = tokenRepository.update.mock.calls[0][1].usedAt as Date;
+    const revokedAt = tokenRepository.update.mock.calls[0][1].revokedAt as Date;
     expect(revokedAt.getTime()).toBeGreaterThanOrEqual(nowBeforeRevoke);
   });
 
@@ -120,18 +130,18 @@ describe('PasswordSetupService', () => {
     );
   });
 
-  it('marks a temporarily locked account as unavailable in the invitation', async () => {
-    const user = Object.assign(buildUser(), {
-      lockoutUntil: new Date(Date.now() + 60_000),
-    });
+  it.each([
+    ['manually locked', { manuallyLockedAt: new Date() }],
+    ['temporarily locked', { lockoutUntil: new Date(Date.now() + 60_000) }],
+    ['inactive', { status: RecordStatus.INACTIVE }],
+  ])('does not issue a setup token for a %s account', async (_label, state) => {
+    const user = Object.assign(buildUser(), state);
     userRepository.findOne.mockResolvedValue(user);
 
-    const invitation = await service.issue(manager, user.id, 'actor-id');
-    await service.deliver(invitation);
-
-    expect(mail.sendPasswordSetupEmail).toHaveBeenCalledWith(
-      expect.objectContaining({ accountAvailable: false }),
-    );
+    await expect(
+      service.issue(manager, user.id, 'actor-id'),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(tokenRepository.save).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -142,6 +152,30 @@ describe('PasswordSetupService', () => {
     tokenRepository.findOne.mockResolvedValue(token);
     await expect(service.validate('raw-token')).rejects.toBeInstanceOf(
       errorType,
+    );
+  });
+
+  it('distinguishes a revoked token from a used token', async () => {
+    tokenRepository.findOne.mockResolvedValue(
+      buildToken({ revokedAt: new Date() }),
+    );
+
+    await expect(service.validate('revoked-token')).rejects.toMatchObject({
+      response: {
+        code: 'PASSWORD_SETUP_TOKEN_REVOKED',
+        message: 'Liên kết đặt mật khẩu đã bị thu hồi.',
+      },
+    });
+  });
+
+  it('rejects validation when the account was locked after the token was issued', async () => {
+    tokenRepository.findOne.mockResolvedValue(buildToken());
+    userRepository.findOne.mockResolvedValue(
+      Object.assign(buildUser(), { manuallyLockedAt: new Date() }),
+    );
+
+    await expect(service.validate('raw-token')).rejects.toBeInstanceOf(
+      BadRequestException,
     );
   });
 
@@ -163,6 +197,20 @@ describe('PasswordSetupService', () => {
       expect.objectContaining({ mustChangePassword: false }),
     );
     expect(setupToken.usedAt).toBeInstanceOf(Date);
+  });
+
+  it('rejects completion when the account was locked after the token was issued', async () => {
+    const setupToken = buildToken();
+    tokenRepository.findOne.mockResolvedValue(setupToken);
+    userRepository.findOne.mockResolvedValue(
+      Object.assign(buildUser(), { manuallyLockedAt: new Date() }),
+    );
+
+    await expect(
+      service.complete('raw-token', 'a secure passphrase'),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(userRepository.save).not.toHaveBeenCalled();
+    expect(setupToken.usedAt).toBeNull();
   });
 
   it('rejects a second active token after another token completed setup', async () => {

@@ -87,7 +87,14 @@ describe('UserManagementService mutations', () => {
     } as unknown as EntityManager;
     dataSource.transaction = jest.fn(async (run) => run(manager)) as never;
     passwordSetup.deliver.mockReturnValue(new Promise(() => undefined));
-    const service = new UserManagementService(users, dataSource, passwordSetup);
+    const service = new UserManagementService(
+      users,
+      dataSource,
+      passwordSetup,
+      {} as never,
+      {} as never,
+      {} as never,
+    );
 
     const result = await service.create(
       {
@@ -95,7 +102,6 @@ describe('UserManagementService mutations', () => {
         email: 'new@example.com',
         phone: null,
         roleCode: UserRoleCode.NVKH,
-        accountStatus: UserAccountStatus.ACTIVE,
       },
       { id: 'actor-id', roleCode: UserRoleCode.IT },
     );
@@ -155,7 +161,14 @@ describe('UserManagementService mutations', () => {
       }),
     } as unknown as EntityManager;
     dataSource.transaction = jest.fn(async (run) => run(manager)) as never;
-    const service = new UserManagementService(users, dataSource, passwordSetup);
+    const service = new UserManagementService(
+      users,
+      dataSource,
+      passwordSetup,
+      {} as never,
+      {} as never,
+      {} as never,
+    );
 
     const result = await service.update(
       target.id,
@@ -164,13 +177,12 @@ describe('UserManagementService mutations', () => {
         email: 'new-address@example.com',
         phone: null,
         roleCode: UserRoleCode.TPKH,
-        accountStatus: UserAccountStatus.LOCKED,
       },
       { id: 'sa-id', roleCode: UserRoleCode.SA },
     );
 
     expect(target.authVersion).toBe(2);
-    expect(target.manuallyLockedAt).toBeInstanceOf(Date);
+    expect(target.manuallyLockedAt).toBeNull();
     expect(sessionRepository.update).toHaveBeenCalledWith(
       expect.objectContaining({ userId: target.id }),
       expect.objectContaining({ revokeReason: 'account_updated' }),
@@ -184,7 +196,7 @@ describe('UserManagementService mutations', () => {
       expect.objectContaining({ token: 'raw-token' }),
     );
     expect(result.invitationStatus).toBe('pending');
-    expect(result.user.accountStatus).toBe(UserAccountStatus.LOCKED);
+    expect(result.user.accountStatus).toBe(UserAccountStatus.PENDING_SETUP);
   });
 
   it('revokes old setup tokens when only a pending user email changes', async () => {
@@ -218,7 +230,14 @@ describe('UserManagementService mutations', () => {
       }),
     } as unknown as EntityManager;
     dataSource.transaction = jest.fn(async (run) => run(manager)) as never;
-    const service = new UserManagementService(users, dataSource, passwordSetup);
+    const service = new UserManagementService(
+      users,
+      dataSource,
+      passwordSetup,
+      {} as never,
+      {} as never,
+      {} as never,
+    );
 
     const result = await service.update(
       target.id,
@@ -227,7 +246,6 @@ describe('UserManagementService mutations', () => {
         email: 'correct-owner@example.com',
         phone: target.phone,
         roleCode: UserRoleCode.NVKH,
-        accountStatus: UserAccountStatus.ACTIVE,
       },
       { id: 'it-id', roleCode: UserRoleCode.IT },
     );
@@ -280,7 +298,14 @@ describe('UserManagementService mutations', () => {
       }),
     } as unknown as EntityManager;
     dataSource.transaction = jest.fn(async (run) => run(manager)) as never;
-    const service = new UserManagementService(users, dataSource, passwordSetup);
+    const service = new UserManagementService(
+      users,
+      dataSource,
+      passwordSetup,
+      {} as never,
+      {} as never,
+      {} as never,
+    );
 
     const result = await service.update(
       target.id,
@@ -289,7 +314,6 @@ describe('UserManagementService mutations', () => {
         email: 'new-login@example.com',
         phone: target.phone,
         roleCode: UserRoleCode.NVKH,
-        accountStatus: UserAccountStatus.ACTIVE,
       },
       { id: 'it-id', roleCode: UserRoleCode.IT },
     );

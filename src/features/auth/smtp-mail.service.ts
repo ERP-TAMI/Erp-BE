@@ -39,14 +39,46 @@ export class SmtpMailService implements OnModuleDestroy {
     setupUrl.searchParams.set('token', input.token);
     const availabilityNote = input.accountAvailable
       ? 'Sau khi đặt mật khẩu, bạn có thể đăng nhập vào hệ thống.'
-      : 'Sau khi đặt mật khẩu, tài khoản vẫn đang bị khóa hoặc vô hiệu hóa. Vui lòng liên hệ quản trị viên để được mở tài khoản.';
+      : 'Sau khi đặt mật khẩu, tài khoản hiện chưa thể đăng nhập. Vui lòng liên hệ quản trị viên để được mở tài khoản.';
 
     await this.getTransporter(user, pass).sendMail({
       from,
       to: input.email,
       subject: 'Thiết lập mật khẩu tài khoản TAMI ERP',
-      text: `Xin chào ${input.fullName},\n\nTài khoản TAMI ERP của bạn đã được tạo. Hãy đặt mật khẩu tại: ${setupUrl.toString()}\n\nLiên kết hết hạn sau 24 giờ và chỉ dùng được một lần. ${availabilityNote}`,
-      html: `<p>Xin chào ${escapeHtml(input.fullName)},</p><p>Tài khoản TAMI ERP của bạn đã được tạo.</p><p><a href="${escapeHtml(setupUrl.toString())}">Đặt mật khẩu</a></p><p>Liên kết hết hạn sau 24 giờ và chỉ dùng được một lần.</p><p>${escapeHtml(availabilityNote)}</p>`,
+      text: `Xin chào ${input.fullName},\n\nBạn được yêu cầu thiết lập mật khẩu cho tài khoản TAMI ERP. Hãy đặt mật khẩu tại: ${setupUrl.toString()}\n\nLiên kết hết hạn sau 24 giờ và chỉ dùng được một lần. ${availabilityNote}`,
+      html: `<p>Xin chào ${escapeHtml(input.fullName)},</p><p>Bạn được yêu cầu thiết lập mật khẩu cho tài khoản TAMI ERP.</p><p><a href="${escapeHtml(setupUrl.toString())}">Đặt mật khẩu</a></p><p>Liên kết hết hạn sau 24 giờ và chỉ dùng được một lần.</p><p>${escapeHtml(availabilityNote)}</p>`,
+    });
+  }
+
+  async sendAccountLockedEmail(input: {
+    email: string;
+    fullName: string;
+    reason: string;
+  }): Promise<void> {
+    return this.sendAccountRestrictionEmail(input, {
+      subject: 'Tài khoản TAMI ERP đã bị khóa',
+      description: 'Tài khoản TAMI ERP của bạn đã bị quản trị viên khóa.',
+    });
+  }
+
+  private async sendAccountRestrictionEmail(
+    input: { email: string; fullName: string; reason: string },
+    content: { subject: string; description: string },
+  ): Promise<void> {
+    const user =
+      this.config.get<string>('MAIL_USERNAME') ||
+      this.config.getOrThrow<string>('MAIL_USER');
+    const pass =
+      this.config.get<string>('MAIL_PASSWORD') ||
+      this.config.getOrThrow<string>('MAIL_PASS');
+    const from = this.config.get<string>('MAIL_FROM') || user;
+
+    await this.getTransporter(user, pass).sendMail({
+      from,
+      to: input.email,
+      subject: content.subject,
+      text: `Xin chào ${input.fullName},\n\n${content.description}\n\nLý do: ${input.reason}\n\nVui lòng liên hệ quản trị viên nếu bạn cần hỗ trợ.`,
+      html: `<p>Xin chào ${escapeHtml(input.fullName)},</p><p>${escapeHtml(content.description)}</p><p><strong>Lý do:</strong> ${escapeHtml(input.reason)}</p><p>Vui lòng liên hệ quản trị viên nếu bạn cần hỗ trợ.</p>`,
     });
   }
 

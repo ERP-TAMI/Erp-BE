@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { UserAccountStatus } from './user-account-status.enum';
 import { PasswordSetupEmailStatus } from '../../auth/password-setup-email-status.enum';
+import { AccountLockEmailStatus } from './account-lock-email-status.enum';
 
 export class UserRoleResponseDto {
   @ApiProperty({ example: 'IT' })
@@ -37,6 +38,9 @@ export class UserListItemResponseDto {
 
   @ApiPropertyOptional({ format: 'date-time', nullable: true })
   passwordSetupEmailAttemptedAt: string | null;
+
+  @ApiPropertyOptional({ enum: AccountLockEmailStatus, nullable: true })
+  accountLockEmailStatus: AccountLockEmailStatus | null;
 }
 
 export class UserListMetaResponseDto {

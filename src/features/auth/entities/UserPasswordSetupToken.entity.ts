@@ -18,6 +18,9 @@ export class UserPasswordSetupToken {
   @Column({ type: 'timestamptz', nullable: true, name: 'used_at' })
   usedAt: Date | null;
 
+  @Column({ type: 'timestamptz', nullable: true, name: 'revoked_at' })
+  revokedAt: Date | null;
+
   @Column({ type: 'uuid', nullable: true, name: 'created_by' })
   createdBy: string | null;
 

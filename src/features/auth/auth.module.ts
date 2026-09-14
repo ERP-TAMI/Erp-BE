@@ -26,6 +26,6 @@ import { SmtpMailService } from './smtp-mail.service';
   ],
   controllers: [AuthController],
   providers: [AuthService, JwtStrategy, PasswordSetupService, SmtpMailService],
-  exports: [AuthService, PasswordSetupService],
+  exports: [AuthService, PasswordSetupService, SmtpMailService],
 })
 export class AuthModule {}
