@@ -20,6 +20,7 @@ import {
   STORAGE_SERVICE,
   StorageService,
 } from '../storage/storage.interface';
+import { isResolvableObjectKey } from '../storage/storage-key.util';
 import { PurchaseOrder } from './entities/PurchaseOrder.entity';
 import { PurchaseOrderStatusHistory } from './entities/PurchaseOrderStatusHistory.entity';
 import { PurchaseOrderDocument } from './entities/PurchaseOrderDocument.entity';
@@ -61,6 +62,8 @@ import {
   CreatePurchaseOrderDto,
   UpdatePurchaseOrderDto,
   QueryPurchaseOrderDto,
+  QueryPoDocumentDto,
+  QueryPoProductDto,
   UpdatePoStatusDto,
   LinkPoDocumentDto,
   CreatePoProductDto,
@@ -104,6 +107,12 @@ export const ALLOWED_PO_MIME_BY_EXTENSION: Record<string, string[]> = {
 
 const PO_DOCUMENT_MAX_SIZE_BYTES = 25 * 1024 * 1024;
 
+/** Đủ cho mọi chữ ký magic (dài nhất 12 byte) và cho mẫu 4096 byte của tệp văn bản. */
+const MAGIC_BYTES_SAMPLE_SIZE = 4096;
+
+/** Các đuôi mà bộ kiểm tra quét toàn bộ nội dung, không chỉ phần đầu. */
+const TEXT_EXTENSIONS_SCANNED_IN_FULL = new Set(['.txt', '.csv']);
+
 export interface PaginatedPoResult<T> {
   items: T[];
   total: number;
@@ -141,6 +150,16 @@ export interface PoDocumentPreviewResponse {
   text?: string;
 }
 
+/**
+ * Thông tin chung của một đơn hàng PO.
+ *
+ * Cố ý KHÔNG kèm products / documents / statusHistory: mỗi tab ở màn chi tiết
+ * tự gọi endpoint riêng của nó (`:id/products`, `:id/documents`, `:id/history`).
+ * Trước đây gói tất cả vào một response khiến mỗi lần mở PO phải nạp cả sản
+ * phẩm, tài liệu, lịch sử và presign S3 cho từng tài liệu — dù người dùng chỉ
+ * xem thông tin chung. Hai trường *Count ở đây đủ để tab hiển thị con số mà
+ * không phải tải danh sách.
+ */
 export interface PurchaseOrderDetailResponse {
   id: string;
   poCode: string;
@@ -157,26 +176,20 @@ export interface PurchaseOrderDetailResponse {
   createdBy: string | null;
   createdAt: Date;
   updatedAt: Date;
-  products: PurchaseOrderProduct[];
-  documents: {
-    documentId: string;
-    documentCode: string | null;
-    title: string;
-    purpose: string;
-    linkedAt: Date;
-    fileUrl?: string | null;
-    fileName?: string | null;
-    fileSize?: number | null;
-  }[];
-  statusHistory: {
-    id: string;
-    oldStatus: PoStatus | null;
-    newStatus: PoStatus;
-    action: string;
-    reason: string | null;
-    changedBy: string | null;
-    changedAt: Date;
-  }[];
+  productsCount: number;
+  documentsCount: number;
+}
+
+/** Một tài liệu đã gắn vào PO, kèm link tải đã ký sẵn. */
+export interface PoDocumentResponse {
+  documentId: string;
+  documentCode: string | null;
+  title: string;
+  purpose: string;
+  linkedAt: Date;
+  fileUrl?: string | null;
+  fileName?: string | null;
+  fileSize?: number | null;
 }
 
 function toYmdString(val: string | Date): string {
@@ -425,39 +438,102 @@ export class PurchaseOrdersService {
     };
   }
 
+  /**
+   * Thông tin chung của PO. Chỉ đọc bảng purchase_orders cộng hai câu đếm —
+   * không nạp sản phẩm, tài liệu hay lịch sử, và không gọi S3.
+   */
   async findOne(id: string): Promise<PurchaseOrderDetailResponse> {
     const po = await this.poRepo.findOne({ where: { id } });
     if (!po) {
       throw new NotFoundException(`Không tìm thấy đơn hàng PO với ID: ${id}`);
     }
 
-    const poDocs = await this.poDocRepo.find({
-      where: { purchaseOrderId: id },
-      order: { linkedAt: 'DESC' },
+    const [productsCount, documentsCount] = await Promise.all([
+      this.productRepo.count({ where: { purchaseOrderId: id } }),
+      this.poDocRepo.count({ where: { purchaseOrderId: id } }),
+    ]);
+
+    return {
+      id: po.id,
+      poCode: po.poCode,
+      customerPoCode: po.customerPoCode,
+      customerId: po.customerId,
+      customerNameSnapshot: po.customerNameSnapshot,
+      receivedDate: po.receivedDate,
+      deadline: po.deadline || null,
+      note: po.note,
+      status: po.status,
+      cancellationReason: po.cancellationReason,
+      closedAt: po.closedAt,
+      closedBy: po.closedBy,
+      createdBy: po.createdBy,
+      createdAt: po.createdAt,
+      updatedAt: po.updatedAt,
+      productsCount,
+      documentsCount,
+    };
+  }
+
+  /**
+   * Danh sách tài liệu đã gắn vào PO.
+   *
+   * URL tải được ký lại ở mỗi lần đọc — không bao giờ lưu presigned URL xuống
+   * DB vì nó hết hạn sau PRESIGN_GET_EXPIRY_SECONDS.
+   */
+  async getDocuments(
+    id: string,
+    query: QueryPoDocumentDto = {},
+  ): Promise<PaginatedPoResult<PoDocumentResponse>> {
+    const po = await this.poRepo.findOne({
+      where: { id },
+      select: { id: true },
     });
-
-    const docIds = poDocs.map((pd) => pd.documentId);
-    let docsMap: Map<string, Document> = new Map();
-    let docVersionsMap: Map<string, DocumentVersion> = new Map();
-
-    if (docIds.length > 0) {
-      const docs = await this.docRepo.find({ where: { id: In(docIds) } });
-      docsMap = new Map(docs.map((d) => [d.id, d]));
-
-      const versionIds = docs
-        .map((d) => d.currentVersionId)
-        .filter((vId): vId is string => Boolean(vId));
-      if (versionIds.length > 0) {
-        const versions = await this.docVersionRepo.find({
-          where: { id: In(versionIds) },
-        });
-        docVersionsMap = new Map(versions.map((v) => [v.id, v]));
-      }
+    if (!po) {
+      throw new NotFoundException(`Không tìm thấy đơn hàng PO với ID: ${id}`);
     }
 
-    // Resolved fresh on every read — never persist a presigned URL, it expires
-    // after PRESIGN_GET_EXPIRY_SECONDS.
-    const formattedDocs = await Promise.all(
+    const page = query.page && query.page > 0 ? query.page : 1;
+    const limit =
+      query.limit && query.limit > 0 ? Math.min(query.limit, 100) : 20;
+
+    const where = {
+      purchaseOrderId: id,
+      ...(query.purpose ? { purpose: query.purpose } : {}),
+    };
+
+    const [poDocs, total] = await this.poDocRepo.findAndCount({
+      where,
+      order: { linkedAt: 'DESC' },
+      skip: (page - 1) * limit,
+      take: limit,
+    });
+
+    const emptyResult = {
+      items: [] as PoDocumentResponse[],
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit) || 0,
+    };
+    if (poDocs.length === 0) return emptyResult;
+
+    const docIds = poDocs.map((pd) => pd.documentId);
+    const docs = await this.docRepo.find({ where: { id: In(docIds) } });
+    const docsMap = new Map(docs.map((d) => [d.id, d]));
+
+    const versionIds = docs
+      .map((d) => d.currentVersionId)
+      .filter((vId): vId is string => Boolean(vId));
+    const docVersionsMap =
+      versionIds.length > 0
+        ? new Map(
+            (
+              await this.docVersionRepo.find({ where: { id: In(versionIds) } })
+            ).map((v) => [v.id, v]),
+          )
+        : new Map<string, DocumentVersion>();
+
+    const items = await Promise.all(
       poDocs.map(async (pd) => {
         const masterDoc = docsMap.get(pd.documentId);
         const version = masterDoc?.currentVersionId
@@ -478,43 +554,12 @@ export class PurchaseOrdersService {
       }),
     );
 
-    const products = await this.productRepo.find({
-      where: { purchaseOrderId: id },
-      order: { createdAt: 'ASC' },
-    });
-
-    const history = await this.historyRepo.find({
-      where: { purchaseOrderId: id },
-      order: { changedAt: 'DESC' },
-    });
-
     return {
-      id: po.id,
-      poCode: po.poCode,
-      customerPoCode: po.customerPoCode,
-      customerId: po.customerId,
-      customerNameSnapshot: po.customerNameSnapshot,
-      receivedDate: po.receivedDate,
-      deadline: po.deadline || null,
-      note: po.note,
-      status: po.status,
-      cancellationReason: po.cancellationReason,
-      closedAt: po.closedAt,
-      closedBy: po.closedBy,
-      createdBy: po.createdBy,
-      createdAt: po.createdAt,
-      updatedAt: po.updatedAt,
-      products,
-      documents: formattedDocs,
-      statusHistory: history.map((h) => ({
-        id: h.id,
-        oldStatus: h.oldStatus,
-        newStatus: h.newStatus,
-        action: h.action,
-        reason: h.reason,
-        changedBy: h.changedBy,
-        changedAt: h.changedAt,
-      })),
+      items,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit) || 0,
     };
   }
 
@@ -782,6 +827,63 @@ export class PurchaseOrdersService {
     });
   }
 
+  /**
+   * Đọc đủ byte để kiểm tra chữ ký tệp, không hơn.
+   *
+   * Chữ ký magic dài nhất là 12 byte (WEBP), nên với tệp nhị phân chỉ cần khúc
+   * đầu. Trước đây cả ba luồng confirm đều kéo nguyên tệp từ S3 về chỉ để xem
+   * mấy byte đó: đo thực tế, confirm một tệp 5 MB mất 17,9 giây trong tổng 19
+   * giây, trong khi trình duyệt đẩy tệp lên S3 chỉ hết 0,98 giây.
+   *
+   * Riêng nhóm văn bản vẫn tải đầy đủ, vì bộ kiểm tra quét NUL byte trên toàn
+   * bộ nội dung chứ không chỉ phần đầu.
+   */
+  private async readBytesForMagicCheck(
+    objectKey: string,
+    ext: string,
+  ): Promise<Buffer> {
+    if (TEXT_EXTENSIONS_SCANNED_IN_FULL.has(ext)) {
+      return this.storage.getObjectBuffer(objectKey);
+    }
+    return this.storage.getObjectHead(objectKey, MAGIC_BYTES_SAMPLE_SIZE);
+  }
+
+  /**
+   * Chặn `objectKey` trỏ ra ngoài phạm vi đang thao tác.
+   *
+   * Client tự gửi objectKey lên; trước đây không có ràng buộc nào, nên gắn tệp
+   * của PO khác (hay của module Style) vào PO này chỉ bị chặn nhờ UNIQUE index
+   * trên document_versions.storage_key — một rào cản tình cờ, và nó không chặn
+   * được object mồ côi vì loại đó chưa có bản ghi trong DB.
+   */
+  private assertObjectKeyInScope(
+    objectKey: string,
+    expectedPrefix: string,
+  ): void {
+    if (!objectKey.startsWith(expectedPrefix)) {
+      throw new BadRequestException(
+        'objectKey không thuộc phạm vi tải lên này, vui lòng lấy lại link upload.',
+      );
+    }
+  }
+
+  /**
+   * Đổi lỗi trùng storage_key thành 400 có thông báo đọc được.
+   *
+   * Không bọc thì TypeORM ném QueryFailedError ra ngoài thành 500 kèm nguyên
+   * tên ràng buộc trong DB.
+   */
+  private rethrowDuplicateStorageKey(error: unknown): never {
+    const message =
+      error instanceof Error ? error.message : String(error ?? '');
+    if (message.includes('document_versions_storage_key_key')) {
+      throw new BadRequestException(
+        'Tệp này đã được đăng ký trong hệ thống, không thể đính kèm lại.',
+      );
+    }
+    throw error;
+  }
+
   validateFileMagicBytes(ext: string, buffer: Buffer): void {
     if (!buffer || buffer.length === 0) {
       throw new BadRequestException('Tệp rỗng hoặc không có dữ liệu.');
@@ -975,6 +1077,11 @@ export class PurchaseOrdersService {
     }
     this.checkPoNotLocked(po, 'tải lên tài liệu mới');
 
+    this.assertObjectKeyInScope(
+      dto.objectKey,
+      `purchase-orders/${poId}/documents/`,
+    );
+
     const head = await this.storage.headObject(dto.objectKey);
     if (!head.exists) {
       throw new BadRequestException(
@@ -985,216 +1092,69 @@ export class PurchaseOrdersService {
     // Server never receives the raw upload (client PUTs straight to S3 with a
     // presigned URL), so the magic-bytes check that used to run on the multer
     // buffer must run here instead, against the bytes actually stored on S3.
-    const ext = path.extname(dto.fileName) || '';
-    const buffer = await this.storage.getObjectBuffer(dto.objectKey);
+    const ext = (path.extname(dto.fileName) || '').toLowerCase();
+    const buffer = await this.readBytesForMagicCheck(dto.objectKey, ext);
     this.validateFileMagicBytes(ext, buffer);
 
     const now = new Date();
 
-    return this.dataSource.transaction(async (manager) => {
-      const docRepo = manager.getRepository(Document);
-      const versionRepo = manager.getRepository(DocumentVersion);
-      const poDocRepo = manager.getRepository(PurchaseOrderDocument);
+    return this.dataSource
+      .transaction(async (manager) => {
+        const docRepo = manager.getRepository(Document);
+        const versionRepo = manager.getRepository(DocumentVersion);
+        const poDocRepo = manager.getRepository(PurchaseOrderDocument);
 
-      const doc = await docRepo.save(
-        docRepo.create({
-          documentCode: `DOC-PO-${Date.now().toString().slice(-6)}`,
-          title: dto.fileName,
-          createdBy: userId || (null as any),
-          createdAt: now,
-        }),
-      );
+        const doc = await docRepo.save(
+          docRepo.create({
+            documentCode: `DOC-PO-${Date.now().toString().slice(-6)}`,
+            title: dto.fileName,
+            createdBy: userId || (null as any),
+            createdAt: now,
+          }),
+        );
 
-      const version = await versionRepo.save(
-        versionRepo.create({
+        const version = await versionRepo.save(
+          versionRepo.create({
+            documentId: doc.id,
+            versionNo: 1,
+            originalFileName: dto.fileName,
+            storageKey: dto.objectKey,
+            mimeType: dto.mimeType,
+            byteSize: dto.sizeBytes,
+            status: UploadStatus.READY,
+            uploadedBy: userId || (null as any),
+            uploadedAt: now,
+          }),
+        );
+
+        doc.currentVersionId = version.id;
+        await docRepo.save(doc);
+
+        await poDocRepo.save(
+          poDocRepo.create({
+            purchaseOrderId: poId,
+            documentId: doc.id,
+            purpose: dto.purpose,
+            linkedBy: userId || (null as any),
+            linkedAt: now,
+          }),
+        );
+
+        return {
           documentId: doc.id,
-          versionNo: 1,
-          originalFileName: dto.fileName,
-          storageKey: dto.objectKey,
-          mimeType: dto.mimeType,
-          byteSize: dto.sizeBytes,
-          status: UploadStatus.READY,
-          uploadedBy: userId || (null as any),
-          uploadedAt: now,
-        }),
-      );
-
-      doc.currentVersionId = version.id;
-      await docRepo.save(doc);
-
-      await poDocRepo.save(
-        poDocRepo.create({
-          purchaseOrderId: poId,
-          documentId: doc.id,
-          purpose: dto.purpose,
-          linkedBy: userId || (null as any),
+          documentCode: doc.documentCode,
+          title: doc.title,
+          purpose: String(dto.purpose),
           linkedAt: now,
-        }),
-      );
-
-      return {
-        documentId: doc.id,
-        documentCode: doc.documentCode,
-        title: doc.title,
-        purpose: String(dto.purpose),
-        linkedAt: now,
-        fileUrl: await this.storage.getPresignedGetUrl(
-          dto.objectKey,
-          PRESIGN_GET_EXPIRY_SECONDS,
-        ),
-        fileName: dto.fileName,
-        fileSize: dto.sizeBytes,
-      };
-    });
-  }
-
-  async uploadDocument(
-    poId: string,
-    file: {
-      originalname: string;
-      mimetype: string;
-      size: number;
-      buffer: Buffer;
-    },
-    purpose: string = 'other',
-    userId?: string,
-  ): Promise<{
-    documentId: string;
-    documentCode: string | null;
-    title: string;
-    purpose: string;
-    linkedAt: Date;
-    fileUrl: string;
-    fileName: string;
-    fileSize: number;
-  }> {
-    const po = await this.poRepo.findOne({ where: { id: poId } });
-    if (!po) {
-      throw new NotFoundException(`Không tìm thấy đơn hàng PO với ID: ${poId}`);
-    }
-
-    this.checkPoNotLocked(po, 'tải lên tài liệu mới');
-
-    const validPurposes = Object.values(DocumentPurpose);
-    const targetPurpose = (purpose || DocumentPurpose.OTHER) as DocumentPurpose;
-    if (!validPurposes.includes(targetPurpose)) {
-      throw new BadRequestException(
-        `Mục đích sử dụng tài liệu không hợp lệ. Các giá trị hợp lệ: ${validPurposes.join(', ')}`,
-      );
-    }
-
-    const ext = path.extname(file.originalname) || '';
-    this.validateFileMagicBytes(ext, file.buffer);
-
-    const uploadDir = path.join(process.cwd(), 'uploads', 'po-documents');
-    if (!fs.existsSync(uploadDir)) {
-      await fsPromises.mkdir(uploadDir, { recursive: true });
-    }
-
-    const filename = `${randomUUID()}${ext}`;
-    const filePath = path.join(uploadDir, filename);
-
-    if (file.buffer) {
-      await fsPromises.writeFile(filePath, file.buffer);
-    }
-
-    const storageKey = `/uploads/po-documents/${filename}`;
-    const now = new Date();
-
-    try {
-      const doc = this.docRepo.create({
-        documentCode: `DOC-PO-${Date.now().toString().slice(-6)}`,
-        title: file.originalname,
-        createdBy: userId || (null as any),
-        createdAt: now,
-      });
-      const savedDoc = (await this.docRepo.save(doc)) as unknown as Document;
-
-      const version = this.docVersionRepo.create({
-        documentId: savedDoc.id,
-        versionNo: 1,
-        originalFileName: file.originalname,
-        storageKey,
-        mimeType: file.mimetype || 'application/octet-stream',
-        byteSize: file.size || 0,
-        status: UploadStatus.READY,
-        uploadedBy: userId || (null as any),
-        uploadedAt: now,
-      });
-      const savedVersion = (await this.docVersionRepo.save(
-        version,
-      )) as unknown as DocumentVersion;
-
-      savedDoc.currentVersionId = savedVersion.id;
-      await this.docRepo.save(savedDoc);
-
-      const poDoc = this.poDocRepo.create({
-        purchaseOrderId: poId,
-        documentId: savedDoc.id,
-        purpose: targetPurpose,
-        linkedBy: userId || (null as any),
-        linkedAt: now,
-      });
-      await this.poDocRepo.save(poDoc);
-
-      return {
-        documentId: savedDoc.id,
-        documentCode: savedDoc.documentCode,
-        title: savedDoc.title,
-        purpose: String(targetPurpose),
-        linkedAt: now,
-        fileUrl: storageKey,
-        fileName: file.originalname,
-        fileSize: file.size,
-      };
-    } catch (error) {
-      if (fs.existsSync(filePath)) {
-        await fsPromises.unlink(filePath).catch(() => {});
-      }
-      throw error;
-    }
-  }
-
-  async uploadMultipleDocuments(
-    poId: string,
-    files: any[],
-    purpose: string = 'other',
-    userId?: string,
-  ): Promise<
-    {
-      documentId: string;
-      documentCode: string | null;
-      title: string;
-      purpose: string;
-      linkedAt: Date;
-      fileUrl: string;
-      fileName: string;
-      fileSize: number;
-    }[]
-  > {
-    const po = await this.poRepo.findOne({ where: { id: poId } });
-    if (!po) {
-      throw new NotFoundException(`Không tìm thấy đơn hàng PO với ID: ${poId}`);
-    }
-    this.checkPoNotLocked(po, 'tải lên tài liệu mới');
-
-    const results: {
-      documentId: string;
-      documentCode: string | null;
-      title: string;
-      purpose: string;
-      linkedAt: Date;
-      fileUrl: string;
-      fileName: string;
-      fileSize: number;
-    }[] = [];
-
-    for (const file of files) {
-      const doc = await this.uploadDocument(poId, file, purpose, userId);
-      results.push(doc);
-    }
-
-    return results;
+          fileUrl: await this.storage.getPresignedGetUrl(
+            dto.objectKey,
+            PRESIGN_GET_EXPIRY_SECONDS,
+          ),
+          fileName: dto.fileName,
+          fileSize: dto.sizeBytes,
+        };
+      })
+      .catch((e) => this.rethrowDuplicateStorageKey(e));
   }
 
   private formatExcelCellValue(cell: any): string {
@@ -1727,13 +1687,26 @@ export class PurchaseOrdersService {
   /**
    * Lấy danh sách sản phẩm trong PO kèm đếm thống kê và thông tin truy vết Style nguồn
    */
-  async getProducts(poId: string) {
-    const products = await this.productRepo.find({
+  async getProducts(poId: string, query: QueryPoProductDto = {}) {
+    const page = query.page && query.page > 0 ? query.page : 1;
+    const limit =
+      query.limit && query.limit > 0 ? Math.min(query.limit, 100) : 20;
+
+    const [products, total] = await this.productRepo.findAndCount({
       where: { purchaseOrderId: poId },
       order: { createdAt: 'ASC' },
+      skip: (page - 1) * limit,
+      take: limit,
     });
 
-    if (products.length === 0) return [];
+    const meta = {
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit) || 0,
+    };
+
+    if (products.length === 0) return { items: [], ...meta };
 
     const productIds = products.map((p) => p.id);
     const styleIds = products
@@ -1876,34 +1849,66 @@ export class PurchaseOrdersService {
       {},
     );
 
-    return products.map((prod) => {
-      const sourceStyle = prod.sourceStyleId
-        ? stylesMap.get(prod.sourceStyleId)
-        : null;
-      const productColors = colorsByProductId[prod.id] || [];
-      const totalQuantity = productColors.reduce(
-        (sum, c) => sum + (Number(c.totalQuantity) || 0),
-        0,
-      );
+    const items = await Promise.all(
+      products.map(async (prod) => {
+        const sourceStyle = prod.sourceStyleId
+          ? stylesMap.get(prod.sourceStyleId)
+          : null;
+        const productColors = colorsByProductId[prod.id] || [];
+        const totalQuantity = productColors.reduce(
+          (sum, c) => sum + (Number(c.totalQuantity) || 0),
+          0,
+        );
 
-      return {
-        ...prod,
-        totalQuantity,
-        colors: productColors,
-        sourceStyle: sourceStyle
-          ? {
-              id: sourceStyle.id,
-              styleCode: sourceStyle.styleCode,
-              styleName: sourceStyle.styleName,
-              category: sourceStyle.category,
-            }
-          : null,
-        stepsCount: stepsCountMap[prod.id] || 0,
-        samplesCount: samplesCountMap[prod.id] || 0,
-        documentsCount: docsCountMap[prod.id] || 0,
-        documents: productDocsMap[prod.id] || [],
-      };
-    });
+        // structureImageVersionId lưu object key S3, không phải URL. Client
+        // không tự ký được nên phải resolve ở đây, giống baseImageKey của
+        // Style. Khóa `/uploads/...` cũ thì bỏ qua — tệp không có trên S3.
+        const structureImageUrl = isResolvableObjectKey(
+          prod.structureImageVersionId,
+        )
+          ? await this.storage.getPresignedGetUrl(prod.structureImageVersionId)
+          : null;
+
+        // Liệt kê tường minh thay vì `...prod`: entity còn mang các cột nội bộ
+        // (rowVersion, previousStatus, createdBy/updatedBy, closedBy...) không
+        // nên lọt ra API.
+        return {
+          id: prod.id,
+          purchaseOrderId: prod.purchaseOrderId,
+          sourceStyleId: prod.sourceStyleId,
+          productCode: prod.productCode,
+          productName: prod.productName,
+          category: prod.category,
+          materialNote: prod.materialNote,
+          deadline: prod.deadline,
+          structureImageVersionId: prod.structureImageVersionId,
+          structureImageUrl,
+          status: prod.status,
+          cancellationReason: prod.cancellationReason,
+          closedAt: prod.closedAt,
+          as3bCmBaseDays: prod.as3bCmBaseDays,
+          importedAt: prod.importedAt,
+          createdAt: prod.createdAt,
+          updatedAt: prod.updatedAt,
+          totalQuantity,
+          colors: productColors,
+          sourceStyle: sourceStyle
+            ? {
+                id: sourceStyle.id,
+                styleCode: sourceStyle.styleCode,
+                styleName: sourceStyle.styleName,
+                category: sourceStyle.category,
+              }
+            : null,
+          stepsCount: stepsCountMap[prod.id] || 0,
+          samplesCount: samplesCountMap[prod.id] || 0,
+          documentsCount: docsCountMap[prod.id] || 0,
+          documents: productDocsMap[prod.id] || [],
+        };
+      }),
+    );
+
+    return { items, ...meta };
   }
 
   /**
@@ -1975,41 +1980,64 @@ export class PurchaseOrdersService {
         {} as Record<string, DocumentVersion[]>,
       );
 
-      docsWithInfo = productDocs.map((pd) => {
-        const masterDoc = docsMap.get(pd.documentId);
-        const docVersions = versionsByDoc[pd.documentId] || [];
-        const currentVersion =
-          (masterDoc?.currentVersionId &&
-            docVersions.find((v) => v.id === masterDoc.currentVersionId)) ||
-          docVersions[0] ||
-          null;
+      docsWithInfo = await Promise.all(
+        productDocs.map(async (pd) => {
+          const masterDoc = docsMap.get(pd.documentId);
+          const docVersions = versionsByDoc[pd.documentId] || [];
+          const currentVersion =
+            (masterDoc?.currentVersionId &&
+              docVersions.find((v) => v.id === masterDoc.currentVersionId)) ||
+            docVersions[0] ||
+            null;
 
-        return {
-          ...pd,
-          title:
-            masterDoc?.title || currentVersion?.originalFileName || 'Tài liệu',
-          documentCode: masterDoc?.documentCode || null,
-          fileName:
-            currentVersion?.originalFileName || masterDoc?.title || null,
-          fileUrl: currentVersion?.storageKey || null,
-          fileSize: currentVersion?.byteSize
-            ? Number(currentVersion.byteSize)
-            : null,
-          currentVersionNo: currentVersion?.versionNo || 1,
-          changeReason: currentVersion?.changeReason || null,
-          versions: docVersions.map((v) => ({
-            id: v.id,
-            versionNo: v.versionNo,
-            originalFileName: v.originalFileName,
-            fileUrl: v.storageKey,
-            fileSize: v.byteSize ? Number(v.byteSize) : null,
-            mimeType: v.mimeType,
-            changeReason: v.changeReason,
-            uploadedAt: v.uploadedAt,
-            uploadedBy: v.uploadedBy,
-          })),
-        };
-      });
+          // fileUrl trước đây trả thẳng storageKey — đó là object key của S3,
+          // không phải URL, nên mọi link tải/xem tài liệu của sản phẩm đều hỏng.
+          // Ký lại ở mỗi lần đọc, giống cách tài liệu PO và ảnh Style vẫn làm.
+          const signedCurrentUrl = isResolvableObjectKey(
+            currentVersion?.storageKey,
+          )
+            ? await this.storage.getPresignedGetUrl(currentVersion.storageKey)
+            : null;
+
+          const signedVersions = await Promise.all(
+            docVersions.map(async (v) => ({
+              id: v.id,
+              versionNo: v.versionNo,
+              originalFileName: v.originalFileName,
+              fileUrl: isResolvableObjectKey(v.storageKey)
+                ? await this.storage.getPresignedGetUrl(v.storageKey)
+                : null,
+              fileSize: v.byteSize ? Number(v.byteSize) : null,
+              mimeType: v.mimeType,
+              changeReason: v.changeReason,
+              uploadedAt: v.uploadedAt,
+              uploadedBy: v.uploadedBy,
+            })),
+          );
+
+          return {
+            documentId: pd.documentId,
+            productId: pd.productId,
+            purpose: pd.purpose,
+            linkedAt: pd.linkedAt,
+            sourcePoDocument: pd.sourcePoDocument ?? null,
+            title:
+              masterDoc?.title ||
+              currentVersion?.originalFileName ||
+              'Tài liệu',
+            documentCode: masterDoc?.documentCode || null,
+            fileName:
+              currentVersion?.originalFileName || masterDoc?.title || null,
+            fileUrl: signedCurrentUrl,
+            fileSize: currentVersion?.byteSize
+              ? Number(currentVersion.byteSize)
+              : null,
+            currentVersionNo: currentVersion?.versionNo || 1,
+            changeReason: currentVersion?.changeReason || null,
+            versions: signedVersions,
+          };
+        }),
+      );
     }
 
     // Lấy thông tin sizes của các colors
@@ -2053,8 +2081,28 @@ export class PurchaseOrdersService {
       });
     }
 
+    // Liệt kê tường minh thay vì `...product`, cùng lý do như getProducts:
+    // entity còn mang rowVersion, previousStatus, createdBy/updatedBy, closedBy.
     return {
-      ...product,
+      id: product.id,
+      purchaseOrderId: product.purchaseOrderId,
+      sourceStyleId: product.sourceStyleId,
+      productCode: product.productCode,
+      productName: product.productName,
+      category: product.category,
+      materialNote: product.materialNote,
+      deadline: product.deadline,
+      structureImageVersionId: product.structureImageVersionId,
+      structureImageUrl: isResolvableObjectKey(product.structureImageVersionId)
+        ? await this.storage.getPresignedGetUrl(product.structureImageVersionId)
+        : null,
+      status: product.status,
+      cancellationReason: product.cancellationReason,
+      closedAt: product.closedAt,
+      as3bCmBaseDays: product.as3bCmBaseDays,
+      importedAt: product.importedAt,
+      createdAt: product.createdAt,
+      updatedAt: product.updatedAt,
       totalQuantity,
       colors: colorsWithSizes,
       sourceStyle: sourceStyle
@@ -2821,6 +2869,11 @@ export class PurchaseOrdersService {
       );
     }
 
+    this.assertObjectKeyInScope(
+      dto.objectKey,
+      `purchase-orders/${poId}/products/${productId}/documents/`,
+    );
+
     const head = await this.storage.headObject(dto.objectKey);
     if (!head.exists) {
       throw new BadRequestException(
@@ -2831,71 +2884,73 @@ export class PurchaseOrdersService {
     // Server never receives the raw upload (client PUTs straight to S3 with a
     // presigned URL), so the magic-bytes check that used to run on the multer
     // buffer must run here instead, against the bytes actually stored on S3.
-    const ext = path.extname(dto.fileName) || '';
-    const buffer = await this.storage.getObjectBuffer(dto.objectKey);
+    const ext = (path.extname(dto.fileName) || '').toLowerCase();
+    const buffer = await this.readBytesForMagicCheck(dto.objectKey, ext);
     this.validateFileMagicBytes(ext, buffer);
 
     const now = new Date();
 
-    return this.dataSource.transaction(async (manager) => {
-      const docRepo = manager.getRepository(Document);
-      const versionRepo = manager.getRepository(DocumentVersion);
-      const productDocRepo = manager.getRepository(
-        PurchaseOrderProductDocument,
-      );
+    return this.dataSource
+      .transaction(async (manager) => {
+        const docRepo = manager.getRepository(Document);
+        const versionRepo = manager.getRepository(DocumentVersion);
+        const productDocRepo = manager.getRepository(
+          PurchaseOrderProductDocument,
+        );
 
-      const doc = await docRepo.save(
-        docRepo.create({
-          documentCode: `DOC-PROD-${Date.now().toString().slice(-6)}`,
-          title: dto.fileName,
-          createdBy: userId || (null as any),
-          createdAt: now,
-        }),
-      );
+        const doc = await docRepo.save(
+          docRepo.create({
+            documentCode: `DOC-PROD-${Date.now().toString().slice(-6)}`,
+            title: dto.fileName,
+            createdBy: userId || (null as any),
+            createdAt: now,
+          }),
+        );
 
-      const version = await versionRepo.save(
-        versionRepo.create({
-          documentId: doc.id,
-          versionNo: 1,
-          originalFileName: dto.fileName,
-          storageKey: dto.objectKey,
-          mimeType: dto.mimeType,
-          byteSize: dto.sizeBytes,
-          status: UploadStatus.READY,
-          uploadedBy: userId || (null as any),
-          uploadedAt: now,
-        }),
-      );
+        const version = await versionRepo.save(
+          versionRepo.create({
+            documentId: doc.id,
+            versionNo: 1,
+            originalFileName: dto.fileName,
+            storageKey: dto.objectKey,
+            mimeType: dto.mimeType,
+            byteSize: dto.sizeBytes,
+            status: UploadStatus.READY,
+            uploadedBy: userId || (null as any),
+            uploadedAt: now,
+          }),
+        );
 
-      doc.currentVersionId = version.id;
-      await docRepo.save(doc);
+        doc.currentVersionId = version.id;
+        await docRepo.save(doc);
 
-      await productDocRepo.save(
-        productDocRepo.create({
+        await productDocRepo.save(
+          productDocRepo.create({
+            productId,
+            documentId: doc.id,
+            sourcePoDocument: false,
+            purpose: dto.purpose,
+            linkedBy: userId || (null as any),
+            linkedAt: now,
+          }),
+        );
+
+        return {
           productId,
           documentId: doc.id,
-          sourcePoDocument: false,
-          purpose: dto.purpose,
-          linkedBy: userId || (null as any),
+          documentCode: doc.documentCode,
+          title: doc.title,
+          purpose: String(dto.purpose),
           linkedAt: now,
-        }),
-      );
-
-      return {
-        productId,
-        documentId: doc.id,
-        documentCode: doc.documentCode,
-        title: doc.title,
-        purpose: String(dto.purpose),
-        linkedAt: now,
-        fileUrl: await this.storage.getPresignedGetUrl(
-          dto.objectKey,
-          PRESIGN_GET_EXPIRY_SECONDS,
-        ),
-        fileName: dto.fileName,
-        fileSize: dto.sizeBytes,
-      };
-    });
+          fileUrl: await this.storage.getPresignedGetUrl(
+            dto.objectKey,
+            PRESIGN_GET_EXPIRY_SECONDS,
+          ),
+          fileName: dto.fileName,
+          fileSize: dto.sizeBytes,
+        };
+      })
+      .catch((e) => this.rethrowDuplicateStorageKey(e));
   }
 
   /**
@@ -2934,6 +2989,11 @@ export class PurchaseOrdersService {
       throw new NotFoundException('Không tìm thấy tài liệu.');
     }
 
+    this.assertObjectKeyInScope(
+      dto.objectKey,
+      `purchase-orders/${poId}/products/${productId}/documents/`,
+    );
+
     const head = await this.storage.headObject(dto.objectKey);
     if (!head.exists) {
       throw new BadRequestException(
@@ -2941,8 +3001,8 @@ export class PurchaseOrdersService {
       );
     }
 
-    const ext = path.extname(dto.fileName) || '';
-    const buffer = await this.storage.getObjectBuffer(dto.objectKey);
+    const ext = (path.extname(dto.fileName) || '').toLowerCase();
+    const buffer = await this.readBytesForMagicCheck(dto.objectKey, ext);
     this.validateFileMagicBytes(ext, buffer);
 
     const existingVersions = await this.docVersionRepo.find({
@@ -2957,315 +3017,63 @@ export class PurchaseOrdersService {
 
     const now = new Date();
 
-    return this.dataSource.transaction(async (manager) => {
-      const docRepo = manager.getRepository(Document);
-      const versionRepo = manager.getRepository(DocumentVersion);
+    return this.dataSource
+      .transaction(async (manager) => {
+        const docRepo = manager.getRepository(Document);
+        const versionRepo = manager.getRepository(DocumentVersion);
 
-      const newVersion = await versionRepo.save(
-        versionRepo.create({
-          documentId,
-          versionNo: nextVersionNo,
-          originalFileName: dto.fileName,
-          storageKey: dto.objectKey,
-          mimeType: dto.mimeType,
-          byteSize: dto.sizeBytes,
-          status: UploadStatus.READY,
-          uploadedBy: userId || (null as any),
-          uploadedAt: now,
-        }),
-      );
-
-      doc.currentVersionId = newVersion.id;
-      await docRepo.save(doc);
-
-      const allVersions = [newVersion, ...existingVersions];
-
-      return {
-        productId,
-        documentId,
-        documentCode: doc.documentCode,
-        title: doc.title,
-        purpose: String(prodDoc.purpose),
-        sourcePoDocument: prodDoc.sourcePoDocument,
-        linkedAt: prodDoc.linkedAt,
-        fileName: dto.fileName,
-        fileUrl: await this.storage.getPresignedGetUrl(
-          dto.objectKey,
-          PRESIGN_GET_EXPIRY_SECONDS,
-        ),
-        fileSize: dto.sizeBytes,
-        currentVersionNo: nextVersionNo,
-        versions: allVersions.map((v) => ({
-          id: v.id,
-          versionNo: v.versionNo,
-          originalFileName: v.originalFileName,
-          fileUrl: v.storageKey,
-          fileSize: v.byteSize ? Number(v.byteSize) : null,
-          mimeType: v.mimeType,
-          changeReason: v.changeReason,
-          uploadedAt: v.uploadedAt,
-          uploadedBy: v.uploadedBy,
-        })),
-      };
-    });
-  }
-
-  /**
-   * Tải lên tài liệu đính kèm trực tiếp cho Sản phẩm PO
-   */
-  async uploadProductDocument(
-    poId: string,
-    productId: string,
-    file: any,
-    purpose: string = 'other',
-    userId?: string,
-  ) {
-    const product = await this.productRepo.findOne({
-      where: { id: productId, purchaseOrderId: poId },
-    });
-    if (!product) {
-      throw new NotFoundException(
-        `Không tìm thấy sản phẩm #${productId} trong đơn hàng PO`,
-      );
-    }
-    if (product.status === ProductStatus.CLOSED) {
-      throw new BadRequestException(
-        'Sản phẩm đã bị khóa, không thể tải lên tài liệu mới.',
-      );
-    }
-
-    const validPurposes = Object.values(DocumentPurpose);
-    const targetPurpose = (purpose || DocumentPurpose.OTHER) as DocumentPurpose;
-    if (!validPurposes.includes(targetPurpose)) {
-      throw new BadRequestException(
-        `Mục đích sử dụng tài liệu không hợp lệ. Các giá trị hợp lệ: ${validPurposes.join(', ')}`,
-      );
-    }
-
-    const ext = path.extname(file.originalname) || '';
-    this.validateFileMagicBytes(ext, file.buffer);
-
-    const uploadDir = path.join(process.cwd(), 'uploads', 'po-documents');
-    if (!fs.existsSync(uploadDir)) {
-      await fsPromises.mkdir(uploadDir, { recursive: true });
-    }
-
-    const filename = `${randomUUID()}${ext}`;
-    const filePath = path.join(uploadDir, filename);
-
-    if (file.buffer) {
-      await fsPromises.writeFile(filePath, file.buffer);
-    }
-
-    const storageKey = `/uploads/po-documents/${filename}`;
-    const now = new Date();
-
-    try {
-      const doc = this.docRepo.create({
-        documentCode: `DOC-PROD-${Date.now().toString().slice(-6)}`,
-        title: file.originalname,
-        createdBy: userId || (null as any),
-        createdAt: now,
-      });
-      const savedDoc = (await this.docRepo.save(doc)) as unknown as Document;
-
-      const version = this.docVersionRepo.create({
-        documentId: savedDoc.id,
-        versionNo: 1,
-        originalFileName: file.originalname,
-        storageKey,
-        mimeType: file.mimetype || 'application/octet-stream',
-        byteSize: file.size || 0,
-        status: UploadStatus.READY,
-        uploadedBy: userId || (null as any),
-        uploadedAt: now,
-      });
-      const savedVersion = (await this.docVersionRepo.save(
-        version,
-      )) as unknown as DocumentVersion;
-
-      savedDoc.currentVersionId = savedVersion.id;
-      await this.docRepo.save(savedDoc);
-
-      // Lưu liên kết kho PO
-      const poDoc = this.poDocRepo.create({
-        purchaseOrderId: poId,
-        documentId: savedDoc.id,
-        purpose: targetPurpose,
-        linkedBy: userId || (null as any),
-        linkedAt: now,
-      });
-      await this.poDocRepo.save(poDoc);
-
-      // Lưu liên kết sản phẩm
-      const productDoc = this.productDocRepo.create({
-        productId,
-        documentId: savedDoc.id,
-        sourcePoDocument: false,
-        purpose: targetPurpose,
-        linkedBy: userId,
-        linkedAt: now,
-      });
-      await this.productDocRepo.save(productDoc);
-
-      return {
-        productId,
-        documentId: savedDoc.id,
-        documentCode: savedDoc.documentCode,
-        title: savedDoc.title,
-        purpose: String(targetPurpose),
-        sourcePoDocument: false,
-        linkedAt: now,
-        fileName: file.originalname,
-        fileUrl: storageKey,
-        fileSize: file.size,
-        currentVersionNo: 1,
-        versions: [
-          {
-            id: savedVersion.id,
-            versionNo: 1,
-            originalFileName: file.originalname,
-            fileUrl: storageKey,
-            fileSize: file.size,
-            mimeType: file.mimetype,
-            changeReason: null,
+        const newVersion = await versionRepo.save(
+          versionRepo.create({
+            documentId,
+            versionNo: nextVersionNo,
+            originalFileName: dto.fileName,
+            storageKey: dto.objectKey,
+            mimeType: dto.mimeType,
+            byteSize: dto.sizeBytes,
+            status: UploadStatus.READY,
+            uploadedBy: userId || (null as any),
             uploadedAt: now,
-            uploadedBy: userId,
-          },
-        ],
-      };
-    } catch (error) {
-      if (fs.existsSync(filePath)) {
-        await fsPromises.unlink(filePath).catch(() => {});
-      }
-      throw error;
-    }
-  }
+          }),
+        );
 
-  /**
-   * Cập nhật phiên bản mới cho tài liệu của sản phẩm
-   */
-  async uploadDocumentVersion(
-    poId: string,
-    productId: string,
-    documentId: string,
-    file: any,
-    changeReason?: string,
-    userId?: string,
-  ) {
-    if (!changeReason || !changeReason.trim()) {
-      throw new BadRequestException(
-        'Vui lòng nhập lý do / ghi chú thay đổi phiên bản từ khách hàng.',
-      );
-    }
+        doc.currentVersionId = newVersion.id;
+        await docRepo.save(doc);
 
-    const product = await this.productRepo.findOne({
-      where: { id: productId, purchaseOrderId: poId },
-    });
-    if (!product) {
-      throw new NotFoundException(
-        `Không tìm thấy sản phẩm #${productId} trong đơn hàng PO`,
-      );
-    }
-    if (product.status === ProductStatus.CLOSED) {
-      throw new BadRequestException(
-        'Sản phẩm đã bị khóa, không thể cập nhật phiên bản mới.',
-      );
-    }
+        const allVersions = [newVersion, ...existingVersions];
 
-    const prodDoc = await this.productDocRepo.findOne({
-      where: { productId, documentId },
-    });
-    if (!prodDoc) {
-      throw new NotFoundException('Tài liệu không thuộc sản phẩm này.');
-    }
-
-    const doc = await this.docRepo.findOne({ where: { id: documentId } });
-    if (!doc) {
-      throw new NotFoundException('Không tìm thấy tài liệu.');
-    }
-
-    const existingVersions = await this.docVersionRepo.find({
-      where: { documentId },
-      order: { versionNo: 'DESC' },
-    });
-    const maxVersion =
-      existingVersions.length > 0
-        ? Math.max(...existingVersions.map((v) => v.versionNo))
-        : 0;
-    const nextVersionNo = maxVersion + 1;
-
-    const ext = path.extname(file.originalname) || '';
-    this.validateFileMagicBytes(ext, file.buffer);
-
-    const uploadDir = path.join(process.cwd(), 'uploads', 'po-documents');
-    if (!fs.existsSync(uploadDir)) {
-      await fsPromises.mkdir(uploadDir, { recursive: true });
-    }
-
-    const filename = `${randomUUID()}${ext}`;
-    const filePath = path.join(uploadDir, filename);
-
-    if (file.buffer) {
-      await fsPromises.writeFile(filePath, file.buffer);
-    }
-
-    const storageKey = `/uploads/po-documents/${filename}`;
-    const now = new Date();
-
-    try {
-      const newVersion = this.docVersionRepo.create({
-        documentId,
-        versionNo: nextVersionNo,
-        originalFileName: file.originalname,
-        storageKey,
-        mimeType: file.mimetype || 'application/octet-stream',
-        byteSize: file.size || 0,
-        status: UploadStatus.READY,
-        changeReason: changeReason?.trim() || undefined,
-        uploadedBy: userId || (null as any),
-        uploadedAt: now,
-      });
-      const savedVersion = (await this.docVersionRepo.save(
-        newVersion,
-      )) as unknown as DocumentVersion;
-
-      doc.currentVersionId = savedVersion.id;
-      await this.docRepo.save(doc);
-
-      const allVersions = [savedVersion, ...existingVersions];
-
-      return {
-        productId,
-        documentId: doc.id,
-        documentCode: doc.documentCode,
-        title: doc.title,
-        purpose: String(prodDoc.purpose),
-        sourcePoDocument: prodDoc.sourcePoDocument,
-        linkedAt: prodDoc.linkedAt,
-        fileName: file.originalname,
-        fileUrl: storageKey,
-        fileSize: file.size,
-        currentVersionNo: nextVersionNo,
-        changeReason: savedVersion.changeReason,
-        versions: allVersions.map((v) => ({
-          id: v.id,
-          versionNo: v.versionNo,
-          originalFileName: v.originalFileName,
-          fileUrl: v.storageKey,
-          fileSize: v.byteSize ? Number(v.byteSize) : null,
-          mimeType: v.mimeType,
-          changeReason: v.changeReason,
-          uploadedAt: v.uploadedAt,
-          uploadedBy: v.uploadedBy,
-        })),
-      };
-    } catch (error) {
-      if (fs.existsSync(filePath)) {
-        await fsPromises.unlink(filePath).catch(() => {});
-      }
-      throw error;
-    }
+        return {
+          productId,
+          documentId,
+          documentCode: doc.documentCode,
+          title: doc.title,
+          purpose: String(prodDoc.purpose),
+          sourcePoDocument: prodDoc.sourcePoDocument,
+          linkedAt: prodDoc.linkedAt,
+          fileName: dto.fileName,
+          fileUrl: await this.storage.getPresignedGetUrl(
+            dto.objectKey,
+            PRESIGN_GET_EXPIRY_SECONDS,
+          ),
+          fileSize: dto.sizeBytes,
+          currentVersionNo: nextVersionNo,
+          versions: await Promise.all(
+            allVersions.map(async (v) => ({
+              id: v.id,
+              versionNo: v.versionNo,
+              originalFileName: v.originalFileName,
+              fileUrl: isResolvableObjectKey(v.storageKey)
+                ? await this.storage.getPresignedGetUrl(v.storageKey)
+                : null,
+              fileSize: v.byteSize ? Number(v.byteSize) : null,
+              mimeType: v.mimeType,
+              changeReason: v.changeReason,
+              uploadedAt: v.uploadedAt,
+              uploadedBy: v.uploadedBy,
+            })),
+          ),
+        };
+      })
+      .catch((e) => this.rethrowDuplicateStorageKey(e));
   }
 
   /**

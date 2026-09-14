@@ -70,6 +70,7 @@ describe('StyleDocumentsService', () => {
       getPresignedGetUrl: jest.fn().mockResolvedValue('https://s3.example/get'),
       deleteObject: jest.fn(),
       headObject: jest.fn().mockResolvedValue({ exists: true }),
+      getObjectHead: jest.fn().mockResolvedValue(Buffer.from('%PDF-1.5')),
       getObjectBuffer: jest.fn().mockResolvedValue(Buffer.from('')),
     };
 

@@ -149,6 +149,7 @@ describe('StyleProductionDocsService', () => {
             deleteObject: jest.fn(),
             headObject: jest.fn(),
             getObjectBuffer: jest.fn(),
+            getObjectHead: jest.fn(),
           },
         },
       ],
