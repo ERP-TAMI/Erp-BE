@@ -85,13 +85,15 @@ export async function seedDemoBoms(manager: EntityManager): Promise<void> {
 
     const bomId = insertedBom[0]?.id;
     if (bomId && materials.length > 0) {
+      const isApproved = isClosed;
+      const revNo = isApproved ? 1 : null;
       const insertedRev = await manager.query(
         `INSERT INTO bom_revisions
            (bill_of_material_id, revision_no, status, change_reason, created_at, approved_at)
-         VALUES ($1, 1, $2, 'Seed revision', now(), $3)
-         ON CONFLICT (bill_of_material_id, revision_no) DO UPDATE SET status = EXCLUDED.status
+         VALUES ($1, $2, $3, 'Seed revision', now(), $4)
+         ON CONFLICT (bill_of_material_id, revision_no) WHERE revision_no IS NOT NULL DO UPDATE SET status = EXCLUDED.status
          RETURNING id`,
-        [bomId, isClosed ? 'approved' : 'draft', isClosed ? new Date() : null],
+        [bomId, revNo, isApproved ? 'approved' : 'draft', isApproved ? new Date() : null],
       );
       const revisionId = insertedRev[0]?.id;
 
@@ -130,7 +132,7 @@ export async function seedDemoBoms(manager: EntityManager): Promise<void> {
         `INSERT INTO fit_bom_revisions
            (style_id, revision_no, status, change_reason, created_at, approved_at)
          VALUES ($1, 1, 'approved', 'Seed fit revision', now(), now())
-         ON CONFLICT (style_id, revision_no) DO UPDATE SET status = EXCLUDED.status
+         ON CONFLICT (style_id, revision_no) WHERE revision_no IS NOT NULL DO UPDATE SET status = EXCLUDED.status
          RETURNING id`,
         [st.id],
       );

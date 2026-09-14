@@ -20,8 +20,8 @@ export class BomRevision {
   @Column({ type: 'uuid', name: 'bill_of_material_id' })
   billOfMaterialId: string;
 
-  @Column({ type: 'int', name: 'revision_no' })
-  revisionNo: number;
+  @Column({ type: 'int', nullable: true, name: 'revision_no' })
+  revisionNo: number | null;
 
   @Column({
     type: 'enum',

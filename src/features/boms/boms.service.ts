@@ -232,8 +232,7 @@ export class BomsService {
           bom.color_name_snapshot as color_name,
           bom.product_code_snapshot as style_code,
           bom.product_name_snapshot as product_name,
-          bom.order_quantity_snapshot as po_quantity,
-          COALESCE(active_rev.revision_no, (SELECT MAX(r2.revision_no) FROM bom_revisions r2 WHERE r2.bill_of_material_id = bom.id), 1) as version,
+          COALESCE(active_rev.revision_no, (SELECT MAX(r2.revision_no) FROM bom_revisions r2 WHERE r2.bill_of_material_id = bom.id AND r2.status = 'approved')) as version,
           CASE bom.status::text
             WHEN 'closed' THEN 'Approved'
             WHEN 'wait_accounting' THEN 'Wait_Price'
@@ -279,8 +278,7 @@ export class BomsService {
           'Tiêu chuẩn'::text as color_name,
           s.style_code as style_code,
           s.style_name as product_name,
-          NULL::integer as po_quantity,
-          COALESCE(active_fit.revision_no, (SELECT MAX(r2.revision_no) FROM fit_bom_revisions r2 WHERE r2.style_id = s.id), 1) as version,
+          COALESCE(active_fit.revision_no, (SELECT MAX(r2.revision_no) FROM fit_bom_revisions r2 WHERE r2.style_id = s.id AND r2.status = 'approved')) as version,
           CASE s.status::text
             WHEN 'active' THEN 'Approved'
             WHEN 'approved' THEN 'Approved'
@@ -495,7 +493,7 @@ export class BomsService {
       .andWhere('r.status IN (:...statuses)', {
         statuses: [RevisionStatus.DRAFT, RevisionStatus.IN_REVIEW],
       })
-      .orderBy('r.revision_no', 'DESC')
+      .orderBy('r.createdAt', 'DESC')
       .getOne();
   }
 
@@ -512,7 +510,7 @@ export class BomsService {
       .andWhere('r.status IN (:...statuses)', {
         statuses: [RevisionStatus.DRAFT, RevisionStatus.IN_REVIEW],
       })
-      .orderBy('r.revision_no', 'DESC')
+      .orderBy('r.createdAt', 'DESC')
       .getOne();
   }
 
@@ -576,8 +574,10 @@ export class BomsService {
         ...poBom,
         objectType: 'po',
         objectCode: poBom.poCodeSnapshot,
-        status: mapBomStatusToLabel(poBom.status),
-        version: targetRevision?.revisionNo ?? 1,
+        version:
+          targetRevision?.status === RevisionStatus.APPROVED
+            ? targetRevision.revisionNo
+            : null,
         revision: targetRevision
           ? {
               id: targetRevision.id,
@@ -651,7 +651,10 @@ export class BomsService {
         styleCode: style.styleCode,
         productName: style.styleName,
         status: style.status === StyleStatus.ACTIVE ? 'Approved' : 'Draft',
-        version: targetRevision?.revisionNo ?? 1,
+        version:
+          targetRevision?.status === RevisionStatus.APPROVED
+            ? targetRevision.revisionNo
+            : null,
         revision: targetRevision
           ? {
               id: targetRevision.id,
@@ -763,7 +766,7 @@ export class BomsService {
     if (parent.type === 'po') {
       const revs = await this.bomRevisionRepo.find({
         where: { billOfMaterialId: bomOrStyleId },
-        order: { revisionNo: 'DESC' },
+        order: { revisionNo: 'DESC', createdAt: 'DESC' },
         relations: ['lines'],
       });
       return revs.map((r) => {
@@ -795,7 +798,7 @@ export class BomsService {
     } else {
       const revs = await this.fitBomRevisionRepo.find({
         where: { styleId: bomOrStyleId },
-        order: { revisionNo: 'DESC' },
+        order: { revisionNo: 'DESC', createdAt: 'DESC' },
         relations: ['lines'],
       });
       return revs.map((r) => ({
@@ -833,15 +836,9 @@ export class BomsService {
 
     try {
       if (parent.type === 'po') {
-        const maxResult = await queryRunner.manager.query(
-          `SELECT COALESCE(MAX(revision_no), 0)::int as max_no FROM bom_revisions WHERE bill_of_material_id = $1`,
-          [bomOrStyleId],
-        );
-        const nextRevisionNo = (maxResult[0]?.max_no || 0) + 1;
-
         const newRev = queryRunner.manager.create(BomRevision, {
           billOfMaterialId: bomOrStyleId,
-          revisionNo: nextRevisionNo,
+          revisionNo: null,
           status: RevisionStatus.DRAFT,
           sourceFitBomRevisionId: dto?.sourceFitBomRevisionId || null,
           effectiveFrom: null,
@@ -897,15 +894,9 @@ export class BomsService {
           lines: clonedLines,
         };
       } else {
-        const maxResult = await queryRunner.manager.query(
-          `SELECT COALESCE(MAX(revision_no), 0)::int as max_no FROM fit_bom_revisions WHERE style_id = $1`,
-          [bomOrStyleId],
-        );
-        const nextRevisionNo = (maxResult[0]?.max_no || 0) + 1;
-
         const newRev = queryRunner.manager.create(FitBomRevision, {
           styleId: bomOrStyleId,
-          revisionNo: nextRevisionNo,
+          revisionNo: null,
           status: RevisionStatus.DRAFT,
           effectiveFrom: null,
           effectiveTo: null,
@@ -1252,6 +1243,13 @@ export class BomsService {
 
     try {
       if (parent.type === 'po') {
+        // Khóa BOM cha để tuần tự hóa các giao dịch duyệt đồng thời cho cùng BOM
+        await queryRunner.manager
+          .createQueryBuilder(BillOfMaterials, 'bom')
+          .setLock('pessimistic_write')
+          .where('bom.id = :id', { id: bomOrStyleId })
+          .getOne();
+
         const rev = await queryRunner.manager
           .createQueryBuilder(BomRevision, 'r')
           .setLock('pessimistic_write')
@@ -1282,7 +1280,14 @@ export class BomsService {
           );
         }
 
-        if (rev.revisionNo >= 2 && !rawEffectiveFrom) {
+        // Tính số version chính thức tiếp theo dựa trên các revision đã có revision_no (được cấp vĩnh viễn, không tái sử dụng kể cả khi superseded)
+        const maxResult = await queryRunner.manager.query(
+          `SELECT COALESCE(MAX(revision_no), 0)::int as max_no FROM bom_revisions WHERE bill_of_material_id = $1 AND revision_no IS NOT NULL`,
+          [bomOrStyleId],
+        );
+        const nextRevisionNo = (maxResult[0]?.max_no || 0) + 1;
+
+        if (nextRevisionNo >= 2 && !rawEffectiveFrom) {
           throw new BadRequestException(
             'Revision số 2 trở lên bắt buộc phải chỉ định ngày bắt đầu hiệu lực (effectiveFrom).',
           );
@@ -1323,6 +1328,7 @@ export class BomsService {
           await queryRunner.manager.save(BomRevision, prevApprovedRev);
         }
 
+        rev.revisionNo = nextRevisionNo;
         rev.status = RevisionStatus.APPROVED;
         rev.effectiveFrom = effectiveFrom;
         rev.effectiveTo = null;
@@ -1334,6 +1340,13 @@ export class BomsService {
         await queryRunner.commitTransaction();
         return saved;
       } else {
+        // Khóa Style cha để tuần tự hóa các giao dịch duyệt đồng thời cho cùng Style
+        await queryRunner.manager
+          .createQueryBuilder(Style, 's')
+          .setLock('pessimistic_write')
+          .where('s.id = :id', { id: bomOrStyleId })
+          .getOne();
+
         const rev = await queryRunner.manager
           .createQueryBuilder(FitBomRevision, 'r')
           .setLock('pessimistic_write')
@@ -1364,7 +1377,14 @@ export class BomsService {
           );
         }
 
-        if (rev.revisionNo >= 2 && !rawEffectiveFrom) {
+        // Tính số version chính thức tiếp theo dựa trên các revision đã có revision_no (được cấp vĩnh viễn, không tái sử dụng kể cả khi superseded)
+        const maxResult = await queryRunner.manager.query(
+          `SELECT COALESCE(MAX(revision_no), 0)::int as max_no FROM fit_bom_revisions WHERE style_id = $1 AND revision_no IS NOT NULL`,
+          [bomOrStyleId],
+        );
+        const nextRevisionNo = (maxResult[0]?.max_no || 0) + 1;
+
+        if (nextRevisionNo >= 2 && !rawEffectiveFrom) {
           throw new BadRequestException(
             'Revision số 2 trở lên bắt buộc phải chỉ định ngày bắt đầu hiệu lực (effectiveFrom).',
           );
@@ -1404,6 +1424,7 @@ export class BomsService {
           await queryRunner.manager.save(FitBomRevision, prevApprovedRev);
         }
 
+        rev.revisionNo = nextRevisionNo;
         rev.status = RevisionStatus.APPROVED;
         rev.effectiveFrom = effectiveFrom;
         rev.effectiveTo = null;

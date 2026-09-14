@@ -63,10 +63,10 @@ describe('BomsController', () => {
         .mockResolvedValue([{ id: 'rev-1', revisionNo: 1 }]),
       createRevision: jest
         .fn()
-        .mockResolvedValue({ id: 'rev-2', revisionNo: 2, status: 'draft' }),
+        .mockResolvedValue({ id: 'rev-2', revisionNo: null, status: 'draft' }),
       updateDraftRevision: jest
         .fn()
-        .mockResolvedValue({ id: 'rev-2', revisionNo: 2 }),
+        .mockResolvedValue({ id: 'rev-2', revisionNo: null }),
       submitRevisionForReview: jest
         .fn()
         .mockResolvedValue({ id: 'rev-2', status: 'in_review' }),
@@ -142,7 +142,7 @@ describe('BomsController', () => {
     const req = { user: { roleCode: 'TPKH' } };
     const dto = { changeReason: 'New draft' };
     const res = await controller.createRevision('po-bom-1', dto, req);
-    expect(res.revisionNo).toBe(2);
+    expect(res.revisionNo).toBeNull();
     expect(serviceMock.createRevision).toHaveBeenCalledWith(
       'po-bom-1',
       dto,
@@ -153,7 +153,7 @@ describe('BomsController', () => {
   it('cloneRevision calls service.createRevision with cloneFromRevisionId', async () => {
     const req = { user: { roleCode: 'TPKH' } };
     const res = await controller.cloneRevision('po-bom-1', 'rev-1', {}, req);
-    expect(res.revisionNo).toBe(2);
+    expect(res.revisionNo).toBeNull();
     expect(serviceMock.createRevision).toHaveBeenCalledWith(
       'po-bom-1',
       { cloneFromRevisionId: 'rev-1' },

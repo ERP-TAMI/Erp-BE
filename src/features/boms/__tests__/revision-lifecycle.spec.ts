@@ -117,23 +117,37 @@ describe('Tier 2C — Revision Lifecycle & Approval Workflow', () => {
             .fn()
             .mockImplementation(async (sql: string, params: any[]) => {
               if (sql.includes('MAX(revision_no)')) {
-                if (sql.includes('bom_revisions')) {
+                if (sql.includes('fit_bom_revisions')) {
+                  const sId = params[0];
+                  const revs = fitRevisions.filter(
+                    (r) =>
+                      r.styleId === sId &&
+                      (sql.includes('revision_no IS NOT NULL')
+                        ? r.revisionNo != null
+                        : sql.includes('approved')
+                          ? r.status === RevisionStatus.APPROVED
+                          : r.revisionNo != null),
+                  );
+                  const validNos = revs
+                    .map((r) => r.revisionNo)
+                    .filter((n) => n != null);
+                  const maxNo = validNos.length > 0 ? Math.max(...validNos) : 0;
+                  return [{ max_no: maxNo }];
+                } else if (sql.includes('bom_revisions')) {
                   const bId = params[0];
                   const revs = poRevisions.filter(
-                    (r) => r.billOfMaterialId === bId,
+                    (r) =>
+                      r.billOfMaterialId === bId &&
+                      (sql.includes('revision_no IS NOT NULL')
+                        ? r.revisionNo != null
+                        : sql.includes('approved')
+                          ? r.status === RevisionStatus.APPROVED
+                          : r.revisionNo != null),
                   );
-                  const maxNo =
-                    revs.length > 0
-                      ? Math.max(...revs.map((r) => r.revisionNo))
-                      : 0;
-                  return [{ max_no: maxNo }];
-                } else {
-                  const sId = params[0];
-                  const revs = fitRevisions.filter((r) => r.styleId === sId);
-                  const maxNo =
-                    revs.length > 0
-                      ? Math.max(...revs.map((r) => r.revisionNo))
-                      : 0;
+                  const validNos = revs
+                    .map((r) => r.revisionNo)
+                    .filter((n) => n != null);
+                  const maxNo = validNos.length > 0 ? Math.max(...validNos) : 0;
                   return [{ max_no: maxNo }];
                 }
               }
@@ -248,6 +262,7 @@ describe('Tier 2C — Revision Lifecycle & Approval Workflow', () => {
                 where: jest
                   .fn()
                   .mockImplementation((cond: string, params: any) => {
+                    if (params?.id) filterId = params.id;
                     if (params?.revisionId) filterId = params.revisionId;
                     if (params?.bomId) filterBomId = params.bomId;
                     if (params?.styleId) filterStyleId = params.styleId;
@@ -264,6 +279,12 @@ describe('Tier 2C — Revision Lifecycle & Approval Workflow', () => {
                   }),
                 orderBy: jest.fn().mockReturnThis(),
                 getOne: jest.fn().mockImplementation(async () => {
+                  if (entityClass === BillOfMaterials) {
+                    return poBoms.find((b) => b.id === filterId) || null;
+                  }
+                  if (entityClass === Style) {
+                    return styles.find((s) => s.id === filterId) || null;
+                  }
                   if (entityClass === BomRevision) {
                     let list = [...poRevisions];
                     if (filterId) list = list.filter((r) => r.id === filterId);
@@ -277,7 +298,9 @@ describe('Tier 2C — Revision Lifecycle & Approval Workflow', () => {
                       list = list.filter((r) => r.effectiveTo === null);
                     if (filterNotId)
                       list = list.filter((r) => r.id !== filterNotId);
-                    list.sort((a, b) => b.revisionNo - a.revisionNo);
+                    list.sort(
+                      (a, b) => (b.revisionNo || 0) - (a.revisionNo || 0),
+                    );
                     return list[0] || null;
                   }
                   if (entityClass === FitBomRevision) {
@@ -291,7 +314,9 @@ describe('Tier 2C — Revision Lifecycle & Approval Workflow', () => {
                       list = list.filter((r) => r.effectiveTo === null);
                     if (filterNotId)
                       list = list.filter((r) => r.id !== filterNotId);
-                    list.sort((a, b) => b.revisionNo - a.revisionNo);
+                    list.sort(
+                      (a, b) => (b.revisionNo || 0) - (a.revisionNo || 0),
+                    );
                     return list[0] || null;
                   }
                   return null;
@@ -324,9 +349,13 @@ describe('Tier 2C — Revision Lifecycle & Approval Workflow', () => {
         const rows = poRevisions.filter(
           (r) => r.billOfMaterialId === where.billOfMaterialId,
         );
-        if (order?.revisionNo === 'DESC') {
-          rows.sort((a, b) => b.revisionNo - a.revisionNo);
-        }
+        rows.sort((a, b) => {
+          if (a.revisionNo == null && b.revisionNo != null) return -1;
+          if (a.revisionNo != null && b.revisionNo == null) return 1;
+          if (a.revisionNo != null && b.revisionNo != null)
+            return b.revisionNo - a.revisionNo;
+          return 0;
+        });
         return rows;
       }),
       save: jest.fn().mockImplementation(async (entity: any) => {
@@ -338,6 +367,7 @@ describe('Tier 2C — Revision Lifecycle & Approval Workflow', () => {
       createQueryBuilder: jest.fn().mockImplementation(() => {
         let bId: string;
         let bDate: string;
+        let statuses: string[] | undefined;
         const qb: any = {
           where: jest.fn().mockImplementation((c, p) => {
             if (p?.bomId) bId = p.bomId;
@@ -345,10 +375,18 @@ describe('Tier 2C — Revision Lifecycle & Approval Workflow', () => {
           }),
           andWhere: jest.fn().mockImplementation((c, p) => {
             if (p?.businessDate) bDate = p.businessDate;
+            if (p?.statuses) statuses = p.statuses;
             return qb;
           }),
           orderBy: jest.fn().mockReturnThis(),
           getOne: jest.fn().mockImplementation(async () => {
+            if (statuses) {
+              const rows = poRevisions.filter(
+                (r) =>
+                  r.billOfMaterialId === bId && statuses!.includes(r.status),
+              );
+              return rows[rows.length - 1] || null;
+            }
             return (
               poRevisions
                 .filter(
@@ -360,7 +398,9 @@ describe('Tier 2C — Revision Lifecycle & Approval Workflow', () => {
                     (r.effectiveTo === null ||
                       (bDate && bDate < r.effectiveTo)),
                 )
-                .sort((a, b) => b.revisionNo - a.revisionNo)[0] || null
+                .sort(
+                  (a, b) => (b.revisionNo || 0) - (a.revisionNo || 0),
+                )[0] || null
             );
           }),
         };
@@ -373,7 +413,15 @@ describe('Tier 2C — Revision Lifecycle & Approval Workflow', () => {
         return fitRevisions.find((r) => r.id === where.id) || null;
       }),
       find: jest.fn().mockImplementation(async ({ where }: any) => {
-        return fitRevisions.filter((r) => r.styleId === where.styleId);
+        const rows = fitRevisions.filter((r) => r.styleId === where.styleId);
+        rows.sort((a, b) => {
+          if (a.revisionNo == null && b.revisionNo != null) return -1;
+          if (a.revisionNo != null && b.revisionNo == null) return 1;
+          if (a.revisionNo != null && b.revisionNo != null)
+            return b.revisionNo - a.revisionNo;
+          return 0;
+        });
+        return rows;
       }),
       save: jest.fn().mockImplementation(async (entity: any) => {
         const idx = fitRevisions.findIndex((r) => r.id === entity.id);
@@ -384,6 +432,7 @@ describe('Tier 2C — Revision Lifecycle & Approval Workflow', () => {
       createQueryBuilder: jest.fn().mockImplementation(() => {
         let sId: string;
         let bDate: string;
+        let statuses: string[] | undefined;
         const qb: any = {
           where: jest.fn().mockImplementation((c, p) => {
             if (p?.styleId) sId = p.styleId;
@@ -391,10 +440,18 @@ describe('Tier 2C — Revision Lifecycle & Approval Workflow', () => {
           }),
           andWhere: jest.fn().mockImplementation((c, p) => {
             if (p?.businessDate) bDate = p.businessDate;
+            if (p?.statuses) statuses = p.statuses;
             return qb;
           }),
           orderBy: jest.fn().mockReturnThis(),
           getOne: jest.fn().mockImplementation(async () => {
+            if (statuses) {
+              const rows = fitRevisions.filter(
+                (r) =>
+                  r.styleId === sId && statuses!.includes(r.status),
+              );
+              return rows[rows.length - 1] || null;
+            }
             return (
               fitRevisions
                 .filter(
@@ -406,7 +463,9 @@ describe('Tier 2C — Revision Lifecycle & Approval Workflow', () => {
                     (r.effectiveTo === null ||
                       (bDate && bDate < r.effectiveTo)),
                 )
-                .sort((a, b) => b.revisionNo - a.revisionNo)[0] || null
+                .sort(
+                  (a, b) => (b.revisionNo || 0) - (a.revisionNo || 0),
+                )[0] || null
             );
           }),
         };
@@ -471,25 +530,25 @@ describe('Tier 2C — Revision Lifecycle & Approval Workflow', () => {
   // CREATE TESTS (Scenarios 1-3)
   // ==========================================
   describe('CREATE REVISION (Scenarios 1-3)', () => {
-    it('1. Create Rev 2 -> creates with status Draft', async () => {
+    it('1. Create Draft -> creates with status Draft and revisionNo = null', async () => {
       const res = await service.createRevision('bom-1', {}, currentUser);
       expect(res).toBeDefined();
       expect(res.status).toBe(RevisionStatus.DRAFT);
+      expect(res.revisionNo).toBeNull();
       expect(res.effectiveFrom).toBeNull();
       expect(res.effectiveTo).toBeNull();
     });
 
-    it('2. revision_no automatically increments (1 -> 2)', async () => {
+    it('2. revision_no is null on create (does NOT consume a version number)', async () => {
       const res = await service.createRevision('bom-1', {}, currentUser);
-      expect(res.revisionNo).toBe(2);
+      expect(res.revisionNo).toBeNull();
     });
 
-    it('3. Sequential/concurrent create respects next revision_no', async () => {
+    it('3. Multiple draft creations all have revisionNo = null', async () => {
       const res1 = await service.createRevision('bom-1', {}, currentUser);
       const res2 = await service.createRevision('bom-1', {}, currentUser);
-      expect(res1.revisionNo).toBe(2);
-      expect(res2.revisionNo).toBe(3);
-      expect(res1.revisionNo).not.toBe(res2.revisionNo);
+      expect(res1.revisionNo).toBeNull();
+      expect(res2.revisionNo).toBeNull();
     });
   });
 
@@ -497,13 +556,14 @@ describe('Tier 2C — Revision Lifecycle & Approval Workflow', () => {
   // CLONE TESTS (Scenarios 4-7)
   // ==========================================
   describe('CLONE REVISION (Scenarios 4-7)', () => {
-    it('4. Clone Rev 1 -> creates Rev 2 in draft with cloned lines', async () => {
+    it('4. Clone Rev 1 -> creates draft with revisionNo = null and cloned lines', async () => {
       const res = await service.createRevision(
         'bom-1',
         { cloneFromRevisionId: 'rev-1' },
         currentUser,
       );
-      expect(res.revisionNo).toBe(2);
+      expect(res.status).toBe(RevisionStatus.DRAFT);
+      expect(res.revisionNo).toBeNull();
       expect(res.lines).toHaveLength(1);
       expect(res.lines[0].materialNameSnapshot).toBe('Cotton 100%');
       expect(res.lines[0].revisionId).toBe(res.id);
@@ -531,13 +591,14 @@ describe('Tier 2C — Revision Lifecycle & Approval Workflow', () => {
       expect(res.lines[0].consumptionPerUnit).toBe(1.5);
     });
 
-    it('7. Rev 1 remains completely unchanged after clone', async () => {
+    it('7. Rev 1 remains completely unchanged after clone (revisionNo = 1, approved)', async () => {
       await service.createRevision(
         'bom-1',
         { cloneFromRevisionId: 'rev-1' },
         currentUser,
       );
       const rev1 = poRevisions.find((r) => r.id === 'rev-1');
+      expect(rev1.revisionNo).toBe(1);
       expect(rev1.status).toBe(RevisionStatus.APPROVED);
       expect(rev1.effectiveFrom).toBeNull();
       expect(rev1.effectiveTo).toBeNull();
@@ -556,7 +617,7 @@ describe('Tier 2C — Revision Lifecycle & Approval Workflow', () => {
       draftRevId = rev.id;
     });
 
-    it('8. Draft edit -> PASS (allows updating lines and header)', async () => {
+    it('8. Draft edit -> PASS (revisionNo stays null)', async () => {
       const updated = await service.updateDraftRevision(
         'bom-1',
         draftRevId,
@@ -575,6 +636,7 @@ describe('Tier 2C — Revision Lifecycle & Approval Workflow', () => {
       );
 
       expect(updated.changeReason).toBe('Updated material');
+      expect(updated.revisionNo).toBeNull();
       expect(updated.lines).toHaveLength(1);
       expect(updated.lines[0].materialNameSnapshot).toBe('Polyester Silk');
       expect(updated.lines[0].unitCost).toBe(80000);
@@ -660,7 +722,7 @@ describe('Tier 2C — Revision Lifecycle & Approval Workflow', () => {
       draftRevId = rev.id;
     });
 
-    it('12. Draft -> In Review -> PASS', async () => {
+    it('12. Draft -> In Review -> PASS (revisionNo stays null)', async () => {
       const submitted = await service.submitRevisionForReview(
         'bom-1',
         draftRevId,
@@ -668,6 +730,7 @@ describe('Tier 2C — Revision Lifecycle & Approval Workflow', () => {
         currentUser,
       );
       expect(submitted.status).toBe(RevisionStatus.IN_REVIEW);
+      expect(submitted.revisionNo).toBeNull();
       expect(submitted.changeReason).toBe('Ready for review');
     });
 
@@ -680,16 +743,21 @@ describe('Tier 2C — Revision Lifecycle & Approval Workflow', () => {
       ).rejects.toThrow(BadRequestException);
     });
 
-    it('13. In Review -> Approve -> PASS', async () => {
+    it('13. In Review -> Approve -> PASS (revision_no assigned only at approval)', async () => {
+      // Draft has null revisionNo
+      const draftBefore = poRevisions.find((r) => r.id === draftRevId);
+      expect(draftBefore.revisionNo).toBeNull();
+
       // First submit to in_review
-      await service.submitRevisionForReview(
+      const submitted = await service.submitRevisionForReview(
         'bom-1',
         draftRevId,
         {},
         currentUser,
       );
+      expect(submitted.revisionNo).toBeNull();
 
-      // Now approve
+      // Now approve -> receives official next revision_no = 2
       const approved = await service.approveRevision(
         'bom-1',
         draftRevId,
@@ -697,6 +765,7 @@ describe('Tier 2C — Revision Lifecycle & Approval Workflow', () => {
         currentUser,
       );
       expect(approved.status).toBe(RevisionStatus.APPROVED);
+      expect(approved.revisionNo).toBe(2);
       expect(approved.effectiveFrom).toBe('2026-05-01');
       expect(approved.approvedBy).toBe('user-1');
       expect(approved.approvedAt).toBeDefined();
@@ -714,7 +783,7 @@ describe('Tier 2C — Revision Lifecycle & Approval Workflow', () => {
       ).rejects.toThrow(BadRequestException);
     });
 
-    it('14b. In Review -> Reject -> returns to Draft with reason', async () => {
+    it('14b. In Review -> Reject -> returns to Draft with reason (revisionNo stays null)', async () => {
       await service.submitRevisionForReview(
         'bom-1',
         draftRevId,
@@ -729,12 +798,13 @@ describe('Tier 2C — Revision Lifecycle & Approval Workflow', () => {
         currentUser,
       );
       expect(rejected.status).toBe(RevisionStatus.DRAFT);
+      expect(rejected.revisionNo).toBeNull();
       expect(rejected.changeReason).toBe(
         'Consumption too high, please recalculate',
       );
     });
 
-    it('14c. Draft/In_Review -> Cancel -> sets Cancelled', async () => {
+    it('14c. Draft/In_Review -> Cancel -> sets Cancelled (revisionNo stays null)', async () => {
       const cancelled = await service.cancelRevision(
         'bom-1',
         draftRevId,
@@ -742,6 +812,7 @@ describe('Tier 2C — Revision Lifecycle & Approval Workflow', () => {
         currentUser,
       );
       expect(cancelled.status).toBe(RevisionStatus.CANCELLED);
+      expect(cancelled.revisionNo).toBeNull();
       expect(cancelled.changeReason).toBe('PO cancelled by client');
     });
 
@@ -848,6 +919,133 @@ describe('Tier 2C — Revision Lifecycle & Approval Workflow', () => {
       const rev1After = poRevisions.find((r) => r.id === 'rev-1');
       expect(rev1After.effectiveFrom).toBeNull();
       expect(rev1After.effectiveTo).toBe('2026-04-01');
+    });
+
+    it('Sequential approvals: Rev 1 -> Rev 2 -> Rev 3', async () => {
+      const app2 = await service.approveRevision(
+        'bom-1',
+        rev2Id,
+        { effectiveFrom: '2026-05-01' },
+        currentUser,
+      );
+      expect(app2.revisionNo).toBe(2);
+
+      const draft3 = await service.createRevision('bom-1', {}, currentUser);
+      expect(draft3.revisionNo).toBeNull();
+
+      await service.updateDraftRevision(
+        'bom-1',
+        draft3.id,
+        { lines: [{ materialNameSnapshot: 'Thread', unitSnapshot: 'Cuộn' }] },
+        currentUser,
+      );
+      await service.submitRevisionForReview('bom-1', draft3.id, {}, currentUser);
+
+      const app3 = await service.approveRevision(
+        'bom-1',
+        draft3.id,
+        { effectiveFrom: '2026-06-01' },
+        currentUser,
+      );
+      expect(app3.revisionNo).toBe(3);
+    });
+
+    it('Concurrent approvals: unique sequential revision numbers (no duplicates)', async () => {
+      const draftA = await service.createRevision('bom-1', {}, currentUser);
+      const draftB = await service.createRevision('bom-1', {}, currentUser);
+
+      expect(draftA.revisionNo).toBeNull();
+      expect(draftB.revisionNo).toBeNull();
+
+      await service.updateDraftRevision(
+        'bom-1',
+        draftA.id,
+        { lines: [{ materialNameSnapshot: 'Line A', unitSnapshot: 'M' }] },
+        currentUser,
+      );
+      await service.updateDraftRevision(
+        'bom-1',
+        draftB.id,
+        { lines: [{ materialNameSnapshot: 'Line B', unitSnapshot: 'M' }] },
+        currentUser,
+      );
+
+      await service.submitRevisionForReview('bom-1', draftA.id, {}, currentUser);
+      await service.submitRevisionForReview('bom-1', draftB.id, {}, currentUser);
+
+      // Approving sequentially (serialized by parent BOM pessimistic lock)
+      const approvedA = await service.approveRevision(
+        'bom-1',
+        draftA.id,
+        { effectiveFrom: '2026-06-01' },
+        currentUser,
+      );
+      const approvedB = await service.approveRevision(
+        'bom-1',
+        draftB.id,
+        { effectiveFrom: '2026-07-01' },
+        currentUser,
+      );
+
+      expect(approvedA.revisionNo).toBe(2);
+      expect(approvedB.revisionNo).toBe(3);
+      expect(approvedA.revisionNo).not.toBe(approvedB.revisionNo);
+    });
+
+    it('Permanently reserved revision_no: existing revisions 1, 2, 3 with rev 3 superseded -> next approval gets Rev 4', async () => {
+      // Setup existing revisions with revision_no 1, 2, 3
+      // rev-1 already exists (revisionNo = 1, status = APPROVED)
+      poRevisions.push({
+        id: 'rev-2',
+        billOfMaterialId: 'bom-1',
+        revisionNo: 2,
+        status: RevisionStatus.APPROVED,
+        effectiveFrom: '2026-05-01',
+        effectiveTo: '2026-06-01',
+        rowVersion: 1,
+        createdAt: new Date('2026-05-01'),
+        updatedAt: new Date('2026-05-01'),
+      } as any);
+
+      // revision 3 status = superseded
+      poRevisions.push({
+        id: 'rev-3',
+        billOfMaterialId: 'bom-1',
+        revisionNo: 3,
+        status: RevisionStatus.SUPERSEDED,
+        effectiveFrom: '2026-06-01',
+        effectiveTo: '2026-07-01',
+        rowVersion: 1,
+        createdAt: new Date('2026-06-01'),
+        updatedAt: new Date('2026-06-01'),
+      } as any);
+
+      // Create a new draft
+      const draft = await service.createRevision('bom-1', {}, currentUser);
+      expect(draft.revisionNo).toBeNull();
+
+      // Add line to draft
+      await service.updateDraftRevision(
+        'bom-1',
+        draft.id,
+        { lines: [{ materialNameSnapshot: 'New Button', unitSnapshot: 'Cái' }] },
+        currentUser,
+      );
+
+      // Submit
+      await service.submitRevisionForReview('bom-1', draft.id, {}, currentUser);
+
+      // Approve
+      const approved = await service.approveRevision(
+        'bom-1',
+        draft.id,
+        { effectiveFrom: '2026-08-01' },
+        currentUser,
+      );
+
+      // Must receive Rev 4, NOT Rev 3 (since 3 was permanently reserved even though superseded)
+      expect(approved.revisionNo).toBe(4);
+      expect(approved.status).toBe(RevisionStatus.APPROVED);
     });
   });
 
@@ -971,7 +1169,7 @@ describe('Tier 2C — Revision Lifecycle & Approval Workflow', () => {
   // LIST REVISIONS ENDPOINT
   // ==========================================
   describe('listRevisions', () => {
-    it('returns all revisions ordered by revisionNo DESC with line count and totalCost', async () => {
+    it('returns all revisions with draft having revisionNo = null and approved having revisionNo = 1', async () => {
       await service.createRevision(
         'bom-1',
         { cloneFromRevisionId: 'rev-1' },
@@ -979,8 +1177,221 @@ describe('Tier 2C — Revision Lifecycle & Approval Workflow', () => {
       );
       const list = await service.listRevisions('bom-1', currentUser);
       expect(list).toHaveLength(2);
-      expect(list[0].revisionNo).toBe(2);
+      expect(list[0].status).toBe(RevisionStatus.DRAFT);
+      expect(list[0].revisionNo).toBeNull();
+      expect(list[1].status).toBe(RevisionStatus.APPROVED);
       expect(list[1].revisionNo).toBe(1);
+    });
+  });
+
+  // ==========================================
+  // FIND ONE: BUSINESS VERSION VS DRAFT RESOLUTION (Scenarios 12-14)
+  // ==========================================
+  describe('FIND ONE (Business Version vs Draft Resolution)', () => {
+    it('Draft / In Review has no business version (version is null in findOne)', async () => {
+      const draft = await service.createRevision('bom-1', {}, currentUser);
+      const detail = await service.findOne('bom-1', currentUser, {
+        revisionId: draft.id,
+      });
+      expect(detail.version).toBeNull();
+      expect(detail.revision?.revisionNo).toBeNull();
+    });
+
+    it('Approved revision returns official business version number', async () => {
+      const detail = await service.findOne('bom-1', currentUser, {
+        revisionId: 'rev-1',
+      });
+      expect(detail.version).toBe(1);
+      expect(detail.revision?.revisionNo).toBe(1);
+    });
+  });
+
+  // ==========================================
+  // FIT BOM REVISION LIFECYCLE (Parity with PO BOM, Scenarios 1-15)
+  // ==========================================
+  describe('FIT BOM REVISION LIFECYCLE (Parity with PO BOM)', () => {
+    it('1. Create Fit Draft -> revisionNo is null', async () => {
+      const draft = await service.createRevision('style-1', {}, currentUser);
+      expect(draft.status).toBe(RevisionStatus.DRAFT);
+      expect(draft.revisionNo).toBeNull();
+    });
+
+    it('2. Edit Fit Draft -> revisionNo remains null', async () => {
+      const draft = await service.createRevision('style-1', {}, currentUser);
+      const updated = await service.updateDraftRevision(
+        'style-1',
+        draft.id,
+        {
+          changeReason: 'Fit edit',
+          lines: [
+            {
+              materialNameSnapshot: 'Fit Fabric',
+              unitSnapshot: 'Mét',
+              consumption: 1.2,
+              wastePercent: 3,
+            },
+          ],
+        },
+        currentUser,
+      );
+      expect(updated.revisionNo).toBeNull();
+      expect(updated.lines[0].consumption).toBe(1.2);
+    });
+
+    it('3. Submit Fit Draft -> revisionNo remains null', async () => {
+      const draft = await service.createRevision('style-1', {}, currentUser);
+      await service.updateDraftRevision(
+        'style-1',
+        draft.id,
+        { lines: [{ materialNameSnapshot: 'L', unitSnapshot: 'M' }] },
+        currentUser,
+      );
+      const submitted = await service.submitRevisionForReview(
+        'style-1',
+        draft.id,
+        {},
+        currentUser,
+      );
+      expect(submitted.status).toBe(RevisionStatus.IN_REVIEW);
+      expect(submitted.revisionNo).toBeNull();
+    });
+
+    it('4. Reject Fit Revision -> returns to draft, revisionNo remains null', async () => {
+      const draft = await service.createRevision('style-1', {}, currentUser);
+      await service.updateDraftRevision(
+        'style-1',
+        draft.id,
+        { lines: [{ materialNameSnapshot: 'L', unitSnapshot: 'M' }] },
+        currentUser,
+      );
+      await service.submitRevisionForReview(
+        'style-1',
+        draft.id,
+        {},
+        currentUser,
+      );
+      const rejected = await service.rejectRevision(
+        'style-1',
+        draft.id,
+        { reason: 'Incorrect spec' },
+        currentUser,
+      );
+      expect(rejected.status).toBe(RevisionStatus.DRAFT);
+      expect(rejected.revisionNo).toBeNull();
+    });
+
+    it('5. Cancel Fit Revision -> status cancelled, revisionNo remains null', async () => {
+      const draft = await service.createRevision('style-1', {}, currentUser);
+      const cancelled = await service.cancelRevision(
+        'style-1',
+        draft.id,
+        { reason: 'Cancelled style' },
+        currentUser,
+      );
+      expect(cancelled.status).toBe(RevisionStatus.CANCELLED);
+      expect(cancelled.revisionNo).toBeNull();
+    });
+
+    it('6. Clone Fit Approved Revision -> clone has revisionNo = null, source rev 1 unchanged', async () => {
+      const cloned = await service.createRevision(
+        'style-1',
+        { cloneFromRevisionId: 'fit-rev-1' },
+        currentUser,
+      );
+      expect(cloned.status).toBe(RevisionStatus.DRAFT);
+      expect(cloned.revisionNo).toBeNull();
+      expect(cloned.lines).toHaveLength(1);
+
+      const source = fitRevisions.find((r) => r.id === 'fit-rev-1');
+      expect(source.revisionNo).toBe(1);
+      expect(source.status).toBe(RevisionStatus.APPROVED);
+    });
+
+    it('7. Approve Fit Revision -> gets Rev 2 on approval', async () => {
+      const draft = await service.createRevision('style-1', {}, currentUser);
+      await service.updateDraftRevision(
+        'style-1',
+        draft.id,
+        { lines: [{ materialNameSnapshot: 'Fit Line', unitSnapshot: 'M' }] },
+        currentUser,
+      );
+      await service.submitRevisionForReview(
+        'style-1',
+        draft.id,
+        {},
+        currentUser,
+      );
+
+      const approved = await service.approveRevision(
+        'style-1',
+        draft.id,
+        { effectiveFrom: '2026-05-01' },
+        currentUser,
+      );
+      expect(approved.status).toBe(RevisionStatus.APPROVED);
+      expect(approved.revisionNo).toBe(2);
+
+      // Fit baseline rev 1 closed
+      const fitRev1 = fitRevisions.find((r) => r.id === 'fit-rev-1');
+      expect(fitRev1.effectiveTo).toBe('2026-05-01');
+    });
+
+    it('8. Fit Active resolver continues returning approved revision only', async () => {
+      await service.createRevision('style-1', {}, currentUser);
+      const active = await service.getActiveFitBomRevision(
+        'style-1',
+        '2026-05-01',
+      );
+      expect(active?.id).toBe('fit-rev-1');
+      expect(active?.revisionNo).toBe(1);
+    });
+
+    it('9. Fit Permanently reserved revision_no: existing revisions 1, 2, 3 with rev 3 superseded -> next approval gets Rev 4', async () => {
+      fitRevisions.push({
+        id: 'fit-rev-2',
+        styleId: 'style-1',
+        revisionNo: 2,
+        status: RevisionStatus.APPROVED,
+        effectiveFrom: '2026-05-01',
+        effectiveTo: '2026-06-01',
+        rowVersion: 1,
+        createdAt: new Date('2026-05-01'),
+        updatedAt: new Date('2026-05-01'),
+      } as any);
+
+      fitRevisions.push({
+        id: 'fit-rev-3',
+        styleId: 'style-1',
+        revisionNo: 3,
+        status: RevisionStatus.SUPERSEDED,
+        effectiveFrom: '2026-06-01',
+        effectiveTo: '2026-07-01',
+        rowVersion: 1,
+        createdAt: new Date('2026-06-01'),
+        updatedAt: new Date('2026-06-01'),
+      } as any);
+
+      const draft = await service.createRevision('style-1', {}, currentUser);
+      expect(draft.revisionNo).toBeNull();
+
+      await service.updateDraftRevision(
+        'style-1',
+        draft.id,
+        { lines: [{ materialNameSnapshot: 'Fit Collar', unitSnapshot: 'Cái' }] },
+        currentUser,
+      );
+
+      await service.submitRevisionForReview('style-1', draft.id, {}, currentUser);
+
+      const approved = await service.approveRevision(
+        'style-1',
+        draft.id,
+        { effectiveFrom: '2026-08-01' },
+        currentUser,
+      );
+
+      expect(approved.revisionNo).toBe(4);
+      expect(approved.status).toBe(RevisionStatus.APPROVED);
     });
   });
 });

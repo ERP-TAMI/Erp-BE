@@ -17,7 +17,7 @@ describe('BOM Revision Resolution & Effective Date Rules', () => {
   let poRevisions: Array<{
     id: string;
     billOfMaterialId: string;
-    revisionNo: number;
+    revisionNo: number | null;
     status: RevisionStatus;
     effectiveFrom: string | null;
     effectiveTo: string | null;
@@ -28,7 +28,7 @@ describe('BOM Revision Resolution & Effective Date Rules', () => {
   let fitRevisions: Array<{
     id: string;
     styleId: string;
-    revisionNo: number;
+    revisionNo: number | null;
     status: RevisionStatus;
     effectiveFrom: string | null;
     effectiveTo: string | null;
@@ -86,7 +86,7 @@ describe('BOM Revision Resolution & Effective Date Rules', () => {
             });
           }
 
-          rows.sort((a, b) => b.revisionNo - a.revisionNo);
+          rows.sort((a, b) => (b.revisionNo || 0) - (a.revisionNo || 0));
           return rows.length > 0 ? { ...rows[0] } : null;
         }),
       };
@@ -197,7 +197,7 @@ describe('BOM Revision Resolution & Effective Date Rules', () => {
       {
         id: 'rev-3',
         billOfMaterialId: 'bom-1',
-        revisionNo: 3,
+        revisionNo: null,
         status: RevisionStatus.DRAFT,
         effectiveFrom: '2026-02-01',
         effectiveTo: null,
@@ -224,7 +224,7 @@ describe('BOM Revision Resolution & Effective Date Rules', () => {
       {
         id: 'fit-rev-3',
         styleId: 'style-1',
-        revisionNo: 3,
+        revisionNo: null,
         status: RevisionStatus.DRAFT,
         effectiveFrom: '2026-02-01',
         effectiveTo: null,
@@ -338,7 +338,7 @@ describe('BOM Revision Resolution & Effective Date Rules', () => {
       expect(rev3).toBeDefined();
       expect(rev3?.id).toBe('rev-3');
       expect(rev3?.status).toBe(RevisionStatus.DRAFT);
-      expect(rev3?.revisionNo).toBe(3);
+      expect(rev3?.revisionNo).toBeNull();
 
       const fitRev3 = await service.getFitBomRevisionById(
         'style-1',
@@ -347,6 +347,7 @@ describe('BOM Revision Resolution & Effective Date Rules', () => {
       expect(fitRev3).toBeDefined();
       expect(fitRev3?.id).toBe('fit-rev-3');
       expect(fitRev3?.status).toBe(RevisionStatus.DRAFT);
+      expect(fitRev3?.revisionNo).toBeNull();
     });
 
     it('Specific revision resolver -> validates revision ownership (returns null if mismatch)', async () => {
