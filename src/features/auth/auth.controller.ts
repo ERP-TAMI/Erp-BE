@@ -4,6 +4,7 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  Patch,
   Post,
   Req,
   Res,
@@ -44,6 +45,8 @@ import {
   ValidatePasswordResetDto,
 } from './dto/password-reset.dto';
 import { PasswordResetService } from './password-reset.service';
+import { ProfileService } from './profile.service';
+import { ChangeMyPasswordDto, UpdateMyProfileDto } from './dto/profile.dto';
 import {
   FORGOT_PASSWORD_RATE_LIMIT,
   FORGOT_PASSWORD_RATE_LIMIT_TTL_MS,
@@ -58,6 +61,7 @@ export class AuthController {
     private readonly authService: AuthService,
     private readonly passwordSetupService: PasswordSetupService,
     private readonly passwordResetService: PasswordResetService,
+    private readonly profileService: ProfileService,
   ) {}
 
   @Post('forgot-password')
@@ -171,6 +175,31 @@ export class AuthController {
   @ApiUnauthorizedResponse({ description: 'Missing or invalid access token' })
   getMe(@Req() req: AuthenticatedRequest): Promise<AuthUserDto> {
     return this.authService.getMe(req.user.id);
+  }
+
+  @Patch('me')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOkResponse({ type: AuthUserDto })
+  @ApiUnauthorizedResponse({ description: 'Missing or invalid access token' })
+  updateMe(
+    @Body() dto: UpdateMyProfileDto,
+    @Req() req: AuthenticatedRequest,
+  ): Promise<AuthUserDto> {
+    return this.profileService.updateProfile(dto, req.user);
+  }
+
+  @Patch('me/password')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiNoContentResponse({ description: 'Password changed successfully' })
+  @ApiUnauthorizedResponse({ description: 'Missing or invalid access token' })
+  changeMyPassword(
+    @Body() dto: ChangeMyPasswordDto,
+    @Req() req: AuthenticatedRequest,
+  ): Promise<void> {
+    return this.profileService.changePassword(dto, req.user);
   }
 
   private setRefreshCookie(res: Response, token: string): void {
