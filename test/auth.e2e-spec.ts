@@ -14,6 +14,12 @@ import { AuthController } from '../src/features/auth/auth.controller';
 import { AuthService } from '../src/features/auth/auth.service';
 import { JwtAuthGuard } from '../src/common/guards/jwt-auth.guard';
 import { PasswordSetupService } from '../src/features/auth/password-setup.service';
+import { PasswordResetService } from '../src/features/auth/password-reset.service';
+import { ThrottlerModule } from '@nestjs/throttler';
+import {
+  FORGOT_PASSWORD_RATE_LIMIT,
+  FORGOT_PASSWORD_RATE_LIMIT_TTL_MS,
+} from '../src/features/auth/auth.constants';
 
 describe('Auth API (e2e)', () => {
   const authService = {
@@ -26,15 +32,30 @@ describe('Auth API (e2e)', () => {
     validate: jest.fn(),
     complete: jest.fn(),
   };
+  const passwordResetService = {
+    request: jest.fn(),
+    deliver: jest.fn(),
+    validate: jest.fn(),
+    complete: jest.fn(),
+  };
   let app: INestApplication;
 
   beforeEach(async () => {
     jest.clearAllMocks();
     const moduleRef = await Test.createTestingModule({
+      imports: [
+        ThrottlerModule.forRoot([
+          {
+            ttl: FORGOT_PASSWORD_RATE_LIMIT_TTL_MS,
+            limit: FORGOT_PASSWORD_RATE_LIMIT,
+          },
+        ]),
+      ],
       controllers: [AuthController],
       providers: [
         { provide: AuthService, useValue: authService },
         { provide: PasswordSetupService, useValue: passwordSetupService },
+        { provide: PasswordResetService, useValue: passwordResetService },
       ],
     })
       .overrideGuard(JwtAuthGuard)
@@ -70,6 +91,61 @@ describe('Auth API (e2e)', () => {
       }),
     );
     await app.init();
+  });
+
+  it('accepts forgot-password requests and validates the public reset contract', async () => {
+    const issued = {
+      user: { id: 'user-1', email: 'user@tami.test' },
+      token: 'raw-token',
+    };
+    passwordResetService.request.mockResolvedValue(issued);
+    passwordResetService.deliver.mockResolvedValue(undefined);
+    passwordResetService.validate.mockResolvedValue({
+      valid: true,
+      expiresAt: '2026-09-15T00:00:00.000Z',
+    });
+    passwordResetService.complete.mockResolvedValue(undefined);
+
+    await request(app.getHttpServer())
+      .post('/auth/forgot-password')
+      .send({ email: 'user@tami.test' })
+      .expect(202)
+      .expect({ status: 'pending' });
+    await request(app.getHttpServer())
+      .post('/auth/password-reset/validate')
+      .send({ token: 'opaque-token' })
+      .expect(200);
+    await request(app.getHttpServer())
+      .post('/auth/password-reset/complete')
+      .send({ token: 'opaque-token', password: 'a secure passphrase' })
+      .expect(204);
+
+    expect(passwordResetService.request).toHaveBeenCalledWith('user@tami.test');
+    expect(passwordResetService.deliver).toHaveBeenCalledWith(issued);
+    expect(passwordResetService.complete).toHaveBeenCalledWith(
+      'opaque-token',
+      'a secure passphrase',
+    );
+  });
+
+  it('rate limits forgot-password requests by client address', async () => {
+    passwordResetService.request.mockResolvedValue({
+      user: { id: 'user-1', email: 'user@tami.test' },
+      token: 'raw-token',
+    });
+    passwordResetService.deliver.mockResolvedValue(undefined);
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      await request(app.getHttpServer())
+        .post('/auth/forgot-password')
+        .send({ email: `user-${attempt}@tami.test` })
+        .expect(202);
+    }
+
+    await request(app.getHttpServer())
+      .post('/auth/forgot-password')
+      .send({ email: 'sixth-user@tami.test' })
+      .expect(429);
   });
 
   afterEach(async () => {

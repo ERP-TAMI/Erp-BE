@@ -75,6 +75,27 @@ describe('NotificationsService account lock email delivery', () => {
     );
   });
 
+  it('creates a pending delivery for an automatic temporary lock', async () => {
+    const lockedAt = new Date('2026-09-14T01:00:00.000Z');
+    const lockoutUntil = new Date('2026-09-14T01:15:00.000Z');
+
+    await service.createTemporaryAccountLockEmailDelivery(manager, {
+      userId: '22222222-2222-4222-8222-222222222222',
+      lockedAt,
+      lockoutUntil,
+    });
+
+    expect(catalog.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ eventCode: 'user.account_temporarily_locked' }),
+      ['eventCode'],
+    );
+    expect(notifications.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: expect.stringContaining(lockoutUntil.toISOString()),
+      }),
+    );
+  });
+
   it('records a sanitized failure without persisting SMTP credentials', async () => {
     const error = Object.assign(
       new Error('Authentication failed for password super-secret'),

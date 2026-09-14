@@ -11,11 +11,14 @@ import {
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
+  ApiAcceptedResponse,
   ApiNoContentResponse,
   ApiOkResponse,
   ApiTags,
+  ApiTooManyRequestsResponse,
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
+import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import { Request, Response } from 'express';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
@@ -33,6 +36,18 @@ import {
   ValidatePasswordSetupDto,
 } from './dto/password-setup.dto';
 import { PasswordSetupService } from './password-setup.service';
+import {
+  CompletePasswordResetDto,
+  ForgotPasswordDto,
+  PasswordResetAcceptedDto,
+  PasswordResetValidationResponseDto,
+  ValidatePasswordResetDto,
+} from './dto/password-reset.dto';
+import { PasswordResetService } from './password-reset.service';
+import {
+  FORGOT_PASSWORD_RATE_LIMIT,
+  FORGOT_PASSWORD_RATE_LIMIT_TTL_MS,
+} from './auth.constants';
 
 type AuthenticatedRequest = Request & { user: RequestUser };
 
@@ -42,7 +57,45 @@ export class AuthController {
   constructor(
     private readonly authService: AuthService,
     private readonly passwordSetupService: PasswordSetupService,
+    private readonly passwordResetService: PasswordResetService,
   ) {}
+
+  @Post('forgot-password')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @UseGuards(ThrottlerGuard)
+  @Throttle({
+    default: {
+      limit: FORGOT_PASSWORD_RATE_LIMIT,
+      ttl: FORGOT_PASSWORD_RATE_LIMIT_TTL_MS,
+    },
+  })
+  @ApiAcceptedResponse({ type: PasswordResetAcceptedDto })
+  @ApiTooManyRequestsResponse({
+    description: 'Too many password-reset requests from this client',
+  })
+  async forgotPassword(
+    @Body() dto: ForgotPasswordDto,
+  ): Promise<PasswordResetAcceptedDto> {
+    const reset = await this.passwordResetService.request(dto.email);
+    void this.passwordResetService.deliver(reset);
+    return { status: 'pending' };
+  }
+
+  @Post('password-reset/validate')
+  @HttpCode(HttpStatus.OK)
+  @ApiOkResponse({ type: PasswordResetValidationResponseDto })
+  validatePasswordReset(
+    @Body() dto: ValidatePasswordResetDto,
+  ): Promise<PasswordResetValidationResponseDto> {
+    return this.passwordResetService.validate(dto.token);
+  }
+
+  @Post('password-reset/complete')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiNoContentResponse({ description: 'Password reset successfully' })
+  completePasswordReset(@Body() dto: CompletePasswordResetDto): Promise<void> {
+    return this.passwordResetService.complete(dto.token, dto.password);
+  }
 
   @Post('password-setup/validate')
   @HttpCode(HttpStatus.OK)

@@ -14,6 +14,8 @@ import {
 @Injectable()
 export class NotificationsService {
   static readonly ACCOUNT_LOCKED_EVENT_CODE = 'user.account_locked';
+  static readonly ACCOUNT_TEMPORARILY_LOCKED_EVENT_CODE =
+    'user.account_temporarily_locked';
 
   constructor(
     @InjectRepository(NotificationDeliverie)
@@ -46,6 +48,51 @@ export class NotificationsService {
         notificationCatalogId: catalog.id,
         title: 'Tài khoản TAMI ERP đã bị khóa',
         body: `Lý do: ${input.reason}`,
+        entityType: 'user',
+        entityId: input.userId,
+      }),
+    );
+    const deliveryRepository = manager.getRepository(NotificationDeliverie);
+    const delivery = await deliveryRepository.save(
+      deliveryRepository.create({
+        notificationId: notification.id,
+        channel: NotificationChannel.EMAIL,
+        status: NotificationDeliveryStatus.PENDING,
+        attemptCount: 0,
+        lastError: null,
+        nextAttemptAt: null,
+        sentAt: null,
+      }),
+    );
+    return { deliveryId: delivery.id };
+  }
+
+  async createTemporaryAccountLockEmailDelivery(
+    manager: EntityManager,
+    input: { userId: string; lockedAt: Date; lockoutUntil: Date },
+  ): Promise<{ deliveryId: string }> {
+    const catalogRepository = manager.getRepository(NotificationCatalog);
+    await catalogRepository.upsert(
+      {
+        eventCode: NotificationsService.ACCOUNT_TEMPORARILY_LOCKED_EVENT_CODE,
+        eventGroup: 'security',
+        displayName: 'Tài khoản bị khóa tạm thời',
+        defaultInApp: false,
+        defaultEmail: true,
+        isActive: true,
+      },
+      ['eventCode'],
+    );
+    const catalog = await catalogRepository.findOneByOrFail({
+      eventCode: NotificationsService.ACCOUNT_TEMPORARILY_LOCKED_EVENT_CODE,
+    });
+    const notificationRepository = manager.getRepository(Notification);
+    const notification = await notificationRepository.save(
+      notificationRepository.create({
+        recipientUserId: input.userId,
+        notificationCatalogId: catalog.id,
+        title: 'Tài khoản TAMI ERP bị khóa tạm thời',
+        body: `Khóa từ ${input.lockedAt.toISOString()} đến ${input.lockoutUntil.toISOString()}`,
         entityType: 'user',
         entityId: input.userId,
       }),
