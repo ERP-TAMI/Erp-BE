@@ -19,6 +19,7 @@ import {
 } from './password-setup-token.util';
 import { SmtpMailService } from './smtp-mail.service';
 import { PasswordSetupEmailStatus } from './password-setup-email-status.enum';
+import { PasswordTokenPurpose } from './password-token-purpose.enum';
 
 export type InvitationStatus = 'sent' | 'failed';
 export type IssuedPasswordSetup = { user: User; token: string };
@@ -65,6 +66,7 @@ export class PasswordSetupService {
         usedAt: null,
         revokedAt: null,
         createdBy,
+        purpose: PasswordTokenPurpose.ACCOUNT_SETUP,
         deliveryStatus: PasswordSetupEmailStatus.PENDING,
         deliveryAttemptedAt: null,
       }),
@@ -126,7 +128,7 @@ export class PasswordSetupService {
     const setupToken = await this.tokens.findOne({
       where: { tokenHash: hashPasswordSetupToken(token) },
     });
-    this.assertUsable(setupToken);
+    this.assertUsable(setupToken, PasswordTokenPurpose.ACCOUNT_SETUP);
     const user = await this.users.findOne({
       where: { id: setupToken.userId },
     });
@@ -137,7 +139,7 @@ export class PasswordSetupService {
   async complete(token: string, password: string): Promise<void> {
     const tokenHash = hashPasswordSetupToken(token);
     const candidate = await this.tokens.findOne({ where: { tokenHash } });
-    this.assertUsable(candidate);
+    this.assertUsable(candidate, PasswordTokenPurpose.ACCOUNT_SETUP);
 
     await this.dataSource.transaction(async (manager) => {
       const userRepository = manager.getRepository(User);
@@ -158,7 +160,7 @@ export class PasswordSetupService {
         where: { tokenHash },
         lock: { mode: 'pessimistic_write' },
       });
-      this.assertUsable(setupToken);
+      this.assertUsable(setupToken, PasswordTokenPurpose.ACCOUNT_SETUP);
 
       const passwordHash = await hashPassword(password);
       user.passwordHash = passwordHash;
@@ -202,8 +204,9 @@ export class PasswordSetupService {
 
   private assertUsable(
     token: UserPasswordSetupToken | null,
+    expectedPurpose: PasswordTokenPurpose,
   ): asserts token is UserPasswordSetupToken {
-    if (!token) {
+    if (!token || token.purpose !== expectedPurpose) {
       throw new BadRequestException({
         code: ErrorCode.PASSWORD_SETUP_TOKEN_INVALID,
         message: 'Liên kết đặt mật khẩu không hợp lệ.',

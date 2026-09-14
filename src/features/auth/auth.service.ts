@@ -19,6 +19,8 @@ import {
 } from './auth.constants';
 import { AuthUserDto } from './dto/auth-response.dto';
 import { JwtPayload } from './jwt-payload.type';
+import { NotificationsService } from '../notifications/notifications.service';
+import { SmtpMailService } from './smtp-mail.service';
 
 export type SessionMeta = {
   userAgent?: string;
@@ -45,6 +47,8 @@ export class AuthService {
     private readonly sessionRepository: Repository<UserSession>,
     @InjectDataSource() private readonly dataSource: DataSource,
     private readonly jwtService: JwtService,
+    private readonly notifications: NotificationsService,
+    private readonly mail: SmtpMailService,
   ) {}
 
   async login(
@@ -66,7 +70,15 @@ export class AuthService {
 
     const passwordMatches = await verifyPassword(password, user.passwordHash);
     if (!passwordMatches) {
-      await this.registerFailedLogin(user);
+      const failedLogin = await this.registerFailedLogin(user.id);
+      if (failedLogin.lockoutUntil) {
+        throw new ForbiddenException({
+          code: ErrorCode.ACCOUNT_TEMPORARILY_LOCKED,
+          message:
+            'Tài khoản đang tạm khoá do đăng nhập sai nhiều lần. Vui lòng thử lại sau.',
+          lockedUntil: failedLogin.lockoutUntil.toISOString(),
+        });
+      }
       throw new UnauthorizedException({
         code: ErrorCode.INVALID_CREDENTIALS,
         message: 'Email hoặc mật khẩu không đúng.',
@@ -203,17 +215,87 @@ export class AuthService {
         code: ErrorCode.ACCOUNT_TEMPORARILY_LOCKED,
         message:
           'Tài khoản đang tạm khoá do đăng nhập sai nhiều lần. Vui lòng thử lại sau.',
+        lockedUntil: user.lockoutUntil.toISOString(),
       });
     }
   }
 
-  private async registerFailedLogin(user: User): Promise<void> {
-    const failedCount = user.loginFailedCount + 1;
-    const patch: Partial<User> = { loginFailedCount: failedCount };
-    if (failedCount >= LOGIN_FAILED_THRESHOLD) {
-      patch.lockoutUntil = new Date(Date.now() + LOCKOUT_MINUTES * 60 * 1000);
+  private async registerFailedLogin(
+    userId: string,
+  ): Promise<{ lockoutUntil: Date | null }> {
+    const result = await this.dataSource.transaction(async (manager) => {
+      const users = manager.getRepository(User);
+      const user = await users.findOne({
+        where: { id: userId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!user) {
+        return { lockoutUntil: null, emailDelivery: null };
+      }
+
+      const now = new Date();
+      if (user.lockoutUntil && user.lockoutUntil.getTime() > now.getTime()) {
+        return { lockoutUntil: user.lockoutUntil, emailDelivery: null };
+      }
+      if (user.lockoutUntil) {
+        user.lockoutUntil = null;
+        user.loginFailedCount = 0;
+      }
+
+      user.loginFailedCount += 1;
+      if (user.loginFailedCount < LOGIN_FAILED_THRESHOLD) {
+        await users.save(user);
+        return { lockoutUntil: null, emailDelivery: null };
+      }
+
+      const lockoutUntil = new Date(
+        now.getTime() + LOCKOUT_MINUTES * 60 * 1000,
+      );
+      user.lockoutUntil = lockoutUntil;
+      await users.save(user);
+      const { deliveryId } =
+        await this.notifications.createTemporaryAccountLockEmailDelivery(
+          manager,
+          { userId: user.id, lockedAt: now, lockoutUntil },
+        );
+      return {
+        lockoutUntil,
+        emailDelivery: {
+          deliveryId,
+          email: user.email,
+          fullName: user.fullName,
+          lockedAt: now,
+          lockoutUntil,
+        },
+      };
+    });
+
+    if (result.emailDelivery) {
+      void this.deliverTemporaryLockEmail(result.emailDelivery);
     }
-    await this.userRepository.update(user.id, patch);
+    return { lockoutUntil: result.lockoutUntil };
+  }
+
+  private async deliverTemporaryLockEmail(input: {
+    deliveryId: string;
+    email: string;
+    fullName: string;
+    lockedAt: Date;
+    lockoutUntil: Date;
+  }): Promise<void> {
+    try {
+      await this.mail.sendTemporaryAccountLockEmail(input);
+      await this.notifications.recordEmailDeliverySent(input.deliveryId);
+    } catch (error) {
+      try {
+        await this.notifications.recordEmailDeliveryFailed(
+          input.deliveryId,
+          error,
+        );
+      } catch {
+        // Login lock state must not be affected by delivery-status persistence.
+      }
+    }
   }
 
   private async issueSession(

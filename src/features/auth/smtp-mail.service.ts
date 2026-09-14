@@ -61,6 +61,62 @@ export class SmtpMailService implements OnModuleDestroy {
     });
   }
 
+  async sendPasswordResetEmail(input: {
+    email: string;
+    fullName: string;
+    token: string;
+  }): Promise<void> {
+    const frontendUrl = this.config.getOrThrow<string>('FRONTEND_URL');
+    const resetUrl = new URL('/reset-password', frontendUrl);
+    resetUrl.searchParams.set('token', input.token);
+    const user =
+      this.config.get<string>('MAIL_USERNAME') ||
+      this.config.getOrThrow<string>('MAIL_USER');
+    const pass =
+      this.config.get<string>('MAIL_PASSWORD') ||
+      this.config.getOrThrow<string>('MAIL_PASS');
+    const from = this.config.get<string>('MAIL_FROM') || user;
+
+    await this.getTransporter(user, pass).sendMail({
+      from,
+      to: input.email,
+      subject: 'Đặt lại mật khẩu TAMI ERP',
+      text: `Xin chào ${input.fullName},\n\nBạn đã yêu cầu đặt lại mật khẩu TAMI ERP. Hãy đặt mật khẩu mới tại: ${resetUrl.toString()}\n\nLiên kết hết hạn sau 24 giờ và chỉ dùng được một lần. Nếu bạn không yêu cầu thao tác này, hãy bỏ qua email.`,
+      html: `<p>Xin chào ${escapeHtml(input.fullName)},</p><p>Bạn đã yêu cầu đặt lại mật khẩu TAMI ERP.</p><p><a href="${escapeHtml(resetUrl.toString())}">Đặt lại mật khẩu</a></p><p>Liên kết hết hạn sau 24 giờ và chỉ dùng được một lần.</p><p>Nếu bạn không yêu cầu thao tác này, hãy bỏ qua email.</p>`,
+    });
+  }
+
+  async sendTemporaryAccountLockEmail(input: {
+    email: string;
+    fullName: string;
+    lockedAt: Date;
+    lockoutUntil: Date;
+  }): Promise<void> {
+    const user =
+      this.config.get<string>('MAIL_USERNAME') ||
+      this.config.getOrThrow<string>('MAIL_USER');
+    const pass =
+      this.config.get<string>('MAIL_PASSWORD') ||
+      this.config.getOrThrow<string>('MAIL_PASS');
+    const from = this.config.get<string>('MAIL_FROM') || user;
+    const formatTime = (value: Date) =>
+      new Intl.DateTimeFormat('vi-VN', {
+        timeZone: 'Asia/Ho_Chi_Minh',
+        dateStyle: 'short',
+        timeStyle: 'medium',
+      }).format(value);
+    const lockedAt = formatTime(input.lockedAt);
+    const lockoutUntil = formatTime(input.lockoutUntil);
+
+    await this.getTransporter(user, pass).sendMail({
+      from,
+      to: input.email,
+      subject: 'Tài khoản TAMI ERP bị khóa tạm thời',
+      text: `Xin chào ${input.fullName},\n\nTài khoản của bạn bị khóa tạm thời trong 15 phút do nhập sai mật khẩu 5 lần liên tiếp.\n\nThời điểm khóa: ${lockedAt}\nTự động mở khóa lúc: ${lockoutUntil}\n\nNếu đây không phải hoạt động của bạn, vui lòng liên hệ IT/Admin.`,
+      html: `<p>Xin chào ${escapeHtml(input.fullName)},</p><p>Tài khoản của bạn bị khóa tạm thời trong 15 phút do nhập sai mật khẩu 5 lần liên tiếp.</p><p><strong>Thời điểm khóa:</strong> ${escapeHtml(lockedAt)}<br><strong>Tự động mở khóa lúc:</strong> ${escapeHtml(lockoutUntil)}</p><p>Nếu đây không phải hoạt động của bạn, vui lòng liên hệ IT/Admin.</p>`,
+    });
+  }
+
   private async sendAccountRestrictionEmail(
     input: { email: string; fullName: string; reason: string },
     content: { subject: string; description: string },

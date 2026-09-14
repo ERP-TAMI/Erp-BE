@@ -1,5 +1,6 @@
 import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
 import { PasswordSetupEmailStatus } from '../password-setup-email-status.enum';
+import { PasswordTokenPurpose } from '../password-token-purpose.enum';
 
 @Entity('user_password_setup_tokens')
 export class UserPasswordSetupToken {
@@ -23,6 +24,13 @@ export class UserPasswordSetupToken {
 
   @Column({ type: 'uuid', nullable: true, name: 'created_by' })
   createdBy: string | null;
+
+  @Column({
+    type: 'varchar',
+    length: 32,
+    default: PasswordTokenPurpose.ACCOUNT_SETUP,
+  })
+  purpose: PasswordTokenPurpose;
 
   @Column({
     type: 'varchar',

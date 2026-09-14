@@ -117,4 +117,60 @@ describe('SmtpMailService', () => {
       '<Nghi ngờ truy cập trái phép>',
     );
   });
+
+  it('sends a dedicated password-reset link', async () => {
+    const values: Record<string, string> = {
+      MAIL_HOST: 'smtp.gmail.com',
+      MAIL_PORT: '587',
+      MAIL_USERNAME: 'sender@example.test',
+      MAIL_PASSWORD: 'secret-from-env',
+      FRONTEND_URL: 'https://erp.example.test',
+    };
+    const config = {
+      getOrThrow: jest.fn((key: string) => values[key]),
+      get: jest.fn((key: string) => values[key]),
+    } as unknown as ConfigService;
+    const service = new SmtpMailService(config);
+
+    await service.sendPasswordResetEmail({
+      email: 'user@example.test',
+      fullName: '<Người dùng>',
+      token: 'reset-token',
+    });
+
+    expect(sendMail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        subject: 'Đặt lại mật khẩu TAMI ERP',
+        text: expect.stringContaining('/reset-password?token=reset-token'),
+        html: expect.stringContaining('&lt;Người dùng&gt;'),
+      }),
+    );
+  });
+
+  it('sends temporary-lock times without a password-reset link', async () => {
+    const values: Record<string, string> = {
+      MAIL_HOST: 'smtp.gmail.com',
+      MAIL_PORT: '587',
+      MAIL_USERNAME: 'sender@example.test',
+      MAIL_PASSWORD: 'secret-from-env',
+    };
+    const config = {
+      getOrThrow: jest.fn((key: string) => values[key]),
+      get: jest.fn((key: string) => values[key]),
+    } as unknown as ConfigService;
+    const service = new SmtpMailService(config);
+
+    await service.sendTemporaryAccountLockEmail({
+      email: 'user@example.test',
+      fullName: 'Người dùng',
+      lockedAt: new Date('2026-09-14T01:00:00.000Z'),
+      lockoutUntil: new Date('2026-09-14T01:15:00.000Z'),
+    });
+
+    const message = sendMail.mock.calls[0][0];
+    expect(message.text).toContain('15 phút');
+    expect(message.text).toContain('Tự động mở khóa lúc');
+    expect(JSON.stringify(message)).not.toContain('reset-password');
+    expect(JSON.stringify(message)).not.toContain('token=');
+  });
 });

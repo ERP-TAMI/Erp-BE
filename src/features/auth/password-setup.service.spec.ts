@@ -5,6 +5,7 @@ import { UserPasswordSetupToken } from './entities/UserPasswordSetupToken.entity
 import { User } from './entities/User.entity';
 import { SmtpMailService } from './smtp-mail.service';
 import { RecordStatus } from '../../common/enums/database.enums';
+import { PasswordTokenPurpose } from './password-token-purpose.enum';
 
 function buildUser(): User {
   return {
@@ -26,6 +27,7 @@ function buildToken(overrides: Partial<UserPasswordSetupToken> = {}) {
     usedAt: null,
     revokedAt: null,
     createdBy: 'actor-id',
+    purpose: PasswordTokenPurpose.ACCOUNT_SETUP,
     createdAt: new Date(),
     ...overrides,
   } as UserPasswordSetupToken;

@@ -2,6 +2,8 @@ export const DEFAULT_ACCESS_TOKEN_EXPIRY = '15m';
 export const REFRESH_TOKEN_TTL_DAYS = 7;
 export const LOGIN_FAILED_THRESHOLD = 5;
 export const LOCKOUT_MINUTES = 15;
+export const FORGOT_PASSWORD_RATE_LIMIT = 5;
+export const FORGOT_PASSWORD_RATE_LIMIT_TTL_MS = 60_000;
 export const REFRESH_COOKIE_NAME = 'refresh_token';
 // Must be '/' (not '/auth'): the FE calls these endpoints through a reverse
 // proxy under a '/api' prefix, so a browser/proxy-visible request path of
