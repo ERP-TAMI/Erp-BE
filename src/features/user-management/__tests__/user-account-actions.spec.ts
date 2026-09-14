@@ -6,7 +6,11 @@ import { UserSession } from '../../auth/entities/UserSession.entity';
 import { PasswordSetupService } from '../../auth/password-setup.service';
 import { AuditService } from '../../audit/audit.service';
 import { SmtpMailService } from '../../auth/smtp-mail.service';
-import { RecordStatus } from '../../../common/enums/database.enums';
+import {
+  NotificationDeliveryStatus,
+  RecordStatus,
+} from '../../../common/enums/database.enums';
+import { NotificationsService } from '../../notifications/notifications.service';
 import { UserRoleCode } from '../dto/query-users.dto';
 import { UserAccountStatus } from '../dto/user-account-status.enum';
 
@@ -49,6 +53,7 @@ describe('UserManagementService account actions', () => {
   let passwordSetup: jest.Mocked<PasswordSetupService>;
   let audit: jest.Mocked<AuditService>;
   let mail: jest.Mocked<SmtpMailService>;
+  let notifications: jest.Mocked<NotificationsService>;
   let service: UserManagementService;
 
   beforeEach(() => {
@@ -84,12 +89,20 @@ describe('UserManagementService account actions', () => {
     mail = {
       sendAccountLockedEmail: jest.fn().mockResolvedValue(undefined),
     } as unknown as jest.Mocked<SmtpMailService>;
+    notifications = {
+      createAccountLockedEmailDelivery: jest
+        .fn()
+        .mockResolvedValue({ deliveryId: 'delivery-id' }),
+      recordEmailDeliverySent: jest.fn().mockResolvedValue(undefined),
+      recordEmailDeliveryFailed: jest.fn().mockResolvedValue(undefined),
+    } as unknown as jest.Mocked<NotificationsService>;
     service = new UserManagementService(
       {} as Repository<User>,
       dataSource,
       passwordSetup,
       audit,
       mail,
+      notifications,
     );
   });
 
@@ -111,6 +124,10 @@ describe('UserManagementService account actions', () => {
       expect.objectContaining({ revokeReason: 'account_locked' }),
     );
     expect(passwordSetup.revokeActive).toHaveBeenCalledWith(manager, target.id);
+    expect(notifications.createAccountLockedEmailDelivery).toHaveBeenCalledWith(
+      manager,
+      { userId: target.id, reason: 'Vi phạm chính sách' },
+    );
     expect(audit.recordUserChange).toHaveBeenCalledWith(
       manager,
       expect.objectContaining({
@@ -126,6 +143,13 @@ describe('UserManagementService account actions', () => {
       fullName: target.fullName,
       reason: 'Vi phạm chính sách',
     });
+    await Promise.resolve();
+    expect(notifications.recordEmailDeliverySent).toHaveBeenCalledWith(
+      'delivery-id',
+    );
+    expect(result.user.accountLockEmailStatus).toBe(
+      NotificationDeliveryStatus.PENDING,
+    );
   });
 
   it('does not wait for SMTP before returning a successful manual lock', async () => {
@@ -172,6 +196,29 @@ describe('UserManagementService account actions', () => {
     });
     expect(passwordSetup.revokeActive).toHaveBeenCalledWith(manager, target.id);
     expect(result.user.accountStatus).toBe(UserAccountStatus.LOCKED);
+  });
+
+  it('records a failed lock email delivery without failing the lock request', async () => {
+    target.lockoutUntil = null;
+    const smtpError = Object.assign(new Error('secret SMTP details'), {
+      code: 'ETIMEDOUT',
+    });
+    mail.sendAccountLockedEmail.mockRejectedValue(smtpError);
+
+    await expect(
+      service.updateAccountStatus(
+        target.id,
+        { accountStatus: UserAccountStatus.LOCKED, reason: 'Khóa khẩn cấp' },
+        { id: 'it-actor', roleCode: UserRoleCode.IT },
+      ),
+    ).resolves.toBeDefined();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(notifications.recordEmailDeliveryFailed).toHaveBeenCalledWith(
+      'delivery-id',
+      smtpError,
+    );
   });
 
   it('activates a locked account without reviving old sessions and records a valid audit reason', async () => {

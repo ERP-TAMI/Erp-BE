@@ -31,6 +31,7 @@ describe('UserManagementService', () => {
           passwordSetupRequired: false,
           passwordSetupEmailStatus: 'failed',
           passwordSetupEmailAttemptedAt: new Date('2026-09-12T12:00:00.000Z'),
+          accountLockEmailStatus: 'failed',
         },
       ]),
     } as unknown as jest.Mocked<SelectQueryBuilder<User>>;
@@ -39,6 +40,7 @@ describe('UserManagementService', () => {
     } as unknown as jest.Mocked<Repository<User>>;
     service = new UserManagementService(
       users,
+      {} as never,
       {} as never,
       {} as never,
       {} as never,
@@ -59,6 +61,7 @@ describe('UserManagementService', () => {
           passwordSetupRequired: false,
           passwordSetupEmailStatus: 'failed',
           passwordSetupEmailAttemptedAt: '2026-09-12T12:00:00.000Z',
+          accountLockEmailStatus: 'failed',
         },
       ],
       meta: { total: 1, page: 1, limit: 10, totalPages: 1 },
@@ -71,6 +74,7 @@ describe('UserManagementService', () => {
       expect.arrayContaining([
         expect.stringContaining('delivery_status'),
         expect.stringContaining('delivery_attempted_at'),
+        expect.stringContaining('user.account_locked'),
       ]),
     );
   });

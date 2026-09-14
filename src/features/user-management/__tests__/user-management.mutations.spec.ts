@@ -93,6 +93,7 @@ describe('UserManagementService mutations', () => {
       passwordSetup,
       {} as never,
       {} as never,
+      {} as never,
     );
 
     const result = await service.create(
@@ -166,6 +167,7 @@ describe('UserManagementService mutations', () => {
       passwordSetup,
       {} as never,
       {} as never,
+      {} as never,
     );
 
     const result = await service.update(
@@ -234,6 +236,7 @@ describe('UserManagementService mutations', () => {
       passwordSetup,
       {} as never,
       {} as never,
+      {} as never,
     );
 
     const result = await service.update(
@@ -299,6 +302,7 @@ describe('UserManagementService mutations', () => {
       users,
       dataSource,
       passwordSetup,
+      {} as never,
       {} as never,
       {} as never,
     );

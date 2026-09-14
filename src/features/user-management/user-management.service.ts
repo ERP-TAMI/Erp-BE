@@ -48,6 +48,8 @@ import {
 } from './dto/account-action.dto';
 import { AuditService } from '../audit/audit.service';
 import { SmtpMailService } from '../auth/smtp-mail.service';
+import { NotificationsService } from '../notifications/notifications.service';
+import { AccountLockEmailStatus } from './dto/account-lock-email-status.enum';
 
 type UserListRawRow = {
   id: string;
@@ -60,6 +62,7 @@ type UserListRawRow = {
   passwordSetupRequired: boolean;
   passwordSetupEmailStatus: PasswordSetupEmailStatus | null;
   passwordSetupEmailAttemptedAt: Date | string | null;
+  accountLockEmailStatus: AccountLockEmailStatus | null;
 };
 
 const DISPLAY_ROLE_JOIN = `role.id = (
@@ -82,6 +85,7 @@ export class UserManagementService {
     private readonly passwordSetup: PasswordSetupService,
     private readonly audit: AuditService,
     private readonly mail: SmtpMailService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   async create(
@@ -356,17 +360,33 @@ export class UserManagementService {
         ],
       });
 
+      const emailDelivery =
+        dto.accountStatus === UserAccountStatus.LOCKED
+          ? await this.notifications.createAccountLockedEmailDelivery(manager, {
+              userId: user.id,
+              reason: reason!,
+            })
+          : null;
+
       return {
-        response: { user: this.toUserItem(user, role.code, role.name) },
-        accountRestrictionNotification:
-          dto.accountStatus === UserAccountStatus.LOCKED
-            ? {
-                userId: user.id,
-                email: user.email,
-                fullName: user.fullName,
-                reason: reason!,
-              }
-            : null,
+        response: {
+          user: this.toUserItem(
+            user,
+            role.code,
+            role.name,
+            null,
+            emailDelivery ? AccountLockEmailStatus.PENDING : null,
+          ),
+        },
+        accountRestrictionNotification: emailDelivery
+          ? {
+              userId: user.id,
+              deliveryId: emailDelivery.deliveryId,
+              email: user.email,
+              fullName: user.fullName,
+              reason: reason!,
+            }
+          : null,
       };
     });
 
@@ -456,12 +476,25 @@ export class UserManagementService {
           FROM user_password_setup_tokens setup_token
           WHERE setup_token.user_id = "user"."id"
             AND setup_token.used_at IS NULL
+            AND setup_token.revoked_at IS NULL
           LIMIT 1) AS "passwordSetupEmailStatus"`,
         `(SELECT setup_token.delivery_attempted_at
           FROM user_password_setup_tokens setup_token
           WHERE setup_token.user_id = "user"."id"
             AND setup_token.used_at IS NULL
+            AND setup_token.revoked_at IS NULL
           LIMIT 1) AS "passwordSetupEmailAttemptedAt"`,
+        `(SELECT account_delivery.status
+          FROM notifications account_notification
+          JOIN notification_catalog account_catalog
+            ON account_catalog.id = account_notification.notification_catalog_id
+          JOIN notification_deliveries account_delivery
+            ON account_delivery.notification_id = account_notification.id
+          WHERE account_notification.recipient_user_id = "user"."id"
+            AND account_catalog.event_code = 'user.account_locked'
+            AND account_delivery.channel = 'email'
+          ORDER BY account_notification.created_at DESC, account_delivery.created_at DESC
+          LIMIT 1) AS "accountLockEmailStatus"`,
         `CASE
           WHEN user.status = 'inactive' THEN 'inactive'
           WHEN user.manuallyLockedAt IS NOT NULL THEN 'locked'
@@ -551,6 +584,7 @@ export class UserManagementService {
       passwordSetupEmailAttemptedAt: row.passwordSetupEmailAttemptedAt
         ? new Date(row.passwordSetupEmailAttemptedAt).toISOString()
         : null,
+      accountLockEmailStatus: row.accountLockEmailStatus,
     };
   }
 
@@ -566,19 +600,32 @@ export class UserManagementService {
 
   private sendAccountRestrictionEmailInBackground(input: {
     userId: string;
+    deliveryId: string;
     email: string;
     fullName: string;
     reason: string;
   }): void {
-    const { userId, ...emailPayload } = input;
-    const delivery = this.mail.sendAccountLockedEmail(emailPayload);
-    void delivery.catch((error: unknown) => {
-      const errorMessage =
-        error instanceof Error ? error.message : String(error);
-      this.logger.error(
-        `Account restriction email failed for user ${userId}: ${errorMessage}`,
-      );
-    });
+    const { userId, deliveryId, ...emailPayload } = input;
+    void this.mail.sendAccountLockedEmail(emailPayload).then(
+      async () => {
+        try {
+          await this.notifications.recordEmailDeliverySent(deliveryId);
+        } catch {
+          this.logger.error(
+            `Account restriction sent status could not be saved for user ${userId}`,
+          );
+        }
+      },
+      async (error: unknown) => {
+        try {
+          await this.notifications.recordEmailDeliveryFailed(deliveryId, error);
+        } catch {
+          this.logger.error(
+            `Account restriction failed status could not be saved for user ${userId}`,
+          );
+        }
+      },
+    );
   }
 
   private async revokeSessions(
@@ -645,6 +692,7 @@ export class UserManagementService {
     roleCode: UserRoleCode,
     roleName: string,
     passwordSetupEmailStatus: PasswordSetupEmailStatus | null = null,
+    accountLockEmailStatus: AccountLockEmailStatus | null = null,
   ): UserListItemResponseDto {
     return {
       id: user.id,
@@ -656,6 +704,7 @@ export class UserManagementService {
       passwordSetupRequired: user.mustChangePassword,
       passwordSetupEmailStatus,
       passwordSetupEmailAttemptedAt: null,
+      accountLockEmailStatus,
     };
   }
 
