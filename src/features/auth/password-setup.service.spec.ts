@@ -24,6 +24,7 @@ function buildToken(overrides: Partial<UserPasswordSetupToken> = {}) {
     tokenHash: 'a'.repeat(64),
     expiresAt: new Date(Date.now() + 60_000),
     usedAt: null,
+    revokedAt: null,
     createdBy: 'actor-id',
     createdAt: new Date(),
     ...overrides,
@@ -99,10 +100,14 @@ describe('PasswordSetupService', () => {
     await service.revokeActive(manager, buildUser().id);
 
     expect(tokenRepository.update).toHaveBeenCalledWith(
-      { userId: buildUser().id, usedAt: expect.anything() },
-      { usedAt: expect.any(Date) },
+      {
+        userId: buildUser().id,
+        usedAt: expect.anything(),
+        revokedAt: expect.anything(),
+      },
+      { revokedAt: expect.any(Date) },
     );
-    const revokedAt = tokenRepository.update.mock.calls[0][1].usedAt as Date;
+    const revokedAt = tokenRepository.update.mock.calls[0][1].revokedAt as Date;
     expect(revokedAt.getTime()).toBeGreaterThanOrEqual(nowBeforeRevoke);
   });
 
@@ -148,6 +153,19 @@ describe('PasswordSetupService', () => {
     await expect(service.validate('raw-token')).rejects.toBeInstanceOf(
       errorType,
     );
+  });
+
+  it('distinguishes a revoked token from a used token', async () => {
+    tokenRepository.findOne.mockResolvedValue(
+      buildToken({ revokedAt: new Date() }),
+    );
+
+    await expect(service.validate('revoked-token')).rejects.toMatchObject({
+      response: {
+        code: 'PASSWORD_SETUP_TOKEN_REVOKED',
+        message: 'Liên kết đặt mật khẩu đã bị thu hồi.',
+      },
+    });
   });
 
   it('rejects validation when the account was locked after the token was issued', async () => {

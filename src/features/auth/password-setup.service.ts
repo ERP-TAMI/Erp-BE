@@ -63,6 +63,7 @@ export class PasswordSetupService {
         tokenHash: hashPasswordSetupToken(rawToken),
         expiresAt: passwordSetupExpiry(now),
         usedAt: null,
+        revokedAt: null,
         createdBy,
         deliveryStatus: PasswordSetupEmailStatus.PENDING,
         deliveryAttemptedAt: null,
@@ -78,7 +79,7 @@ export class PasswordSetupService {
   ): Promise<void> {
     await manager
       .getRepository(UserPasswordSetupToken)
-      .update({ userId, usedAt: IsNull() }, { usedAt: revokedAt });
+      .update({ userId, usedAt: IsNull(), revokedAt: IsNull() }, { revokedAt });
   }
 
   async deliver(invitation: IssuedPasswordSetup): Promise<InvitationStatus> {
@@ -206,6 +207,12 @@ export class PasswordSetupService {
       throw new BadRequestException({
         code: ErrorCode.PASSWORD_SETUP_TOKEN_INVALID,
         message: 'Liên kết đặt mật khẩu không hợp lệ.',
+      });
+    }
+    if (token.revokedAt) {
+      throw new GoneException({
+        code: ErrorCode.PASSWORD_SETUP_TOKEN_REVOKED,
+        message: 'Liên kết đặt mật khẩu đã bị thu hồi.',
       });
     }
     if (token.usedAt) {
