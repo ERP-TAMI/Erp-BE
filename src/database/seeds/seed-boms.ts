@@ -93,7 +93,12 @@ export async function seedDemoBoms(manager: EntityManager): Promise<void> {
          VALUES ($1, $2, $3, 'Seed revision', now(), $4)
          ON CONFLICT (bill_of_material_id, revision_no) WHERE revision_no IS NOT NULL DO UPDATE SET status = EXCLUDED.status
          RETURNING id`,
-        [bomId, revNo, isApproved ? 'approved' : 'draft', isApproved ? new Date() : null],
+        [
+          bomId,
+          revNo,
+          isApproved ? 'approved' : 'draft',
+          isApproved ? new Date() : null,
+        ],
       );
       const revisionId = insertedRev[0]?.id;
 

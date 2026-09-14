@@ -145,27 +145,6 @@ export function normalizeStatusQuery(
   }
 }
 
-function mapBomStatusToLabel(status: string | null | undefined): string {
-  if (!status) return 'Draft';
-  switch (status.toLowerCase()) {
-    case 'draft':
-      return 'Draft';
-    case 'wait_rd':
-      return 'Wait_RD';
-    case 'wait_accounting':
-      return 'Wait_Price';
-    case 'wait_tpkh_confirm':
-      return 'Wait_TP_Approve';
-    case 'wait_sa_approve':
-      return 'Wait_SA_Approve';
-    case 'closed':
-    case 'approved':
-      return 'Approved';
-    default:
-      return status;
-  }
-}
-
 @Injectable()
 export class BomsService {
   constructor(

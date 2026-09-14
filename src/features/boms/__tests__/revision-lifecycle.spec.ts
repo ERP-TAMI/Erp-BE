@@ -345,7 +345,7 @@ describe('Tier 2C — Revision Lifecycle & Approval Workflow', () => {
       findOne: jest.fn().mockImplementation(async ({ where }: any) => {
         return poRevisions.find((r) => r.id === where.id) || null;
       }),
-      find: jest.fn().mockImplementation(async ({ where, order }: any) => {
+      find: jest.fn().mockImplementation(async ({ where }: any) => {
         const rows = poRevisions.filter(
           (r) => r.billOfMaterialId === where.billOfMaterialId,
         );
@@ -398,9 +398,8 @@ describe('Tier 2C — Revision Lifecycle & Approval Workflow', () => {
                     (r.effectiveTo === null ||
                       (bDate && bDate < r.effectiveTo)),
                 )
-                .sort(
-                  (a, b) => (b.revisionNo || 0) - (a.revisionNo || 0),
-                )[0] || null
+                .sort((a, b) => (b.revisionNo || 0) - (a.revisionNo || 0))[0] ||
+              null
             );
           }),
         };
@@ -447,8 +446,7 @@ describe('Tier 2C — Revision Lifecycle & Approval Workflow', () => {
           getOne: jest.fn().mockImplementation(async () => {
             if (statuses) {
               const rows = fitRevisions.filter(
-                (r) =>
-                  r.styleId === sId && statuses!.includes(r.status),
+                (r) => r.styleId === sId && statuses!.includes(r.status),
               );
               return rows[rows.length - 1] || null;
             }
@@ -463,9 +461,8 @@ describe('Tier 2C — Revision Lifecycle & Approval Workflow', () => {
                     (r.effectiveTo === null ||
                       (bDate && bDate < r.effectiveTo)),
                 )
-                .sort(
-                  (a, b) => (b.revisionNo || 0) - (a.revisionNo || 0),
-                )[0] || null
+                .sort((a, b) => (b.revisionNo || 0) - (a.revisionNo || 0))[0] ||
+              null
             );
           }),
         };
@@ -939,7 +936,12 @@ describe('Tier 2C — Revision Lifecycle & Approval Workflow', () => {
         { lines: [{ materialNameSnapshot: 'Thread', unitSnapshot: 'Cuộn' }] },
         currentUser,
       );
-      await service.submitRevisionForReview('bom-1', draft3.id, {}, currentUser);
+      await service.submitRevisionForReview(
+        'bom-1',
+        draft3.id,
+        {},
+        currentUser,
+      );
 
       const app3 = await service.approveRevision(
         'bom-1',
@@ -970,8 +972,18 @@ describe('Tier 2C — Revision Lifecycle & Approval Workflow', () => {
         currentUser,
       );
 
-      await service.submitRevisionForReview('bom-1', draftA.id, {}, currentUser);
-      await service.submitRevisionForReview('bom-1', draftB.id, {}, currentUser);
+      await service.submitRevisionForReview(
+        'bom-1',
+        draftA.id,
+        {},
+        currentUser,
+      );
+      await service.submitRevisionForReview(
+        'bom-1',
+        draftB.id,
+        {},
+        currentUser,
+      );
 
       // Approving sequentially (serialized by parent BOM pessimistic lock)
       const approvedA = await service.approveRevision(
@@ -1028,7 +1040,9 @@ describe('Tier 2C — Revision Lifecycle & Approval Workflow', () => {
       await service.updateDraftRevision(
         'bom-1',
         draft.id,
-        { lines: [{ materialNameSnapshot: 'New Button', unitSnapshot: 'Cái' }] },
+        {
+          lines: [{ materialNameSnapshot: 'New Button', unitSnapshot: 'Cái' }],
+        },
         currentUser,
       );
 
@@ -1377,11 +1391,18 @@ describe('Tier 2C — Revision Lifecycle & Approval Workflow', () => {
       await service.updateDraftRevision(
         'style-1',
         draft.id,
-        { lines: [{ materialNameSnapshot: 'Fit Collar', unitSnapshot: 'Cái' }] },
+        {
+          lines: [{ materialNameSnapshot: 'Fit Collar', unitSnapshot: 'Cái' }],
+        },
         currentUser,
       );
 
-      await service.submitRevisionForReview('style-1', draft.id, {}, currentUser);
+      await service.submitRevisionForReview(
+        'style-1',
+        draft.id,
+        {},
+        currentUser,
+      );
 
       const approved = await service.approveRevision(
         'style-1',
