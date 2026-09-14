@@ -50,6 +50,8 @@ describe('SmtpMailService', () => {
     );
     const message = sendMail.mock.calls[0][0];
     expect(message.text).toContain('token=opaque-token');
+    expect(message.text).not.toContain('đã được tạo');
+    expect(message.html).not.toContain('đã được tạo');
     expect(message.html).toContain('&lt;Người dùng&gt;');
     expect(JSON.stringify(message)).not.toContain('secret-from-env');
     expect(message.text.toLowerCase()).not.toContain('mật khẩu tạm');
@@ -82,5 +84,37 @@ describe('SmtpMailService', () => {
     expect(nodemailer.createTransport).toHaveBeenCalledTimes(1);
     expect(sendMail).toHaveBeenCalledTimes(2);
     expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it('emails a manually locked user with an escaped user-facing reason', async () => {
+    const values: Record<string, string> = {
+      MAIL_HOST: 'smtp.gmail.com',
+      MAIL_PORT: '587',
+      MAIL_USERNAME: 'sender@example.test',
+      MAIL_PASSWORD: 'secret-from-env',
+    };
+    const config = {
+      getOrThrow: jest.fn((key: string) => values[key]),
+      get: jest.fn((key: string) => values[key]),
+    } as unknown as ConfigService;
+    const service = new SmtpMailService(config);
+
+    await service.sendAccountLockedEmail({
+      email: 'locked.user@example.test',
+      fullName: '<Người dùng>',
+      reason: '<Nghi ngờ truy cập trái phép>',
+    });
+
+    expect(sendMail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: 'locked.user@example.test',
+        subject: 'Tài khoản TAMI ERP đã bị khóa',
+        text: expect.stringContaining('Nghi ngờ truy cập trái phép'),
+        html: expect.stringContaining('&lt;Nghi ngờ truy cập trái phép&gt;'),
+      }),
+    );
+    expect(sendMail.mock.calls[0][0].html).not.toContain(
+      '<Nghi ngờ truy cập trái phép>',
+    );
   });
 });

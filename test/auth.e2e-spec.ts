@@ -138,7 +138,7 @@ describe('Auth API (e2e)', () => {
   it('returns 403 for a locked account', async () => {
     authService.login.mockRejectedValue(
       new ForbiddenException({
-        code: ErrorCode.ACCOUNT_LOCKED,
+        code: ErrorCode.ACCOUNT_TEMPORARILY_LOCKED,
         message: 'Tài khoản đang tạm khoá do đăng nhập sai nhiều lần.',
       }),
     );
@@ -148,7 +148,9 @@ describe('Auth API (e2e)', () => {
       .send({ email: 'sa@tami.test', password: 'whatever' })
       .expect(403)
       .expect((response) => {
-        expect(response.body).toMatchObject({ code: ErrorCode.ACCOUNT_LOCKED });
+        expect(response.body).toMatchObject({
+          code: ErrorCode.ACCOUNT_TEMPORARILY_LOCKED,
+        });
       });
   });
 

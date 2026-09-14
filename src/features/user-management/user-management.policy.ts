@@ -1,10 +1,7 @@
 import { ForbiddenException } from '@nestjs/common';
 import { ErrorCode } from '../../common/enums/error-code.enum';
 import { UserRoleCode } from './dto/query-users.dto';
-import {
-  EditableUserAccountStatus,
-  UserAccountStatus,
-} from './dto/user-account-status.enum';
+import { UserAccountStatus } from './dto/user-account-status.enum';
 
 const IT_MANAGED_ROLES = new Set<UserRoleCode>([
   UserRoleCode.TPKH,
@@ -32,7 +29,7 @@ export function assertCanUpdateUser(input: {
   targetId: string;
   currentRole: UserRoleCode;
   nextRole: UserRoleCode;
-  nextStatus: EditableUserAccountStatus;
+  nextStatus: UserAccountStatus;
 }): void {
   const isSelf = input.actorId === input.targetId;
   if (isSelf) {
@@ -40,7 +37,7 @@ export function assertCanUpdateUser(input: {
       forbidden('Bạn không được tự thay đổi vai trò của chính mình.');
     }
     if (input.nextStatus !== UserAccountStatus.ACTIVE) {
-      forbidden('Bạn không được tự khóa hoặc vô hiệu hóa chính mình.');
+      forbidden('Bạn không được tự khóa chính mình.');
     }
     return;
   }
@@ -54,4 +51,23 @@ export function assertCanUpdateUser(input: {
     return;
   }
   forbidden('Bạn không có quyền sửa người dùng này.');
+}
+
+export function assertCanManageAccountAction(input: {
+  actorId: string;
+  actorRole: string;
+  targetId: string;
+  targetRole: UserRoleCode;
+}): void {
+  if (input.actorId === input.targetId) {
+    forbidden('Bạn không được thực hiện thao tác bảo mật trên chính mình.');
+  }
+  if (input.actorRole === UserRoleCode.SA) return;
+  if (
+    input.actorRole === UserRoleCode.IT &&
+    IT_MANAGED_ROLES.has(input.targetRole)
+  ) {
+    return;
+  }
+  forbidden('Bạn không có quyền thực hiện thao tác này với người dùng.');
 }

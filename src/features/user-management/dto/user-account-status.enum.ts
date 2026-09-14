@@ -8,7 +8,6 @@ export enum UserAccountStatus {
 export const EDITABLE_USER_ACCOUNT_STATUSES = [
   UserAccountStatus.ACTIVE,
   UserAccountStatus.LOCKED,
-  UserAccountStatus.INACTIVE,
 ] as const;
 
 export type EditableUserAccountStatus =

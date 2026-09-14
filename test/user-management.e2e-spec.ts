@@ -30,6 +30,8 @@ describe('User management API (e2e)', () => {
     create: jest.fn(),
     update: jest.fn(),
     resendPasswordSetup: jest.fn(),
+    updateAccountStatus: jest.fn(),
+    resetPassword: jest.fn(),
   };
   let currentPermissions: string[];
   let app: INestApplication;
@@ -113,7 +115,6 @@ describe('User management API (e2e)', () => {
       email: 'USER@Example.COM',
       phone: '',
       roleCode: 'NVKH',
-      accountStatus: 'active',
     };
     userManagementService.create.mockResolvedValue({
       user: response.data[0],
@@ -139,10 +140,12 @@ describe('User management API (e2e)', () => {
       .send({ ...input, password: 'must-not-be-accepted' })
       .expect(400);
 
-    await request(app.getHttpServer())
-      .post('/system/users')
-      .send({ ...input, accountStatus: 'pending_setup' })
-      .expect(400);
+    for (const accountStatus of ['active', 'locked', 'inactive']) {
+      await request(app.getHttpServer())
+        .post('/system/users')
+        .send({ ...input, accountStatus })
+        .expect(400);
+    }
   });
 
   it('updates and resends password setup email through protected endpoints', async () => {
@@ -152,7 +155,6 @@ describe('User management API (e2e)', () => {
       email: 'b@example.com',
       phone: '0901234567',
       roleCode: 'TPKH',
-      accountStatus: 'locked',
     };
     userManagementService.update.mockResolvedValue({
       user: response.data[0],
@@ -178,6 +180,60 @@ describe('User management API (e2e)', () => {
       expect.objectContaining({ roleCode: 'SA' }),
     );
     expect(userManagementService.resendPasswordSetup).toHaveBeenCalledWith(
+      id,
+      expect.objectContaining({ roleCode: 'SA' }),
+    );
+
+    await request(app.getHttpServer())
+      .patch(`/system/users/${id}`)
+      .send({ ...input, accountStatus: 'active' })
+      .expect(400);
+  });
+
+  it('validates account status reasons and accepts password reset asynchronously', async () => {
+    const id = '22222222-2222-4222-8222-222222222222';
+    userManagementService.updateAccountStatus.mockResolvedValue({
+      user: { ...response.data[0], accountStatus: UserAccountStatus.LOCKED },
+    });
+    userManagementService.resetPassword.mockResolvedValue({
+      user: {
+        ...response.data[0],
+        accountStatus: UserAccountStatus.PENDING_SETUP,
+        passwordSetupRequired: true,
+      },
+      invitationStatus: 'pending',
+    });
+
+    await request(app.getHttpServer())
+      .patch(`/system/users/${id}/account-status`)
+      .send({ accountStatus: 'locked', reason: '  Truy cập bất thường  ' })
+      .expect(200);
+    expect(userManagementService.updateAccountStatus).toHaveBeenCalledWith(
+      id,
+      { accountStatus: 'locked', reason: 'Truy cập bất thường' },
+      expect.objectContaining({ roleCode: 'SA' }),
+    );
+
+    for (const payload of [
+      { accountStatus: 'locked' },
+      { accountStatus: 'inactive', reason: 'Đã nghỉ việc' },
+      { accountStatus: 'pending_setup', reason: 'Không hợp lệ' },
+    ]) {
+      await request(app.getHttpServer())
+        .patch(`/system/users/${id}/account-status`)
+        .send(payload)
+        .expect(400);
+    }
+
+    await request(app.getHttpServer())
+      .post(`/system/users/${id}/password-reset`)
+      .expect(202)
+      .expect(({ body }) =>
+        expect(body).toEqual(
+          expect.objectContaining({ invitationStatus: 'pending' }),
+        ),
+      );
+    expect(userManagementService.resetPassword).toHaveBeenCalledWith(
       id,
       expect.objectContaining({ roleCode: 'SA' }),
     );
