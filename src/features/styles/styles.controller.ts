@@ -12,12 +12,20 @@ import {
   HttpStatus,
   Req,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiBearerAuth,
+} from '@nestjs/swagger';
+import { Auth } from '../../common/decorators/auth.decorator';
 import { StylesService, PaginatedResult } from './styles.service';
 import { CreateStyleDto, UpdateStyleDto, StyleQueryDto } from './dto';
 import { Style } from './entities/Style.entity';
 
 @ApiTags('styles')
+@ApiBearerAuth()
+@Auth()
 @Controller(['styles', 'api/styles', 'api/v1/styles'])
 export class StylesController {
   constructor(private readonly stylesService: StylesService) {}
