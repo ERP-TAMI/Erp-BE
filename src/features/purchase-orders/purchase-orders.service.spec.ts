@@ -252,6 +252,7 @@ describe('PurchaseOrdersService', () => {
       getPresignedPutUrl: jest.fn().mockResolvedValue('https://s3.example/put'),
       getPresignedGetUrl: jest.fn().mockResolvedValue('https://s3.example/get'),
       deleteObject: jest.fn(),
+      copyObject: jest.fn().mockResolvedValue(undefined),
       headObject: jest.fn().mockResolvedValue({ exists: true }),
       getObjectBuffer: jest
         .fn()
@@ -823,14 +824,31 @@ describe('PurchaseOrdersService', () => {
       expect(txDocRepoMock.save).toHaveBeenCalledWith(
         expect.not.objectContaining({ id: 'style-doc-1' }),
       );
+      // storageKey của bản clone phải KHÁC storageKey nguồn — hai
+      // DocumentVersion không được phép trỏ cùng một key (unique constraint),
+      // và bản sao phải là một object S3 độc lập thật sự.
       expect(txVersionRepoMock.save).toHaveBeenCalledWith(
         expect.objectContaining({
-          storageKey: 'styles/style-1/documents/techpack.pdf',
+          storageKey: expect.stringMatching(
+            /^purchase-orders\/po-1\/products\/[^/]+\/documents\/imported-from-style\/[0-9a-f-]+\.pdf$/,
+          ),
           versionNo: 1,
         }),
       );
       expect(txVersionRepoMock.save).toHaveBeenCalledWith(
-        expect.not.objectContaining({ id: 'style-version-1' }),
+        expect.not.objectContaining({
+          id: 'style-version-1',
+          storageKey: 'styles/style-1/documents/techpack.pdf',
+        }),
+      );
+
+      // Object S3 nguồn phải được copy sang key mới trước khi lưu
+      // DocumentVersion trỏ vào key đó.
+      expect(storageMock.copyObject).toHaveBeenCalledWith(
+        'styles/style-1/documents/techpack.pdf',
+        expect.stringMatching(
+          /^purchase-orders\/po-1\/products\/[^/]+\/documents\/imported-from-style\/[0-9a-f-]+\.pdf$/,
+        ),
       );
 
       // Link tới sản phẩm phải trỏ vào Document MỚI (doc-1, do txDocRepoMock

@@ -2376,12 +2376,14 @@ export class PurchaseOrdersService {
 
         // 2.4. Clone Tài liệu đính kèm (StyleDocument -> PurchaseOrderProductDocument)
         //
-        // Mỗi tài liệu được nhân bản thành một `Document`/`DocumentVersion` mới
-        // (trỏ tới cùng file trên S3 qua storageKey), KHÔNG link thẳng vào
-        // documentId của Style. Nếu link thẳng, một lần tải phiên bản mới ở
-        // phía Product (confirmProductDocumentVersion) sẽ ghi đè
-        // `currentVersionId` của Document gốc và làm lộ thay đổi ngược lại cho
-        // Style nguồn — vi phạm yêu cầu "sửa Product không đổi Style nguồn".
+        // Mỗi tài liệu được nhân bản thành một `Document`/`DocumentVersion` MỚI,
+        // KHÔNG link thẳng vào documentId của Style. Nếu link thẳng, một lần
+        // tải phiên bản mới ở phía Product (confirmProductDocumentVersion) sẽ
+        // ghi đè `currentVersionId` của Document gốc và làm lộ thay đổi ngược
+        // lại cho Style nguồn — vi phạm yêu cầu "sửa Product không đổi Style
+        // nguồn". `document_versions.storage_key` có UNIQUE constraint nên
+        // cũng không thể tái dùng storageKey gốc cho version mới — phải
+        // `copyObject` file sang một key riêng trên S3 trước.
         if (opts.copyDocuments !== false) {
           const styleDocs = await manager.find(StyleDocument, {
             where: { styleId: sourceStyleId },
@@ -2405,6 +2407,13 @@ export class PurchaseOrdersService {
               : null;
             if (!sourceVersion) continue;
 
+            const ext = path.extname(sourceVersion.originalFileName || '');
+            const clonedObjectKey = `purchase-orders/${poId}/products/${savedProduct.id}/documents/imported-from-style/${randomUUID()}${ext}`;
+            await this.storage.copyObject(
+              sourceVersion.storageKey,
+              clonedObjectKey,
+            );
+
             const clonedDoc = await manager.save(
               Document,
               manager.create(Document, {
@@ -2421,7 +2430,7 @@ export class PurchaseOrdersService {
                 documentId: clonedDoc.id,
                 versionNo: 1,
                 originalFileName: sourceVersion.originalFileName,
-                storageKey: sourceVersion.storageKey,
+                storageKey: clonedObjectKey,
                 mimeType: sourceVersion.mimeType,
                 byteSize: sourceVersion.byteSize,
                 sha256: sourceVersion.sha256,
