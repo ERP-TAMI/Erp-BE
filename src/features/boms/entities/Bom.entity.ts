@@ -1,9 +1,4 @@
-import {
-  Entity,
-  Column,
-  PrimaryGeneratedColumn,
-  Index,
-} from 'typeorm';
+import { Entity, Column, PrimaryGeneratedColumn, Index } from 'typeorm';
 import { BomType } from '../../../common/enums/database.enums';
 
 @Entity('boms')

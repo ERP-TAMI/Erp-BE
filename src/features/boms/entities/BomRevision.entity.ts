@@ -1,10 +1,4 @@
-import {
-  Entity,
-  Column,
-  PrimaryGeneratedColumn,
-  Index,
-  Unique,
-} from 'typeorm';
+import { Entity, Column, PrimaryGeneratedColumn, Index, Unique } from 'typeorm';
 import { BomRevisionStatus } from '../../../common/enums/database.enums';
 
 @Entity('bom_revisions')

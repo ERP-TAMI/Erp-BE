@@ -1,9 +1,4 @@
-import {
-  Entity,
-  Column,
-  PrimaryGeneratedColumn,
-  Index,
-} from 'typeorm';
+import { Entity, Column, PrimaryGeneratedColumn, Index } from 'typeorm';
 import { BomRevisionStatus } from '../../../common/enums/database.enums';
 
 @Entity('bom_revision_status_history')

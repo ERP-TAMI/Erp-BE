@@ -1,10 +1,4 @@
-import {
-  Entity,
-  Column,
-  PrimaryGeneratedColumn,
-  Index,
-  Unique,
-} from 'typeorm';
+import { Entity, Column, PrimaryGeneratedColumn, Index, Unique } from 'typeorm';
 
 @Entity('bom_lines')
 @Unique('uq_bom_line_order', ['revisionId', 'orderIndex'])
