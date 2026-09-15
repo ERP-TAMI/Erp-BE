@@ -1,6 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { DataSource } from 'typeorm';
+import { DataSource, In } from 'typeorm';
 import {
   ConflictException,
   BadRequestException,
@@ -31,6 +31,7 @@ import { ProductionDocumentImage } from '../production/entities/ProductionDocume
 import { Document } from '../documents/entities/Document.entity';
 import { DocumentVersion } from '../documents/entities/DocumentVersion.entity';
 import { Customer } from '../master-data/entities/Customer.entity';
+import { Bom } from '../boms/entities/Bom.entity';
 import {
   PoStatus,
   ProductStatus,
@@ -150,7 +151,23 @@ describe('PurchaseOrdersService', () => {
     }
   > = {};
 
+  // Fixtures cho nhánh upsert-theo-id / chặn xóa màu còn BOM tham chiếu.
+  let mockExistingColors: Array<{
+    id: string;
+    productId: string;
+    colorName: string;
+    colorCode?: string;
+    orderIndex: number;
+  }> = [];
+  let mockLinkedBoms: Array<{
+    id: string;
+    bomCode: string;
+    productColorId: string;
+  }> = [];
+
   let storageMock: jest.Mocked<StorageService>;
+  let txColorRepoMock: { find: jest.Mock; save: jest.Mock; delete: jest.Mock };
+  let txColorSizeRepoMock: { save: jest.Mock; delete: jest.Mock };
   let txDocRepoMock: { create: jest.Mock; save: jest.Mock };
   let txVersionRepoMock: { create: jest.Mock; save: jest.Mock };
   let txPoDocRepoMock: { create: jest.Mock; save: jest.Mock };
@@ -189,6 +206,12 @@ describe('PurchaseOrdersService', () => {
           if (entity === StyleDocument) {
             return Promise.resolve(mockStyleDocuments);
           }
+          if (entity === PurchaseOrderProductColor) {
+            return Promise.resolve(mockExistingColors);
+          }
+          if (entity === Bom) {
+            return Promise.resolve(mockLinkedBoms);
+          }
           return Promise.resolve([]);
         }),
         create: jest.fn().mockImplementation((entity: any, dto: any) => {
@@ -214,9 +237,19 @@ describe('PurchaseOrdersService', () => {
               return txVersionRepoMock.save(target);
             if (entityOrTarget === PurchaseOrderProductDocument)
               return txProductDocRepoMock.save(target);
+            if (entityOrTarget === PurchaseOrderProductColor)
+              return txColorRepoMock.save(target);
+            if (entityOrTarget === PurchaseOrderProductColorSize)
+              return txColorSizeRepoMock.save(target);
             return Promise.resolve(target);
           }),
-        delete: jest.fn().mockResolvedValue({ affected: 1 }),
+        delete: jest.fn().mockImplementation((entity: any, criteria: any) => {
+          if (entity === PurchaseOrderProductColor)
+            return txColorRepoMock.delete(criteria);
+          if (entity === PurchaseOrderProductColorSize)
+            return txColorSizeRepoMock.delete(criteria);
+          return Promise.resolve({ affected: 1 });
+        }),
         remove: jest.fn().mockResolvedValue(undefined),
         getRepository: jest.fn().mockImplementation((entity: any) => {
           if (entity === Document) return txDocRepoMock;
@@ -241,6 +274,32 @@ describe('PurchaseOrdersService', () => {
     mockStyleDocuments = [];
     mockSourceDocumentsById = {};
     mockSourceVersionsById = {};
+    mockExistingColors = [];
+    mockLinkedBoms = [];
+
+    txColorRepoMock = {
+      find: jest
+        .fn()
+        .mockImplementation(() => Promise.resolve(mockExistingColors)),
+      save: jest
+        .fn()
+        .mockImplementation((v: any) =>
+          Promise.resolve(v.id ? v : { id: 'new-color-id', ...v }),
+        ),
+      delete: jest.fn().mockResolvedValue({ affected: 1 }),
+    };
+    txColorSizeRepoMock = {
+      save: jest
+        .fn()
+        .mockImplementation((v: any) =>
+          Promise.resolve(
+            Array.isArray(v)
+              ? v.map((item, idx) => ({ id: `size-${idx}`, ...item }))
+              : { id: 'size-0', ...v },
+          ),
+        ),
+      delete: jest.fn().mockResolvedValue({ affected: 1 }),
+    };
 
     // findOne chỉ trả thông tin chung kèm hai số đếm, nên mọi test đi qua nó
     // đều cần count có giá trị mặc định.
@@ -920,6 +979,172 @@ describe('PurchaseOrdersService', () => {
           productName: 'Áo Polo',
         }),
       ).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  describe('Product Color/Size Management — productColorId stability', () => {
+    const baseProduct = {
+      id: 'prod-1',
+      purchaseOrderId: 'po-1',
+      productCode: 'PROD-001',
+      productName: 'Áo Polo',
+      status: ProductStatus.DRAFT,
+    };
+
+    beforeEach(() => {
+      mockProductRepo.findOne.mockResolvedValue({ ...baseProduct });
+      mockProductRepo.save.mockImplementation((v: any) =>
+        Promise.resolve({ ...baseProduct, ...v }),
+      );
+    });
+
+    it('keeps the existing productColorId when a color is updated by id, instead of deleting and recreating it', async () => {
+      mockExistingColors = [
+        {
+          id: 'color-existing-1',
+          productId: 'prod-1',
+          colorName: 'Đen',
+          orderIndex: 0,
+        },
+      ];
+
+      await service.updateProduct('po-1', 'prod-1', {
+        colors: [
+          {
+            id: 'color-existing-1',
+            colorName: 'Đen (đổi tên)',
+            sizes: [{ sizeLabel: 'M', quantity: 10 }],
+          },
+        ],
+      });
+
+      // save() phải nhận đúng entity đang có id cũ — chứng minh đây là UPDATE
+      // tại chỗ, không phải tạo record mới.
+      expect(txColorRepoMock.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 'color-existing-1',
+          colorName: 'Đen (đổi tên)',
+        }),
+      );
+      // Không có màu nào bị xóa — vẫn còn nguyên trong danh sách gửi lên.
+      expect(txColorRepoMock.delete).not.toHaveBeenCalled();
+    });
+
+    it('creates a brand-new color when the incoming entry has no id (or an id that does not match any existing row)', async () => {
+      mockExistingColors = [];
+
+      await service.updateProduct('po-1', 'prod-1', {
+        colors: [
+          {
+            colorName: 'Trắng',
+            sizes: [{ sizeLabel: 'S', quantity: 5 }],
+          },
+        ],
+      });
+
+      expect(txColorRepoMock.save).toHaveBeenCalledWith(
+        expect.objectContaining({ colorName: 'Trắng' }),
+      );
+    });
+
+    it('deletes a color that was removed from the submitted list, when nothing in BOM references it', async () => {
+      mockExistingColors = [
+        {
+          id: 'color-to-remove',
+          productId: 'prod-1',
+          colorName: 'Xanh',
+          orderIndex: 0,
+        },
+      ];
+      mockLinkedBoms = [];
+
+      await service.updateProduct('po-1', 'prod-1', { colors: [] });
+
+      expect(txColorRepoMock.delete).toHaveBeenCalledWith({
+        id: In(['color-to-remove']),
+      });
+    });
+
+    it('blocks deleting a color that a BOM still references, with a clean ConflictException instead of a raw FK error', async () => {
+      mockExistingColors = [
+        {
+          id: 'color-linked',
+          productId: 'prod-1',
+          colorName: 'Xanh',
+          orderIndex: 0,
+        },
+      ];
+      mockLinkedBoms = [
+        { id: 'bom-1', bomCode: 'BOM-001', productColorId: 'color-linked' },
+      ];
+
+      await expect(
+        service.updateProduct('po-1', 'prod-1', { colors: [] }),
+      ).rejects.toThrow(ConflictException);
+
+      expect(txColorRepoMock.delete).not.toHaveBeenCalled();
+    });
+
+    it('rejects duplicate color names in the same submission with a BadRequestException, not a raw DB unique-violation', async () => {
+      mockExistingColors = [];
+
+      await expect(
+        service.updateProduct('po-1', 'prod-1', {
+          colors: [
+            { colorName: 'Đen', sizes: [{ sizeLabel: 'S', quantity: 1 }] },
+            { colorName: 'Đen', sizes: [{ sizeLabel: 'M', quantity: 1 }] },
+          ],
+        }),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(txColorRepoMock.save).not.toHaveBeenCalled();
+    });
+
+    it('rejects duplicate size labels within the same color with a BadRequestException', async () => {
+      mockExistingColors = [];
+
+      await expect(
+        service.updateProduct('po-1', 'prod-1', {
+          colors: [
+            {
+              colorName: 'Đen',
+              sizes: [
+                { sizeLabel: 'S', quantity: 1 },
+                { sizeLabel: 'S', quantity: 2 },
+              ],
+            },
+          ],
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('rejects a color name that is only whitespace, even though it is a non-empty string', async () => {
+      mockExistingColors = [];
+
+      await expect(
+        service.updateProduct('po-1', 'prod-1', {
+          colors: [{ colorName: '   ', sizes: [] }],
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('removeProduct blocks deleting a product whose color is still BOM-linked, with a clean error instead of a raw FK crash', async () => {
+      mockProductRepo.findOne.mockResolvedValueOnce({ ...baseProduct });
+      mockExistingColors = [
+        {
+          id: 'color-linked',
+          productId: 'prod-1',
+          colorName: 'Xanh',
+          orderIndex: 0,
+        },
+      ];
+      mockLinkedBoms = [
+        { id: 'bom-1', bomCode: 'BOM-001', productColorId: 'color-linked' },
+      ];
+
+      await expect(service.removeProduct('po-1', 'prod-1')).rejects.toThrow(
+        ConflictException,
+      );
     });
   });
 

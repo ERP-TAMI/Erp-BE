@@ -55,6 +55,8 @@ export class ProductColorItemDto {
   })
   @IsOptional()
   @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ProductColorSizeItemDto)
   sizes?: ProductColorSizeItemDto[];
 }
 
@@ -192,6 +194,8 @@ export class CreatePoProductDto {
   })
   @IsOptional()
   @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ProductColorItemDto)
   colors?: ProductColorItemDto[];
 }
 
@@ -311,6 +315,8 @@ export class UpdatePoProductDto {
   })
   @IsOptional()
   @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ProductColorItemDto)
   colors?: ProductColorItemDto[];
 }
 

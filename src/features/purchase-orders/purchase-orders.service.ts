@@ -50,6 +50,7 @@ import {
 import { Document } from '../documents/entities/Document.entity';
 import { DocumentVersion } from '../documents/entities/DocumentVersion.entity';
 import { Customer } from '../master-data/entities/Customer.entity';
+import { Bom } from '../boms/entities/Bom.entity';
 import {
   DocumentPurpose,
   PoStatus,
@@ -68,6 +69,7 @@ import {
   LinkPoDocumentDto,
   CreatePoProductDto,
   UpdatePoProductDto,
+  ProductColorItemDto,
   SaveProductOperationStepsDto,
   CreateProductSampleRoundDto,
   PresignPoDocumentDto,
@@ -880,6 +882,98 @@ export class PurchaseOrdersService {
       throw new BadRequestException(
         'Tệp này đã được đăng ký trong hệ thống, không thể đính kèm lại.',
       );
+    }
+    throw error;
+  }
+
+  /**
+   * Chặn tên màu trống/trùng và tên size trống/trùng trong cùng 1 màu. DTO
+   * (@IsNotEmpty) chỉ chặn chuỗi rỗng tuyệt đối, không chặn được chuỗi toàn
+   * khoảng trắng lẫn trùng lặp giữa các dòng — cả hai đều phải kiểm ở đây.
+   */
+  private validateColorsBusinessRules(colors: ProductColorItemDto[]): void {
+    const seenColorNames = new Set<string>();
+    for (const c of colors) {
+      const name = c.colorName.trim();
+      if (!name) {
+        throw new BadRequestException(
+          'Tên màu không được để trống hoặc chỉ chứa khoảng trắng.',
+        );
+      }
+      if (seenColorNames.has(name)) {
+        throw new BadRequestException(
+          `Màu "${name}" bị lặp lại — mỗi màu chỉ được khai báo một lần.`,
+        );
+      }
+      seenColorNames.add(name);
+
+      const seenSizeLabels = new Set<string>();
+      for (const s of c.sizes || []) {
+        const label = s.sizeLabel.trim();
+        if (!label) {
+          throw new BadRequestException(
+            `Tên size trong màu "${name}" không được để trống.`,
+          );
+        }
+        if (seenSizeLabels.has(label)) {
+          throw new BadRequestException(
+            `Size "${label}" bị lặp lại trong màu "${name}".`,
+          );
+        }
+        seenSizeLabels.add(label);
+      }
+    }
+  }
+
+  /**
+   * `boms.product_color_id` REFERENCES purchase_order_product_colors(id) ON
+   * DELETE RESTRICT — xóa một màu đang có BOM tham chiếu sẽ khiến Postgres
+   * ném lỗi ràng buộc thô ra ngoài thành 500. Kiểm tra trước và báo lỗi rõ
+   * ràng, để người dùng biết phải gỡ BOM trước thay vì thấy "Internal Server
+   * Error" khó hiểu.
+   */
+  private async assertColorsNotLinkedToBom(
+    manager: EntityManager,
+    colorIds: string[],
+  ): Promise<void> {
+    if (colorIds.length === 0) return;
+    const linkedBoms = await manager.find(Bom, {
+      where: { productColorId: In(colorIds) },
+    });
+    if (linkedBoms.length > 0) {
+      const codes = linkedBoms.map((b) => b.bomCode).join(', ');
+      throw new ConflictException(
+        `Không thể xóa màu vì đã có định mức nguyên phụ liệu (BOM) liên kết: ${codes}. Vui lòng gỡ hoặc ngưng sử dụng BOM đó trước khi xóa màu này.`,
+      );
+    }
+  }
+
+  /**
+   * Đổi lỗi trùng/âm ở tầng DB (unique_violation, check_violation) thành lỗi
+   * đọc được — lưới an toàn cho trường hợp hiếm khi 2 request race qua được
+   * validate ở tầng service nhưng đụng độ ngay tại DB.
+   */
+  private rethrowColorConstraintViolation(error: unknown): never {
+    const code =
+      typeof error === 'object' && error !== null && 'code' in error
+        ? (error as { code?: unknown }).code
+        : undefined;
+    const constraint =
+      typeof error === 'object' && error !== null && 'constraint' in error
+        ? (error as { constraint?: unknown }).constraint
+        : undefined;
+
+    if (code === '23505') {
+      if (constraint === 'uq_product_color') {
+        throw new ConflictException('Màu này đã tồn tại trong sản phẩm.');
+      }
+      if (constraint === 'uq_product_color_size') {
+        throw new ConflictException('Size này đã tồn tại trong màu.');
+      }
+      throw new ConflictException('Dữ liệu màu/size bị trùng lặp.');
+    }
+    if (code === '23514') {
+      throw new BadRequestException('Số lượng (pcs) không được là số âm.');
     }
     throw error;
   }
@@ -2485,42 +2579,37 @@ export class PurchaseOrdersService {
 
       // 2.6. Lưu màu sắc và bảng phân bổ size breakdown (nếu có)
       if (dto.colors && Array.isArray(dto.colors) && dto.colors.length > 0) {
-        for (let cIdx = 0; cIdx < dto.colors.length; cIdx++) {
-          const cDto = dto.colors[cIdx];
-          const colorName = (cDto.colorName || '').trim();
-          if (!colorName) continue;
+        this.validateColorsBusinessRules(dto.colors);
 
-          const colorEntity = manager.create(PurchaseOrderProductColor, {
-            productId: savedProduct.id,
-            colorName,
-            colorCode: cDto.colorCode || undefined,
-            orderIndex: cIdx,
-          });
-          const savedColor = await manager.save(
-            PurchaseOrderProductColor,
-            colorEntity,
-          );
+        try {
+          for (let cIdx = 0; cIdx < dto.colors.length; cIdx++) {
+            const cDto = dto.colors[cIdx];
+            const colorEntity = manager.create(PurchaseOrderProductColor, {
+              productId: savedProduct.id,
+              colorName: cDto.colorName.trim(),
+              colorCode: cDto.colorCode || undefined,
+              orderIndex: cIdx,
+            });
+            const savedColor = await manager.save(
+              PurchaseOrderProductColor,
+              colorEntity,
+            );
 
-          if (
-            cDto.sizes &&
-            Array.isArray(cDto.sizes) &&
-            cDto.sizes.length > 0
-          ) {
-            const sizeEntities = cDto.sizes
-              .map((sDto, sIdx) =>
+            const sizesDto = cDto.sizes || [];
+            if (sizesDto.length > 0) {
+              const sizeEntities = sizesDto.map((sDto, sIdx) =>
                 manager.create(PurchaseOrderProductColorSize, {
                   productColorId: savedColor.id,
-                  sizeLabel: (sDto.sizeLabel || '').trim(),
-                  quantity: Number(sDto.quantity) || 0,
+                  sizeLabel: sDto.sizeLabel.trim(),
+                  quantity: sDto.quantity,
                   orderIndex: sIdx,
                 }),
-              )
-              .filter((s) => !!s.sizeLabel);
-
-            if (sizeEntities.length > 0) {
+              );
               await manager.save(PurchaseOrderProductColorSize, sizeEntities);
             }
           }
+        } catch (error) {
+          this.rethrowColorConstraintViolation(error);
         }
       }
 
@@ -2595,61 +2684,88 @@ export class PurchaseOrdersService {
 
     const saved = await this.productRepo.save(product);
 
-    // Cập nhật lại màu sắc và bảng phân bổ size nếu được truyền lên
+    // Cập nhật lại màu sắc và bảng phân bổ size nếu được truyền lên.
+    //
+    // QUAN TRỌNG: đây là upsert-theo-id, không phải xóa hết rồi tạo lại —
+    // `boms.product_color_id` REFERENCES purchase_order_product_colors(id),
+    // và bảng nguyên phụ liệu (BOM) dùng đúng id này để tham chiếu tới một
+    // màu cụ thể. Xóa-rồi-tạo-lại sẽ đổi id của MỌI màu mỗi lần lưu, làm vỡ
+    // liên kết đó — màu vẫn còn trong dto (dù đổi tên) phải giữ nguyên id cũ
+    // bằng cách UPDATE tại chỗ; chỉ những màu bị người dùng xóa hẳn mới bị
+    // xóa thật (và phải kiểm tra BOM trước khi xóa).
     if (dto.colors !== undefined) {
+      const incomingColors = Array.isArray(dto.colors) ? dto.colors : [];
+      this.validateColorsBusinessRules(incomingColors);
+
       await this.dataSource.transaction(async (manager) => {
-        const existingColors = await manager.find(PurchaseOrderProductColor, {
-          where: { productId },
-        });
-        const existingColorIds = existingColors.map((c) => c.id);
-
-        if (existingColorIds.length > 0) {
-          await manager.delete(PurchaseOrderProductColorSize, {
-            productColorId: In(existingColorIds),
+        try {
+          const existingColors = await manager.find(PurchaseOrderProductColor, {
+            where: { productId },
           });
-          await manager.delete(PurchaseOrderProductColor, {
-            productId,
-          });
-        }
+          const existingById = new Map(existingColors.map((c) => [c.id, c]));
+          const keptIds = new Set<string>();
 
-        if (Array.isArray(dto.colors) && dto.colors.length > 0) {
-          for (let cIdx = 0; cIdx < dto.colors.length; cIdx++) {
-            const cDto = dto.colors[cIdx];
-            const colorName = (cDto.colorName || '').trim();
-            if (!colorName) continue;
+          for (let cIdx = 0; cIdx < incomingColors.length; cIdx++) {
+            const cDto = incomingColors[cIdx];
+            const colorName = cDto.colorName.trim();
+            const existing = cDto.id ? existingById.get(cDto.id) : undefined;
 
-            const newColor = manager.create(PurchaseOrderProductColor, {
-              productId,
-              colorName,
-              colorCode: cDto.colorCode || undefined,
-              orderIndex: cIdx,
+            let savedColor: PurchaseOrderProductColor;
+            if (existing) {
+              existing.colorName = colorName;
+              existing.colorCode = cDto.colorCode || (null as any);
+              existing.orderIndex = cIdx;
+              savedColor = await manager.save(
+                PurchaseOrderProductColor,
+                existing,
+              );
+            } else {
+              const newColor = manager.create(PurchaseOrderProductColor, {
+                productId,
+                colorName,
+                colorCode: cDto.colorCode || undefined,
+                orderIndex: cIdx,
+              });
+              savedColor = await manager.save(
+                PurchaseOrderProductColor,
+                newColor,
+              );
+            }
+            keptIds.add(savedColor.id);
+
+            // Chưa có bảng nào tham chiếu id của từng size — thay hết cho
+            // gọn là an toàn, chỉ id của MÀU mới cần giữ ổn định.
+            await manager.delete(PurchaseOrderProductColorSize, {
+              productColorId: savedColor.id,
             });
-            const savedColor = await manager.save(
-              PurchaseOrderProductColor,
-              newColor,
-            );
-
-            if (
-              cDto.sizes &&
-              Array.isArray(cDto.sizes) &&
-              cDto.sizes.length > 0
-            ) {
-              const sizeEntities = cDto.sizes
-                .map((sDto, sIdx) =>
-                  manager.create(PurchaseOrderProductColorSize, {
-                    productColorId: savedColor.id,
-                    sizeLabel: (sDto.sizeLabel || '').trim(),
-                    quantity: Number(sDto.quantity) || 0,
-                    orderIndex: sIdx,
-                  }),
-                )
-                .filter((s) => !!s.sizeLabel);
-
-              if (sizeEntities.length > 0) {
-                await manager.save(PurchaseOrderProductColorSize, sizeEntities);
-              }
+            const sizesDto = cDto.sizes || [];
+            if (sizesDto.length > 0) {
+              const sizeEntities = sizesDto.map((sDto, sIdx) =>
+                manager.create(PurchaseOrderProductColorSize, {
+                  productColorId: savedColor.id,
+                  sizeLabel: sDto.sizeLabel.trim(),
+                  quantity: sDto.quantity,
+                  orderIndex: sIdx,
+                }),
+              );
+              await manager.save(PurchaseOrderProductColorSize, sizeEntities);
             }
           }
+
+          const removedIds = existingColors
+            .map((c) => c.id)
+            .filter((id) => !keptIds.has(id));
+          if (removedIds.length > 0) {
+            await this.assertColorsNotLinkedToBom(manager, removedIds);
+            await manager.delete(PurchaseOrderProductColorSize, {
+              productColorId: In(removedIds),
+            });
+            await manager.delete(PurchaseOrderProductColor, {
+              id: In(removedIds),
+            });
+          }
+        } catch (error) {
+          this.rethrowColorConstraintViolation(error);
         }
       });
     }
@@ -2714,12 +2830,15 @@ export class PurchaseOrdersService {
     // 5. Xóa lịch sử trạng thái
     await manager.delete(PurchaseOrderProductStatusHistory, { productId });
 
-    // 5.5. Xóa màu sắc & sizes của Product
+    // 5.5. Xóa màu sắc & sizes của Product — phải chắc chắn không còn BOM
+    // nào tham chiếu tới các màu này trước, nếu không FK ON DELETE RESTRICT
+    // của boms.product_color_id sẽ ném lỗi thô ra thành 500.
     const colorsToDelete = await manager.find(PurchaseOrderProductColor, {
       where: { productId },
     });
     const colorIdsToDelete = colorsToDelete.map((c) => c.id);
     if (colorIdsToDelete.length > 0) {
+      await this.assertColorsNotLinkedToBom(manager, colorIdsToDelete);
       await manager.delete(PurchaseOrderProductColorSize, {
         productColorId: In(colorIdsToDelete),
       });
