@@ -125,6 +125,31 @@ describe('PurchaseOrdersService', () => {
     createQueryBuilder: jest.fn(),
   };
 
+  // Fixtures cho nhánh clone "Tài liệu đính kèm" khi addProduct import từ Style.
+  // Rỗng theo mặc định (test hiện có không set) nên các test khác không bị ảnh hưởng.
+  let mockStyleDocuments: Array<{ documentId: string; purpose: string }> = [];
+  let mockSourceDocumentsById: Record<
+    string,
+    {
+      id: string;
+      documentCode: string;
+      title: string;
+      currentVersionId: string;
+    }
+  > = {};
+  let mockSourceVersionsById: Record<
+    string,
+    {
+      id: string;
+      originalFileName: string;
+      storageKey: string;
+      mimeType: string;
+      byteSize: number;
+      sha256: string | null;
+      status: string;
+    }
+  > = {};
+
   let storageMock: jest.Mocked<StorageService>;
   let txDocRepoMock: { create: jest.Mock; save: jest.Mock };
   let txVersionRepoMock: { create: jest.Mock; save: jest.Mock };
@@ -148,13 +173,32 @@ describe('PurchaseOrdersService', () => {
               styleName: 'Áo T-Shirt',
             });
           }
+          if (entity === Document) {
+            return Promise.resolve(
+              mockSourceDocumentsById[options?.where?.id] || null,
+            );
+          }
+          if (entity === DocumentVersion) {
+            return Promise.resolve(
+              mockSourceVersionsById[options?.where?.id] || null,
+            );
+          }
           return Promise.resolve(null);
         }),
-        find: jest.fn().mockResolvedValue([]),
+        find: jest.fn().mockImplementation((entity: any) => {
+          if (entity === StyleDocument) {
+            return Promise.resolve(mockStyleDocuments);
+          }
+          return Promise.resolve([]);
+        }),
         create: jest.fn().mockImplementation((entity: any, dto: any) => {
           if (entity === PurchaseOrderProduct) {
             return mockProductRepo.create(dto);
           }
+          if (entity === Document) return txDocRepoMock.create(dto);
+          if (entity === DocumentVersion) return txVersionRepoMock.create(dto);
+          if (entity === PurchaseOrderProductDocument)
+            return txProductDocRepoMock.create(dto);
           return dto;
         }),
         save: jest
@@ -163,7 +207,13 @@ describe('PurchaseOrdersService', () => {
             const target = maybeEntity || entityOrTarget;
             if (entityOrTarget === PurchaseOrderProduct || !maybeEntity) {
               mockProductRepo.save(target);
+              return Promise.resolve(target);
             }
+            if (entityOrTarget === Document) return txDocRepoMock.save(target);
+            if (entityOrTarget === DocumentVersion)
+              return txVersionRepoMock.save(target);
+            if (entityOrTarget === PurchaseOrderProductDocument)
+              return txProductDocRepoMock.save(target);
             return Promise.resolve(target);
           }),
         delete: jest.fn().mockResolvedValue({ affected: 1 }),
@@ -187,6 +237,10 @@ describe('PurchaseOrdersService', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
+
+    mockStyleDocuments = [];
+    mockSourceDocumentsById = {};
+    mockSourceVersionsById = {};
 
     // findOne chỉ trả thông tin chung kèm hai số đếm, nên mọi test đi qua nó
     // đều cần count có giá trị mặc định.
@@ -693,6 +747,147 @@ describe('PurchaseOrdersService', () => {
         }),
       );
       expect(result.productCode).toBe('STYLE-002');
+    });
+
+    it('stamps importedAt/importedBy on the product when created from a source style', async () => {
+      mockPoRepo.findOne.mockResolvedValueOnce({
+        id: 'po-1',
+        status: PoStatus.DRAFT,
+      });
+      mockProductRepo.findOne.mockResolvedValueOnce(null);
+      mockProductRepo.create.mockImplementation((v: any) => v);
+      mockProductRepo.save.mockImplementation((v: any) =>
+        Promise.resolve({ id: 'prod-3', ...v }),
+      );
+
+      await service.addProduct(
+        'po-1',
+        {
+          productCode: 'PROD-003',
+          productName: 'Áo Polo',
+          sourceStyleId: 'd9b2d63d-a233-4f9e-a89e-2938804918e7',
+        },
+        'user-42',
+      );
+
+      expect(mockProductRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          importedBy: 'user-42',
+          importedAt: expect.any(Date),
+        }),
+      );
+    });
+
+    it('clones a Style document into its own Document/DocumentVersion instead of linking the same documentId — editing the product copy must not touch the Style original', async () => {
+      mockPoRepo.findOne.mockResolvedValueOnce({
+        id: 'po-1',
+        status: PoStatus.DRAFT,
+      });
+      mockProductRepo.findOne.mockResolvedValueOnce(null);
+      mockProductRepo.create.mockImplementation((v: any) => v);
+      mockProductRepo.save.mockImplementation((v: any) =>
+        Promise.resolve({ id: 'prod-4', ...v }),
+      );
+
+      mockStyleDocuments = [
+        { documentId: 'style-doc-1', purpose: DocumentPurpose.FIT_ATTACHMENT },
+      ];
+      mockSourceDocumentsById['style-doc-1'] = {
+        id: 'style-doc-1',
+        documentCode: 'DOC-001',
+        title: 'Tech pack',
+        currentVersionId: 'style-version-1',
+      };
+      mockSourceVersionsById['style-version-1'] = {
+        id: 'style-version-1',
+        originalFileName: 'techpack.pdf',
+        storageKey: 'styles/style-1/documents/techpack.pdf',
+        mimeType: 'application/pdf',
+        byteSize: 2048,
+        sha256: null,
+        status: 'ready',
+      };
+
+      await service.addProduct(
+        'po-1',
+        {
+          productCode: 'PROD-004',
+          productName: 'Áo Polo',
+          sourceStyleId: 'd9b2d63d-a233-4f9e-a89e-2938804918e7',
+        },
+        'user-1',
+      );
+
+      // Một Document/DocumentVersion MỚI phải được tạo — không phải link
+      // thẳng documentId 'style-doc-1' của Style.
+      expect(txDocRepoMock.save).toHaveBeenCalledWith(
+        expect.not.objectContaining({ id: 'style-doc-1' }),
+      );
+      expect(txVersionRepoMock.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          storageKey: 'styles/style-1/documents/techpack.pdf',
+          versionNo: 1,
+        }),
+      );
+      expect(txVersionRepoMock.save).toHaveBeenCalledWith(
+        expect.not.objectContaining({ id: 'style-version-1' }),
+      );
+
+      // Link tới sản phẩm phải trỏ vào Document MỚI (doc-1, do txDocRepoMock
+      // trả về), có traceability về documentId gốc của Style qua
+      // sourceStyleDocumentId, không phải sourcePoDocument.
+      expect(txProductDocRepoMock.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          documentId: 'doc-1',
+          sourceStyleDocumentId: 'style-doc-1',
+          sourcePoDocument: false,
+        }),
+      );
+    });
+
+    it('skips document cloning entirely when copyDocuments is explicitly false', async () => {
+      mockPoRepo.findOne.mockResolvedValueOnce({
+        id: 'po-1',
+        status: PoStatus.DRAFT,
+      });
+      mockProductRepo.findOne.mockResolvedValueOnce(null);
+      mockProductRepo.create.mockImplementation((v: any) => v);
+      mockProductRepo.save.mockImplementation((v: any) =>
+        Promise.resolve({ id: 'prod-5', ...v }),
+      );
+
+      mockStyleDocuments = [
+        { documentId: 'style-doc-1', purpose: DocumentPurpose.FIT_ATTACHMENT },
+      ];
+      mockSourceDocumentsById['style-doc-1'] = {
+        id: 'style-doc-1',
+        documentCode: 'DOC-001',
+        title: 'Tech pack',
+        currentVersionId: 'style-version-1',
+      };
+      mockSourceVersionsById['style-version-1'] = {
+        id: 'style-version-1',
+        originalFileName: 'techpack.pdf',
+        storageKey: 'styles/style-1/documents/techpack.pdf',
+        mimeType: 'application/pdf',
+        byteSize: 2048,
+        sha256: null,
+        status: 'ready',
+      };
+
+      await service.addProduct(
+        'po-1',
+        {
+          productCode: 'PROD-005',
+          productName: 'Áo Polo',
+          sourceStyleId: 'd9b2d63d-a233-4f9e-a89e-2938804918e7',
+          importOptions: { copyDocuments: false },
+        },
+        'user-1',
+      );
+
+      expect(txDocRepoMock.save).not.toHaveBeenCalled();
+      expect(txProductDocRepoMock.save).not.toHaveBeenCalled();
     });
 
     it('should block adding product if PO is CLOSED', async () => {

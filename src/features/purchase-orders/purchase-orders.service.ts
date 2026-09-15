@@ -1888,6 +1888,7 @@ export class PurchaseOrdersService {
           closedAt: prod.closedAt,
           as3bCmBaseDays: prod.as3bCmBaseDays,
           importedAt: prod.importedAt,
+          importedBy: prod.importedBy,
           createdAt: prod.createdAt,
           updatedAt: prod.updatedAt,
           totalQuantity,
@@ -2101,6 +2102,7 @@ export class PurchaseOrdersService {
       closedAt: product.closedAt,
       as3bCmBaseDays: product.as3bCmBaseDays,
       importedAt: product.importedAt,
+      importedBy: product.importedBy,
       createdAt: product.createdAt,
       updatedAt: product.updatedAt,
       totalQuantity,
@@ -2373,6 +2375,13 @@ export class PurchaseOrdersService {
         }
 
         // 2.4. Clone Tài liệu đính kèm (StyleDocument -> PurchaseOrderProductDocument)
+        //
+        // Mỗi tài liệu được nhân bản thành một `Document`/`DocumentVersion` mới
+        // (trỏ tới cùng file trên S3 qua storageKey), KHÔNG link thẳng vào
+        // documentId của Style. Nếu link thẳng, một lần tải phiên bản mới ở
+        // phía Product (confirmProductDocumentVersion) sẽ ghi đè
+        // `currentVersionId` của Document gốc và làm lộ thay đổi ngược lại cho
+        // Style nguồn — vi phạm yêu cầu "sửa Product không đổi Style nguồn".
         if (opts.copyDocuments !== false) {
           const styleDocs = await manager.find(StyleDocument, {
             where: { styleId: sourceStyleId },
@@ -2383,18 +2392,60 @@ export class PurchaseOrdersService {
               )
             : styleDocs;
 
-          if (docsToCopy.length > 0) {
-            const productDocs = docsToCopy.map((doc) =>
+          for (const styleDoc of docsToCopy) {
+            const sourceDoc = await manager.findOne(Document, {
+              where: { id: styleDoc.documentId },
+            });
+            if (!sourceDoc) continue;
+
+            const sourceVersion = sourceDoc.currentVersionId
+              ? await manager.findOne(DocumentVersion, {
+                  where: { id: sourceDoc.currentVersionId },
+                })
+              : null;
+            if (!sourceVersion) continue;
+
+            const clonedDoc = await manager.save(
+              Document,
+              manager.create(Document, {
+                documentCode: sourceDoc.documentCode,
+                title: sourceDoc.title,
+                createdBy: userId,
+                createdAt: new Date(),
+              }),
+            );
+
+            const clonedVersion = await manager.save(
+              DocumentVersion,
+              manager.create(DocumentVersion, {
+                documentId: clonedDoc.id,
+                versionNo: 1,
+                originalFileName: sourceVersion.originalFileName,
+                storageKey: sourceVersion.storageKey,
+                mimeType: sourceVersion.mimeType,
+                byteSize: sourceVersion.byteSize,
+                sha256: sourceVersion.sha256,
+                status: sourceVersion.status,
+                uploadedBy: userId,
+                uploadedAt: new Date(),
+              }),
+            );
+
+            clonedDoc.currentVersionId = clonedVersion.id;
+            await manager.save(Document, clonedDoc);
+
+            await manager.save(
+              PurchaseOrderProductDocument,
               manager.create(PurchaseOrderProductDocument, {
                 productId: savedProduct.id,
-                documentId: doc.documentId,
+                documentId: clonedDoc.id,
+                sourceStyleDocumentId: styleDoc.documentId,
                 sourcePoDocument: false,
-                purpose: doc.purpose,
+                purpose: styleDoc.purpose,
                 linkedBy: userId,
                 linkedAt: new Date(),
               }),
             );
-            await manager.save(PurchaseOrderProductDocument, productDocs);
           }
         }
       }

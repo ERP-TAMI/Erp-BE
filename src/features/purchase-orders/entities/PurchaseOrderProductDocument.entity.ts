@@ -9,6 +9,13 @@ export class PurchaseOrderProductDocument {
   @PrimaryColumn({ type: 'uuid', name: 'document_id' })
   documentId: string;
 
+  @Column({
+    type: 'uuid',
+    nullable: true,
+    name: 'source_style_document_id',
+  })
+  sourceStyleDocumentId: string | null;
+
   @Column({ type: 'boolean', default: false, name: 'source_po_document' })
   sourcePoDocument: boolean;
 
