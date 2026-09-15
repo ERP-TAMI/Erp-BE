@@ -4,6 +4,7 @@ import {
   IsOptional,
   IsUUID,
   IsDateString,
+  IsEnum,
   MaxLength,
   IsInt,
   Min,
@@ -12,6 +13,7 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { SampleStatus } from '../../../common/enums/database.enums';
 
 export class ProductColorSizeItemDto {
   @ApiProperty({ description: 'Tên size (S, M, L, XL...)', example: 'M' })
@@ -403,8 +405,8 @@ export class CreateProductSampleRoundDto {
   feedback?: string;
 
   @IsOptional()
-  @IsString()
-  status?: string;
+  @IsEnum(SampleStatus, { message: 'status không hợp lệ' })
+  status?: SampleStatus;
 
   @ApiPropertyOptional({
     description: 'Danh sách ảnh mẫu đính kèm theo thứ tự',
@@ -427,8 +429,8 @@ export class UpdateProductSampleRoundDto {
   feedback?: string;
 
   @IsOptional()
-  @IsString()
-  status?: string;
+  @IsEnum(SampleStatus, { message: 'status không hợp lệ' })
+  status?: SampleStatus;
 }
 
 export class LinkProductDocumentDto {

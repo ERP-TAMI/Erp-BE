@@ -2269,7 +2269,7 @@ export class PurchaseOrdersService {
               sourceStyleSampleRoundId: round.id,
               roundNo: round.roundNo,
               sampleDate: round.sampleDate || new Date(),
-              feedback: round.feedback,
+              feedback: round.feedback ?? undefined,
               status: round.status,
               createdBy: userId,
               createdAt: new Date(),

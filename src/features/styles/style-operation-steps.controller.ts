@@ -13,7 +13,13 @@ import {
   Res,
 } from '@nestjs/common';
 import { Response } from 'express';
-import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiBearerAuth,
+} from '@nestjs/swagger';
+import { Auth } from '../../common/decorators/auth.decorator';
 import { StyleOperationStepsService } from './style-operation-steps.service';
 import { StyleOperationStepsExportService } from './style-operation-steps-export.service';
 import { StylesService } from './styles.service';
@@ -26,6 +32,8 @@ import {
 import { StyleOperationStep } from './entities/StyleOperationStep.entity';
 
 @ApiTags('styles')
+@ApiBearerAuth()
+@Auth()
 @Controller([
   'styles/:styleId/operation-steps',
   'styles/:styleId/as3b',
