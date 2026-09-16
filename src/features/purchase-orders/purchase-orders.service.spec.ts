@@ -31,7 +31,6 @@ import { ProductionDocumentImage } from '../production/entities/ProductionDocume
 import { Document } from '../documents/entities/Document.entity';
 import { DocumentVersion } from '../documents/entities/DocumentVersion.entity';
 import { Customer } from '../master-data/entities/Customer.entity';
-import { Bom } from '../boms/entities/Bom.entity';
 import {
   PoStatus,
   ProductStatus,
@@ -151,18 +150,13 @@ describe('PurchaseOrdersService', () => {
     }
   > = {};
 
-  // Fixtures cho nhánh upsert-theo-id / chặn xóa màu còn BOM tham chiếu.
+  // Fixtures cho nhánh upsert-theo-id khi sửa màu.
   let mockExistingColors: Array<{
     id: string;
     productId: string;
     colorName: string;
     colorCode?: string;
     orderIndex: number;
-  }> = [];
-  let mockLinkedBoms: Array<{
-    id: string;
-    bomCode: string;
-    productColorId: string;
   }> = [];
 
   let storageMock: jest.Mocked<StorageService>;
@@ -208,9 +202,6 @@ describe('PurchaseOrdersService', () => {
           }
           if (entity === PurchaseOrderProductColor) {
             return Promise.resolve(mockExistingColors);
-          }
-          if (entity === Bom) {
-            return Promise.resolve(mockLinkedBoms);
           }
           return Promise.resolve([]);
         }),
@@ -275,7 +266,6 @@ describe('PurchaseOrdersService', () => {
     mockSourceDocumentsById = {};
     mockSourceVersionsById = {};
     mockExistingColors = [];
-    mockLinkedBoms = [];
 
     txColorRepoMock = {
       find: jest
@@ -1047,7 +1037,7 @@ describe('PurchaseOrdersService', () => {
       );
     });
 
-    it('deletes a color that was removed from the submitted list, when nothing in BOM references it', async () => {
+    it('deletes a color that was removed from the submitted list', async () => {
       mockExistingColors = [
         {
           id: 'color-to-remove',
@@ -1056,33 +1046,12 @@ describe('PurchaseOrdersService', () => {
           orderIndex: 0,
         },
       ];
-      mockLinkedBoms = [];
 
       await service.updateProduct('po-1', 'prod-1', { colors: [] });
 
       expect(txColorRepoMock.delete).toHaveBeenCalledWith({
         id: In(['color-to-remove']),
       });
-    });
-
-    it('blocks deleting a color that a BOM still references, with a clean ConflictException instead of a raw FK error', async () => {
-      mockExistingColors = [
-        {
-          id: 'color-linked',
-          productId: 'prod-1',
-          colorName: 'Xanh',
-          orderIndex: 0,
-        },
-      ];
-      mockLinkedBoms = [
-        { id: 'bom-1', bomCode: 'BOM-001', productColorId: 'color-linked' },
-      ];
-
-      await expect(
-        service.updateProduct('po-1', 'prod-1', { colors: [] }),
-      ).rejects.toThrow(ConflictException);
-
-      expect(txColorRepoMock.delete).not.toHaveBeenCalled();
     });
 
     it('rejects duplicate color names in the same submission with a BadRequestException, not a raw DB unique-violation', async () => {
@@ -1126,25 +1095,6 @@ describe('PurchaseOrdersService', () => {
           colors: [{ colorName: '   ', sizes: [] }],
         }),
       ).rejects.toThrow(BadRequestException);
-    });
-
-    it('removeProduct blocks deleting a product whose color is still BOM-linked, with a clean error instead of a raw FK crash', async () => {
-      mockProductRepo.findOne.mockResolvedValueOnce({ ...baseProduct });
-      mockExistingColors = [
-        {
-          id: 'color-linked',
-          productId: 'prod-1',
-          colorName: 'Xanh',
-          orderIndex: 0,
-        },
-      ];
-      mockLinkedBoms = [
-        { id: 'bom-1', bomCode: 'BOM-001', productColorId: 'color-linked' },
-      ];
-
-      await expect(service.removeProduct('po-1', 'prod-1')).rejects.toThrow(
-        ConflictException,
-      );
     });
   });
 

@@ -50,7 +50,6 @@ import {
 import { Document } from '../documents/entities/Document.entity';
 import { DocumentVersion } from '../documents/entities/DocumentVersion.entity';
 import { Customer } from '../master-data/entities/Customer.entity';
-import { Bom } from '../boms/entities/Bom.entity';
 import {
   DocumentPurpose,
   PoStatus,
@@ -922,29 +921,6 @@ export class PurchaseOrdersService {
         }
         seenSizeLabels.add(label);
       }
-    }
-  }
-
-  /**
-   * `boms.product_color_id` REFERENCES purchase_order_product_colors(id) ON
-   * DELETE RESTRICT — xóa một màu đang có BOM tham chiếu sẽ khiến Postgres
-   * ném lỗi ràng buộc thô ra ngoài thành 500. Kiểm tra trước và báo lỗi rõ
-   * ràng, để người dùng biết phải gỡ BOM trước thay vì thấy "Internal Server
-   * Error" khó hiểu.
-   */
-  private async assertColorsNotLinkedToBom(
-    manager: EntityManager,
-    colorIds: string[],
-  ): Promise<void> {
-    if (colorIds.length === 0) return;
-    const linkedBoms = await manager.find(Bom, {
-      where: { productColorId: In(colorIds) },
-    });
-    if (linkedBoms.length > 0) {
-      const codes = linkedBoms.map((b) => b.bomCode).join(', ');
-      throw new ConflictException(
-        `Không thể xóa màu vì đã có định mức nguyên phụ liệu (BOM) liên kết: ${codes}. Vui lòng gỡ hoặc ngưng sử dụng BOM đó trước khi xóa màu này.`,
-      );
     }
   }
 
@@ -2687,12 +2663,9 @@ export class PurchaseOrdersService {
     // Cập nhật lại màu sắc và bảng phân bổ size nếu được truyền lên.
     //
     // QUAN TRỌNG: đây là upsert-theo-id, không phải xóa hết rồi tạo lại —
-    // `boms.product_color_id` REFERENCES purchase_order_product_colors(id),
-    // và bảng nguyên phụ liệu (BOM) dùng đúng id này để tham chiếu tới một
-    // màu cụ thể. Xóa-rồi-tạo-lại sẽ đổi id của MỌI màu mỗi lần lưu, làm vỡ
-    // liên kết đó — màu vẫn còn trong dto (dù đổi tên) phải giữ nguyên id cũ
-    // bằng cách UPDATE tại chỗ; chỉ những màu bị người dùng xóa hẳn mới bị
-    // xóa thật (và phải kiểm tra BOM trước khi xóa).
+    // xóa-rồi-tạo-lại sẽ đổi id của MỌI màu mỗi lần lưu. Màu vẫn còn trong
+    // dto (dù đổi tên) phải giữ nguyên id cũ bằng cách UPDATE tại chỗ; chỉ
+    // những màu bị người dùng xóa hẳn mới bị xóa thật.
     if (dto.colors !== undefined) {
       const incomingColors = Array.isArray(dto.colors) ? dto.colors : [];
       this.validateColorsBusinessRules(incomingColors);
@@ -2756,7 +2729,6 @@ export class PurchaseOrdersService {
             .map((c) => c.id)
             .filter((id) => !keptIds.has(id));
           if (removedIds.length > 0) {
-            await this.assertColorsNotLinkedToBom(manager, removedIds);
             await manager.delete(PurchaseOrderProductColorSize, {
               productColorId: In(removedIds),
             });
@@ -2830,15 +2802,12 @@ export class PurchaseOrdersService {
     // 5. Xóa lịch sử trạng thái
     await manager.delete(PurchaseOrderProductStatusHistory, { productId });
 
-    // 5.5. Xóa màu sắc & sizes của Product — phải chắc chắn không còn BOM
-    // nào tham chiếu tới các màu này trước, nếu không FK ON DELETE RESTRICT
-    // của boms.product_color_id sẽ ném lỗi thô ra thành 500.
+    // 5.5. Xóa màu sắc & sizes của Product
     const colorsToDelete = await manager.find(PurchaseOrderProductColor, {
       where: { productId },
     });
     const colorIdsToDelete = colorsToDelete.map((c) => c.id);
     if (colorIdsToDelete.length > 0) {
-      await this.assertColorsNotLinkedToBom(manager, colorIdsToDelete);
       await manager.delete(PurchaseOrderProductColorSize, {
         productColorId: In(colorIdsToDelete),
       });
