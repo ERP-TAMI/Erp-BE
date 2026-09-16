@@ -32,13 +32,17 @@ describe('ChangePoBomOwnerFromColorToProduct migration', () => {
 
       // 3. Backfills purchase_order_product_id
       expect(allSql).toContain('UPDATE boms b');
-      expect(allSql).toContain('SET purchase_order_product_id = popc.product_id');
+      expect(allSql).toContain(
+        'SET purchase_order_product_id = popc.product_id',
+      );
       expect(allSql).toContain('FROM purchase_order_product_colors popc');
 
       // 4. Drops old constraints and column
       expect(allSql).toContain('DROP CONSTRAINT IF EXISTS ck_bom_owner');
       expect(allSql).toContain('DROP INDEX IF EXISTS uq_boms_po_product_color');
-      expect(allSql).toContain('DROP CONSTRAINT IF EXISTS boms_product_color_id_fkey');
+      expect(allSql).toContain(
+        'DROP CONSTRAINT IF EXISTS boms_product_color_id_fkey',
+      );
       expect(allSql).toContain('DROP COLUMN IF EXISTS product_color_id');
 
       // 5. Creates new unique index on purchase_order_product_id
@@ -46,9 +50,9 @@ describe('ChangePoBomOwnerFromColorToProduct migration', () => {
       expect(allSql).toContain('ON boms(purchase_order_product_id)');
 
       // 6. Adds updated ownership check constraint
-      expect(allSql).toContain('bom_type = \'po\'');
+      expect(allSql).toContain("bom_type = 'po'");
       expect(allSql).toContain('purchase_order_product_id IS NOT NULL');
-      expect(allSql).toContain('bom_type = \'fit\'');
+      expect(allSql).toContain("bom_type = 'fit'");
       expect(allSql).toContain('purchase_order_product_id IS NULL');
     });
 
@@ -91,14 +95,23 @@ describe('ChangePoBomOwnerFromColorToProduct migration', () => {
     });
 
     it('FAILS FAST when a PO BOM cannot be mapped to a purchase_order_product', async () => {
-      const invalidPoBoms = [{ id: 'bom-bad-1', bom_code: 'BOM-INVALID', product_color_id: 'color-orphan' }];
+      const invalidPoBoms = [
+        {
+          id: 'bom-bad-1',
+          bom_code: 'BOM-INVALID',
+          product_color_id: 'color-orphan',
+        },
+      ];
 
       const queryRunner = {
         query: jest.fn().mockImplementation(async (sql: string) => {
           if (sql.includes('HAVING COUNT(*) > 1')) {
             return [];
           }
-          if (sql.includes('b.bom_type = \'po\'') && sql.includes('b.purchase_order_product_id IS NULL')) {
+          if (
+            sql.includes("b.bom_type = 'po'") &&
+            sql.includes('b.purchase_order_product_id IS NULL')
+          ) {
             return invalidPoBoms;
           }
           return [];
@@ -117,7 +130,10 @@ describe('ChangePoBomOwnerFromColorToProduct migration', () => {
         query: jest.fn().mockImplementation(async (sql: string) => {
           if (sql.includes('HAVING COUNT(*) > 1')) return [];
           if (sql.includes('b.purchase_order_product_id IS NULL')) return [];
-          if (sql.includes('b.bom_type = \'fit\'') && sql.includes('purchase_order_product_id IS NOT NULL')) {
+          if (
+            sql.includes("b.bom_type = 'fit'") &&
+            sql.includes('purchase_order_product_id IS NOT NULL')
+          ) {
             return invalidFitBoms;
           }
           return [];
@@ -194,7 +210,9 @@ describe('ChangePoBomOwnerFromColorToProduct migration', () => {
       expect(allSql).toContain('ADD CONSTRAINT boms_product_color_id_fkey');
       expect(allSql).toContain('SET product_color_id = popc.id');
       expect(allSql).toContain('DROP INDEX IF EXISTS uq_boms_po_product');
-      expect(allSql).toContain('DROP COLUMN IF EXISTS purchase_order_product_id');
+      expect(allSql).toContain(
+        'DROP COLUMN IF EXISTS purchase_order_product_id',
+      );
       expect(allSql).toContain('CREATE UNIQUE INDEX uq_boms_po_product_color');
       expect(allSql).toContain('product_color_id IS NOT NULL');
     });

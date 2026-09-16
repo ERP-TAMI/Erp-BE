@@ -2,7 +2,10 @@ import { getMetadataArgsStorage } from 'typeorm';
 import { Bom } from '../entities/Bom.entity';
 import { BomRevision } from '../entities/BomRevision.entity';
 import { BomLine } from '../entities/BomLine.entity';
-import { BomType, BomRevisionStatus } from '../../../common/enums/database.enums';
+import {
+  BomType,
+  BomRevisionStatus,
+} from '../../../common/enums/database.enums';
 import { ChangePoBomOwnerFromColorToProduct1740000000026 } from '../../../database/migrations/1740000000026-ChangePoBomOwnerFromColorToProduct';
 
 describe('BOM Ownership and Business Rules (Section 14 Specification)', () => {
@@ -157,7 +160,9 @@ describe('BOM Ownership and Business Rules (Section 14 Specification)', () => {
         q.includes('SET purchase_order_product_id = popc.product_id'),
       );
       expect(backfillQuery).toBeDefined();
-      expect(backfillQuery).toContain('FROM purchase_order_product_colors popc');
+      expect(backfillQuery).toContain(
+        'FROM purchase_order_product_colors popc',
+      );
       expect(backfillQuery).toContain('WHERE b.product_color_id = popc.id');
       expect(backfillQuery).toContain("AND b.bom_type = 'po'");
     });
@@ -256,7 +261,9 @@ describe('BOM Ownership and Business Rules (Section 14 Specification)', () => {
       // Simulating row lock acquisition pattern
       const acquireBomLock = (bom: Bom, activeRevision: BomRevision) => {
         if (activeRevision.status !== BomRevisionStatus.CLOSED) {
-          throw new Error('Cannot create new revision while current revision is not closed');
+          throw new Error(
+            'Cannot create new revision while current revision is not closed',
+          );
         }
         return {
           bomId: bom.id,
@@ -353,8 +360,14 @@ describe('BOM Ownership and Business Rules (Section 14 Specification)', () => {
       const colorAction = { type: 'CANCEL_COLOR', colorId: 'color-red' };
 
       // BOM status must remain unaffected
-      const handleColorStatusChange = (bom: Bom, _action: any) => {
+      const handleColorStatusChange = (
+        bom: Bom,
+        action: { type: string; colorId: string },
+      ) => {
         // Business rule: BOM belongs to Product, not Color. Color cancellation does not discontinue Product BOM.
+        if (action.type === 'CANCEL_COLOR') {
+          return bom;
+        }
         return bom;
       };
 
