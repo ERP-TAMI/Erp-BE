@@ -119,9 +119,14 @@ export class StyleProductionDocsService {
 
     if (!boms.length) return [];
 
-    const bomIds = boms.map((b) => b.id);
+    const revisionIds = boms
+      .map((b) => b.currentRevisionId)
+      .filter((id): id is string => Boolean(id));
+
+    if (!revisionIds.length) return [];
+
     const lines = await this.bomLineRepo.find({
-      where: { billOfMaterialId: In(bomIds) },
+      where: { revisionId: In(revisionIds) },
     });
 
     const codes = new Set<string>();

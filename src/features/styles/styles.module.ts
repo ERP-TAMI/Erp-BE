@@ -10,6 +10,8 @@ import { StyleOperationStepsService } from './style-operation-steps.service';
 import { StyleOperationStepsController } from './style-operation-steps.controller';
 import { StyleDocumentsService } from './style-documents.service';
 import { StyleDocumentsController } from './style-documents.controller';
+import { StyleSampleRoundsService } from './style-sample-rounds.service';
+import { StyleSampleRoundsController } from './style-sample-rounds.controller';
 
 import { StyleOperationStepsExportService } from './style-operation-steps-export.service';
 
@@ -22,12 +24,14 @@ import { StyleOperationStepsExportService } from './style-operation-steps-export
     StylesController,
     StyleOperationStepsController,
     StyleDocumentsController,
+    StyleSampleRoundsController,
   ],
   providers: [
     StylesService,
     StyleOperationStepsService,
     StyleOperationStepsExportService,
     StyleDocumentsService,
+    StyleSampleRoundsService,
   ],
   exports: [
     StylesService,

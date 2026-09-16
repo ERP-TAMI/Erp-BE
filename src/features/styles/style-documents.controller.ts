@@ -11,7 +11,8 @@ import {
   Query,
   Req,
 } from '@nestjs/common';
-import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiOperation, ApiTags, ApiBearerAuth } from '@nestjs/swagger';
+import { Auth } from '../../common/decorators/auth.decorator';
 import {
   StyleDocumentListItem,
   StyleDocumentsService,
@@ -22,6 +23,8 @@ import { PresignStyleDocumentDto } from './dto/presign-style-document.dto';
 import { ConfirmStyleDocumentDto } from './dto/confirm-style-document.dto';
 
 @ApiTags('style-documents')
+@ApiBearerAuth()
+@Auth()
 @Controller('styles/:styleId/documents')
 export class StyleDocumentsController {
   constructor(private readonly service: StyleDocumentsService) {}

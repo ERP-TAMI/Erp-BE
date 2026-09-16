@@ -57,6 +57,20 @@ export enum DocumentPurpose {
   OTHER = 'other',
 }
 
+export enum BomType {
+  FIT = 'fit',
+  PO = 'po',
+}
+
+export enum BomRevisionStatus {
+  WAIT_NVKH = 'wait_nvkh',
+  WAIT_RD = 'wait_rd',
+  WAIT_TPKH_CONFIRM = 'wait_tpkh_confirm',
+  WAIT_ACCOUNTING = 'wait_accounting',
+  WAIT_SA_APPROVE = 'wait_sa_approve',
+  CLOSED = 'closed',
+}
+
 export enum BomStatus {
   DRAFT = 'draft',
   WAIT_RD = 'wait_rd',
