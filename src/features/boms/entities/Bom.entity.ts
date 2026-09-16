@@ -7,9 +7,9 @@ import { BomType } from '../../../common/enums/database.enums';
   unique: true,
   where: "bom_type = 'fit' AND style_id IS NOT NULL",
 })
-@Index('uq_boms_po_product_color', ['productColorId'], {
+@Index('uq_boms_po_product', ['purchaseOrderProductId'], {
   unique: true,
-  where: "bom_type = 'po' AND product_color_id IS NOT NULL",
+  where: "bom_type = 'po' AND purchase_order_product_id IS NOT NULL",
 })
 export class Bom {
   @PrimaryGeneratedColumn('uuid')
@@ -29,8 +29,12 @@ export class Bom {
   @Column({ type: 'uuid', nullable: true, name: 'style_id' })
   styleId: string | null;
 
-  @Column({ type: 'uuid', nullable: true, name: 'product_color_id' })
-  productColorId: string | null;
+  @Column({
+    type: 'uuid',
+    nullable: true,
+    name: 'purchase_order_product_id',
+  })
+  purchaseOrderProductId: string | null;
 
   @Column({ type: 'uuid', nullable: true, name: 'current_revision_id' })
   currentRevisionId: string | null;
