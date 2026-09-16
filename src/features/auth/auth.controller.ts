@@ -13,6 +13,7 @@ import {
 import {
   ApiBearerAuth,
   ApiAcceptedResponse,
+  ApiForbiddenResponse,
   ApiNoContentResponse,
   ApiOkResponse,
   ApiTags,
@@ -48,6 +49,8 @@ import { PasswordResetService } from './password-reset.service';
 import { ProfileService } from './profile.service';
 import { ChangeMyPasswordDto, UpdateMyProfileDto } from './dto/profile.dto';
 import {
+  CHANGE_PASSWORD_RATE_LIMIT,
+  CHANGE_PASSWORD_RATE_LIMIT_TTL_MS,
   FORGOT_PASSWORD_RATE_LIMIT,
   FORGOT_PASSWORD_RATE_LIMIT_TTL_MS,
 } from './auth.constants';
@@ -181,6 +184,9 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOkResponse({ type: AuthUserDto })
+  @ApiForbiddenResponse({
+    description: 'Password setup must be completed first',
+  })
   @ApiUnauthorizedResponse({ description: 'Missing or invalid access token' })
   updateMe(
     @Body() dto: UpdateMyProfileDto,
@@ -191,9 +197,21 @@ export class AuthController {
 
   @Patch('me/password')
   @HttpCode(HttpStatus.NO_CONTENT)
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, ThrottlerGuard)
+  @Throttle({
+    default: {
+      limit: CHANGE_PASSWORD_RATE_LIMIT,
+      ttl: CHANGE_PASSWORD_RATE_LIMIT_TTL_MS,
+    },
+  })
   @ApiBearerAuth()
   @ApiNoContentResponse({ description: 'Password changed successfully' })
+  @ApiForbiddenResponse({
+    description: 'Password setup must be completed first',
+  })
+  @ApiTooManyRequestsResponse({
+    description: 'Too many password-change attempts from this client',
+  })
   @ApiUnauthorizedResponse({ description: 'Missing or invalid access token' })
   changeMyPassword(
     @Body() dto: ChangeMyPasswordDto,

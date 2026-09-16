@@ -3,10 +3,28 @@ import { Transform } from 'class-transformer';
 import {
   IsOptional,
   IsString,
-  Matches,
   MaxLength,
   MinLength,
+  ValidateBy,
 } from 'class-validator';
+
+const isProfilePhone = (value: unknown): boolean => {
+  if (typeof value !== 'string' || !/^\+?[0-9().\s-]+$/.test(value)) {
+    return false;
+  }
+
+  const digits = value.replace(/\D/g, '');
+  return digits.length >= 9 && digits.length <= 15 && !/^(\d)\1+$/.test(digits);
+};
+
+const IsProfilePhone = () =>
+  ValidateBy({
+    name: 'isProfilePhone',
+    validator: {
+      validate: isProfilePhone,
+      defaultMessage: () => 'phone must be a valid phone number',
+    },
+  });
 
 export class UpdateMyProfileDto {
   @ApiProperty({ maxLength: 200 })
@@ -26,7 +44,7 @@ export class UpdateMyProfileDto {
   @IsOptional()
   @IsString()
   @MaxLength(20)
-  @Matches(/^[0-9+().\s-]{6,20}$/)
+  @IsProfilePhone()
   phone?: string | null;
 }
 

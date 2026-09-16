@@ -139,6 +139,48 @@ describe('ProfileService', () => {
     );
   });
 
+  it('explains that password setup is required before profile updates', async () => {
+    const user = buildUser({ mustChangePassword: true });
+    users.findOne.mockResolvedValue(user);
+
+    await expect(
+      service.updateProfile(
+        { fullName: 'Nguyễn Văn B', phone: null },
+        { id: user.id, roleCode: 'NVKH' },
+      ),
+    ).rejects.toMatchObject({
+      status: 403,
+      response: {
+        code: 'PASSWORD_SETUP_REQUIRED',
+        message: 'Bạn cần hoàn tất thiết lập mật khẩu trước.',
+      },
+    });
+
+    expect(users.save).not.toHaveBeenCalled();
+    expect(audit.recordUserChange).not.toHaveBeenCalled();
+  });
+
+  it('explains that password setup is required before password changes', async () => {
+    const user = buildUser({ mustChangePassword: true });
+    users.findOne.mockResolvedValue(user);
+
+    await expect(
+      service.changePassword(
+        { currentPassword: 'current-password', newPassword: 'new-password' },
+        { id: user.id, roleCode: 'NVKH' },
+      ),
+    ).rejects.toMatchObject({
+      status: 403,
+      response: {
+        code: 'PASSWORD_SETUP_REQUIRED',
+        message: 'Bạn cần hoàn tất thiết lập mật khẩu trước.',
+      },
+    });
+
+    expect(passwordUtil.verifyPassword).not.toHaveBeenCalled();
+    expect(users.save).not.toHaveBeenCalled();
+  });
+
   it('rejects an incorrect current password without changing persisted data', async () => {
     const user = buildUser();
     users.findOne.mockResolvedValue(user);

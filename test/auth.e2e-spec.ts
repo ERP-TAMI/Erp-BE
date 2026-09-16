@@ -18,6 +18,7 @@ import { PasswordResetService } from '../src/features/auth/password-reset.servic
 import { ProfileService } from '../src/features/auth/profile.service';
 import { ThrottlerModule } from '@nestjs/throttler';
 import {
+  CHANGE_PASSWORD_RATE_LIMIT,
   FORGOT_PASSWORD_RATE_LIMIT,
   FORGOT_PASSWORD_RATE_LIMIT_TTL_MS,
 } from '../src/features/auth/auth.constants';
@@ -358,6 +359,30 @@ describe('Auth API (e2e)', () => {
       { currentPassword: 'current-password', newPassword: 'new-password' },
       expect.objectContaining({ id: 'user-1' }),
     );
+  });
+
+  it('rate limits authenticated password-change attempts', async () => {
+    profileService.changePassword.mockResolvedValue(undefined);
+
+    for (let attempt = 0; attempt < CHANGE_PASSWORD_RATE_LIMIT; attempt += 1) {
+      await request(app.getHttpServer())
+        .patch('/auth/me/password')
+        .set('Authorization', 'Bearer signed.access.token')
+        .send({
+          currentPassword: `current-password-${attempt}`,
+          newPassword: `new-password-${attempt}`,
+        })
+        .expect(204);
+    }
+
+    await request(app.getHttpServer())
+      .patch('/auth/me/password')
+      .set('Authorization', 'Bearer signed.access.token')
+      .send({
+        currentPassword: 'current-password-over-limit',
+        newPassword: 'new-password-over-limit',
+      })
+      .expect(429);
   });
 
   it('rejects short passwords and unauthenticated profile mutations', async () => {

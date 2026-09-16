@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -136,15 +137,17 @@ export class ProfileService {
     const isLocked =
       !!user?.manuallyLockedAt ||
       (!!user?.lockoutUntil && user.lockoutUntil.getTime() > Date.now());
-    if (
-      !user ||
-      user.status !== RecordStatus.ACTIVE ||
-      user.mustChangePassword ||
-      isLocked
-    ) {
+    if (!user || user.status !== RecordStatus.ACTIVE || isLocked) {
       throw new UnauthorizedException({
         code: ErrorCode.UNAUTHORIZED,
         message: 'Phiên đăng nhập không hợp lệ.',
+      });
+    }
+
+    if (user.mustChangePassword) {
+      throw new ForbiddenException({
+        code: ErrorCode.PASSWORD_SETUP_REQUIRED,
+        message: 'Bạn cần hoàn tất thiết lập mật khẩu trước.',
       });
     }
   }
