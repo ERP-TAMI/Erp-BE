@@ -1,8 +1,8 @@
 import { QueryRunner } from 'typeorm';
-import { AddUserInvitationSecurity1740000000019 } from './migrations/1740000000019-AddUserInvitationSecurity';
+import { AddUserInvitationSecurity1740000000030 } from './migrations/1740000000030-AddUserInvitationSecurity';
 
-describe('AddUserInvitationSecurity1740000000019', () => {
-  const migration = new AddUserInvitationSecurity1740000000019();
+describe('AddUserInvitationSecurity1740000000030', () => {
+  const migration = new AddUserInvitationSecurity1740000000030();
 
   it('checks duplicate emails before normalizing and creating the invitation schema', async () => {
     const query = jest.fn().mockResolvedValue(undefined);
