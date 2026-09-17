@@ -15,8 +15,10 @@ import { AuthService } from '../src/features/auth/auth.service';
 import { JwtAuthGuard } from '../src/common/guards/jwt-auth.guard';
 import { PasswordSetupService } from '../src/features/auth/password-setup.service';
 import { PasswordResetService } from '../src/features/auth/password-reset.service';
+import { ProfileService } from '../src/features/auth/profile.service';
 import { ThrottlerModule } from '@nestjs/throttler';
 import {
+  CHANGE_PASSWORD_RATE_LIMIT,
   FORGOT_PASSWORD_RATE_LIMIT,
   FORGOT_PASSWORD_RATE_LIMIT_TTL_MS,
 } from '../src/features/auth/auth.constants';
@@ -38,6 +40,10 @@ describe('Auth API (e2e)', () => {
     validate: jest.fn(),
     complete: jest.fn(),
   };
+  const profileService = {
+    updateProfile: jest.fn(),
+    changePassword: jest.fn(),
+  };
   let app: INestApplication;
 
   beforeEach(async () => {
@@ -56,6 +62,7 @@ describe('Auth API (e2e)', () => {
         { provide: AuthService, useValue: authService },
         { provide: PasswordSetupService, useValue: passwordSetupService },
         { provide: PasswordResetService, useValue: passwordResetService },
+        { provide: ProfileService, useValue: profileService },
       ],
     })
       .overrideGuard(JwtAuthGuard)
@@ -238,6 +245,7 @@ describe('Auth API (e2e)', () => {
         id: 'user-1',
         email: 'sa@tami.test',
         fullName: 'Quản trị hệ thống',
+        phone: null,
         roleCode: 'SA',
         roleName: 'Quản trị hệ thống',
         permissions: ['system.users.manage'],
@@ -272,6 +280,7 @@ describe('Auth API (e2e)', () => {
       id: 'user-1',
       email: 'sa@tami.test',
       fullName: 'Quản trị hệ thống',
+      phone: null,
       roleCode: 'SA',
       roleName: 'Quản trị hệ thống',
       permissions: ['system.users.manage'],
@@ -286,6 +295,108 @@ describe('Auth API (e2e)', () => {
       });
 
     expect(authService.getMe).toHaveBeenCalledWith('user-1');
+  });
+
+  it('updates only the authenticated user profile fields', async () => {
+    profileService.updateProfile.mockResolvedValue({
+      id: 'user-1',
+      email: 'sa@tami.test',
+      fullName: 'Tên mới',
+      phone: '0912345678',
+      roleCode: 'SA',
+      roleName: 'Quản trị hệ thống',
+      permissions: ['system.users.manage'],
+    });
+
+    await request(app.getHttpServer())
+      .patch('/auth/me')
+      .set('Authorization', 'Bearer signed.access.token')
+      .send({ fullName: '  Tên mới  ', phone: ' 0912345678 ' })
+      .expect(200)
+      .expect((response) => {
+        expect(response.body).toMatchObject({
+          id: 'user-1',
+          fullName: 'Tên mới',
+          phone: '0912345678',
+        });
+      });
+
+    expect(profileService.updateProfile).toHaveBeenCalledWith(
+      { fullName: 'Tên mới', phone: '0912345678' },
+      expect.objectContaining({ id: 'user-1', roleCode: 'SA' }),
+    );
+  });
+
+  it('rejects forbidden self-profile fields before service execution', async () => {
+    await request(app.getHttpServer())
+      .patch('/auth/me')
+      .set('Authorization', 'Bearer signed.access.token')
+      .send({
+        fullName: 'Tên mới',
+        phone: null,
+        email: 'attacker@tami.test',
+        roleCode: 'SA',
+        status: 'active',
+      })
+      .expect(400);
+
+    expect(profileService.updateProfile).not.toHaveBeenCalled();
+  });
+
+  it('validates and changes the authenticated user password', async () => {
+    profileService.changePassword.mockResolvedValue(undefined);
+
+    await request(app.getHttpServer())
+      .patch('/auth/me/password')
+      .set('Authorization', 'Bearer signed.access.token')
+      .send({
+        currentPassword: 'current-password',
+        newPassword: 'new-password',
+      })
+      .expect(204);
+
+    expect(profileService.changePassword).toHaveBeenCalledWith(
+      { currentPassword: 'current-password', newPassword: 'new-password' },
+      expect.objectContaining({ id: 'user-1' }),
+    );
+  });
+
+  it('rate limits authenticated password-change attempts', async () => {
+    profileService.changePassword.mockResolvedValue(undefined);
+
+    for (let attempt = 0; attempt < CHANGE_PASSWORD_RATE_LIMIT; attempt += 1) {
+      await request(app.getHttpServer())
+        .patch('/auth/me/password')
+        .set('Authorization', 'Bearer signed.access.token')
+        .send({
+          currentPassword: `current-password-${attempt}`,
+          newPassword: `new-password-${attempt}`,
+        })
+        .expect(204);
+    }
+
+    await request(app.getHttpServer())
+      .patch('/auth/me/password')
+      .set('Authorization', 'Bearer signed.access.token')
+      .send({
+        currentPassword: 'current-password-over-limit',
+        newPassword: 'new-password-over-limit',
+      })
+      .expect(429);
+  });
+
+  it('rejects short passwords and unauthenticated profile mutations', async () => {
+    await request(app.getHttpServer())
+      .patch('/auth/me/password')
+      .set('Authorization', 'Bearer signed.access.token')
+      .send({ currentPassword: 'current-password', newPassword: 'short' })
+      .expect(400);
+    await request(app.getHttpServer())
+      .patch('/auth/me')
+      .send({ fullName: 'Tên mới', phone: null })
+      .expect(401);
+
+    expect(profileService.changePassword).not.toHaveBeenCalled();
   });
 
   it('logs out idempotently and clears the refresh cookie', async () => {

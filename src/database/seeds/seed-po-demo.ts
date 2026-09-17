@@ -12,7 +12,6 @@ import { AppDataSource } from '../data-source';
 export type PoProductSizeSeed = { sizeLabel: string; quantity: number };
 export type PoProductColorSeed = {
   colorName: string;
-  colorCode: string;
   sizes: PoProductSizeSeed[];
 };
 export type PoProductSeed = {
@@ -49,7 +48,6 @@ export const PO_DEMO_SEED: PoSeed = {
       colors: [
         {
           colorName: 'Dk Chocolate',
-          colorCode: '#4B3221',
           sizes: [
             { sizeLabel: 'S', quantity: 100 },
             { sizeLabel: 'M', quantity: 200 },
@@ -68,7 +66,6 @@ export const PO_DEMO_SEED: PoSeed = {
       colors: [
         {
           colorName: 'Ivory',
-          colorCode: '#F2EDE1',
           sizes: [
             { sizeLabel: 'S', quantity: 80 },
             { sizeLabel: 'M', quantity: 120 },
@@ -78,7 +75,6 @@ export const PO_DEMO_SEED: PoSeed = {
         },
         {
           colorName: 'Black',
-          colorCode: '#1B1B1B',
           sizes: [
             { sizeLabel: 'S', quantity: 80 },
             { sizeLabel: 'M', quantity: 120 },
@@ -153,11 +149,11 @@ async function upsertColor(
 ): Promise<string> {
   const inserted = await manager.query(
     `INSERT INTO purchase_order_product_colors
-       (product_id, color_name, color_code, order_index)
-     VALUES ($1, $2, $3, $4)
+       (product_id, color_name, order_index)
+     VALUES ($1, $2, $3)
      ON CONFLICT (product_id, color_name) DO NOTHING
      RETURNING id`,
-    [productId, seed.colorName, seed.colorCode, orderIndex],
+    [productId, seed.colorName, orderIndex],
   );
   if (inserted.length > 0) return inserted[0].id as string;
 

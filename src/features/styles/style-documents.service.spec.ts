@@ -69,6 +69,7 @@ describe('StyleDocumentsService', () => {
       getPresignedPutUrl: jest.fn().mockResolvedValue('https://s3.example/put'),
       getPresignedGetUrl: jest.fn().mockResolvedValue('https://s3.example/get'),
       deleteObject: jest.fn(),
+      copyObject: jest.fn(),
       headObject: jest.fn().mockResolvedValue({ exists: true }),
       getObjectHead: jest.fn().mockResolvedValue(Buffer.from('%PDF-1.5')),
       getObjectBuffer: jest.fn().mockResolvedValue(Buffer.from('')),

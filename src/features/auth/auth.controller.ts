@@ -4,6 +4,7 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  Patch,
   Post,
   Req,
   Res,
@@ -12,6 +13,7 @@ import {
 import {
   ApiBearerAuth,
   ApiAcceptedResponse,
+  ApiForbiddenResponse,
   ApiNoContentResponse,
   ApiOkResponse,
   ApiTags,
@@ -44,7 +46,11 @@ import {
   ValidatePasswordResetDto,
 } from './dto/password-reset.dto';
 import { PasswordResetService } from './password-reset.service';
+import { ProfileService } from './profile.service';
+import { ChangeMyPasswordDto, UpdateMyProfileDto } from './dto/profile.dto';
 import {
+  CHANGE_PASSWORD_RATE_LIMIT,
+  CHANGE_PASSWORD_RATE_LIMIT_TTL_MS,
   FORGOT_PASSWORD_RATE_LIMIT,
   FORGOT_PASSWORD_RATE_LIMIT_TTL_MS,
 } from './auth.constants';
@@ -58,6 +64,7 @@ export class AuthController {
     private readonly authService: AuthService,
     private readonly passwordSetupService: PasswordSetupService,
     private readonly passwordResetService: PasswordResetService,
+    private readonly profileService: ProfileService,
   ) {}
 
   @Post('forgot-password')
@@ -171,6 +178,46 @@ export class AuthController {
   @ApiUnauthorizedResponse({ description: 'Missing or invalid access token' })
   getMe(@Req() req: AuthenticatedRequest): Promise<AuthUserDto> {
     return this.authService.getMe(req.user.id);
+  }
+
+  @Patch('me')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOkResponse({ type: AuthUserDto })
+  @ApiForbiddenResponse({
+    description: 'Password setup must be completed first',
+  })
+  @ApiUnauthorizedResponse({ description: 'Missing or invalid access token' })
+  updateMe(
+    @Body() dto: UpdateMyProfileDto,
+    @Req() req: AuthenticatedRequest,
+  ): Promise<AuthUserDto> {
+    return this.profileService.updateProfile(dto, req.user);
+  }
+
+  @Patch('me/password')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @UseGuards(JwtAuthGuard, ThrottlerGuard)
+  @Throttle({
+    default: {
+      limit: CHANGE_PASSWORD_RATE_LIMIT,
+      ttl: CHANGE_PASSWORD_RATE_LIMIT_TTL_MS,
+    },
+  })
+  @ApiBearerAuth()
+  @ApiNoContentResponse({ description: 'Password changed successfully' })
+  @ApiForbiddenResponse({
+    description: 'Password setup must be completed first',
+  })
+  @ApiTooManyRequestsResponse({
+    description: 'Too many password-change attempts from this client',
+  })
+  @ApiUnauthorizedResponse({ description: 'Missing or invalid access token' })
+  changeMyPassword(
+    @Body() dto: ChangeMyPasswordDto,
+    @Req() req: AuthenticatedRequest,
+  ): Promise<void> {
+    return this.profileService.changePassword(dto, req.user);
   }
 
   private setRefreshCookie(res: Response, token: string): void {
