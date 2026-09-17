@@ -11,9 +11,6 @@ export class PurchaseOrderProductColor {
   @Column({ type: 'varchar', length: 100, name: 'color_name' })
   colorName: string;
 
-  @Column({ type: 'varchar', length: 50, nullable: true, name: 'color_code' })
-  colorCode: string;
-
   @Column({ type: 'int', default: 0, name: 'order_index' })
   orderIndex: number;
 }

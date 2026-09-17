@@ -445,7 +445,6 @@ Table purchase_order_product_colors {
   id uuid [pk, default: `gen_random_uuid()`]
   product_id uuid [not null]
   color_name varchar(100) [not null]
-  color_code varchar(50)
   order_index integer [not null, default: `0`]
   indexes {
     (product_id, color_name) [unique]

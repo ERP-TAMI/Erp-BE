@@ -155,7 +155,6 @@ describe('PurchaseOrdersService', () => {
     id: string;
     productId: string;
     colorName: string;
-    colorCode?: string;
     orderIndex: number;
   }> = [];
 

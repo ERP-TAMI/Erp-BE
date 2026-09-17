@@ -951,6 +951,11 @@ export class PurchaseOrdersService {
     if (code === '23514') {
       throw new BadRequestException('Số lượng (pcs) không được là số âm.');
     }
+    if (code === '23503') {
+      throw new ConflictException(
+        'Không thể xóa màu này vì đang được tham chiếu ở nơi khác (ví dụ ảnh mẫu).',
+      );
+    }
     throw error;
   }
 
@@ -1861,7 +1866,6 @@ export class PurchaseOrdersService {
         acc[c.productId].push({
           id: c.id,
           colorName: c.colorName,
-          colorCode: c.colorCode,
           orderIndex: c.orderIndex,
           sizes: colorSizes.map((s) => ({
             id: s.id,
@@ -2144,7 +2148,6 @@ export class PurchaseOrdersService {
         return {
           id: c.id,
           colorName: c.colorName,
-          colorCode: c.colorCode,
           orderIndex: c.orderIndex,
           sizes: colorSizes,
           totalQuantity: colorQty,
@@ -2487,7 +2490,7 @@ export class PurchaseOrdersService {
             const clonedDoc = await manager.save(
               Document,
               manager.create(Document, {
-                documentCode: sourceDoc.documentCode,
+                documentCode: `DOC-PROD-${Date.now()}-${randomUUID().slice(0, 8)}`,
                 title: sourceDoc.title,
                 createdBy: userId,
                 createdAt: new Date(),
@@ -2563,7 +2566,6 @@ export class PurchaseOrdersService {
             const colorEntity = manager.create(PurchaseOrderProductColor, {
               productId: savedProduct.id,
               colorName: cDto.colorName.trim(),
-              colorCode: cDto.colorCode || undefined,
               orderIndex: cIdx,
             });
             const savedColor = await manager.save(
@@ -2686,7 +2688,6 @@ export class PurchaseOrdersService {
             let savedColor: PurchaseOrderProductColor;
             if (existing) {
               existing.colorName = colorName;
-              existing.colorCode = cDto.colorCode || (null as any);
               existing.orderIndex = cIdx;
               savedColor = await manager.save(
                 PurchaseOrderProductColor,
@@ -2696,7 +2697,6 @@ export class PurchaseOrdersService {
               const newColor = manager.create(PurchaseOrderProductColor, {
                 productId,
                 colorName,
-                colorCode: cDto.colorCode || undefined,
                 orderIndex: cIdx,
               });
               savedColor = await manager.save(

@@ -604,7 +604,6 @@ Schema được chuẩn hoá theo aggregate Style, PurchaseOrder, PurchaseOrderP
 | `id` | `uuid` | pk, default: `gen_random_uuid()` | Khoá định danh. |
 | `product_id` | `uuid` | not null | Thuộc tính nghiệp vụ/kiểm soát của bảng. |
 | `color_name` | `varchar(100)` | not null | Thuộc tính nghiệp vụ/kiểm soát của bảng. |
-| `color_code` | `varchar(50)` | Nullable theo nghiệp vụ | Thuộc tính nghiệp vụ/kiểm soát của bảng. |
 | `order_index` | `integer` | not null, default: `0` | Thuộc tính nghiệp vụ/kiểm soát của bảng. |
 
 ### `purchase_order_product_color_sizes`

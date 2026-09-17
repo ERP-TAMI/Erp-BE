@@ -42,14 +42,6 @@ export class ProductColorItemDto {
   colorName: string;
 
   @ApiPropertyOptional({
-    description: 'Mã màu (Hex hoặc code)',
-    example: '#FFFFFF',
-  })
-  @IsOptional()
-  @IsString()
-  colorCode?: string;
-
-  @ApiPropertyOptional({
     description: 'Bảng size breakdown của màu',
     type: [ProductColorSizeItemDto],
   })
