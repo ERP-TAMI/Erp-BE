@@ -12,6 +12,8 @@ import { SmtpMailService } from './smtp-mail.service';
 import { PasswordResetService } from './password-reset.service';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { ThrottlerModule } from '@nestjs/throttler';
+import { AuditModule } from '../audit/audit.module';
+import { ProfileService } from './profile.service';
 import {
   FORGOT_PASSWORD_RATE_LIMIT,
   FORGOT_PASSWORD_RATE_LIMIT_TTL_MS,
@@ -21,6 +23,7 @@ import {
   imports: [
     TypeOrmModule.forFeature(AUTH_ENTITIES),
     NotificationsModule,
+    AuditModule,
     ThrottlerModule.forRoot([
       {
         ttl: FORGOT_PASSWORD_RATE_LIMIT_TTL_MS,
@@ -45,6 +48,7 @@ import {
     PasswordSetupService,
     PasswordResetService,
     SmtpMailService,
+    ProfileService,
   ],
   exports: [
     AuthService,
