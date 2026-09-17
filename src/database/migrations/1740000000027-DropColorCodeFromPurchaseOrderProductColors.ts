@@ -1,8 +1,6 @@
 import { MigrationInterface, QueryRunner } from 'typeorm';
 
-export class DropColorCodeFromPurchaseOrderProductColors1740000000027
-  implements MigrationInterface
-{
+export class DropColorCodeFromPurchaseOrderProductColors1740000000027 implements MigrationInterface {
   name = 'DropColorCodeFromPurchaseOrderProductColors1740000000027';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
