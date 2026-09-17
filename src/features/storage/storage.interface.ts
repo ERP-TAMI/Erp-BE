@@ -23,6 +23,14 @@ export interface StorageService {
 
   deleteObject(objectKey: string): Promise<void>;
 
+  /**
+   * Sao chép object sang một key mới trong cùng bucket, không tải file về
+   * client. Dùng khi cần bản lưu trữ độc lập thật sự (không chỉ metadata) —
+   * ví dụ import tài liệu từ Style vào Product: `document_versions.storage_key`
+   * có unique constraint, hai `DocumentVersion` không thể cùng trỏ một key.
+   */
+  copyObject(sourceKey: string, destinationKey: string): Promise<void>;
+
   headObject(objectKey: string): Promise<HeadObjectResult>;
 
   /** Downloads the full object into memory. Only for server-side processing

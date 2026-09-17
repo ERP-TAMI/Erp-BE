@@ -14,6 +14,7 @@ describe('StorageController', () => {
       getPresignedPutUrl: jest.fn().mockResolvedValue('https://s3.example/put'),
       getPresignedGetUrl: jest.fn().mockResolvedValue('https://s3.example/get'),
       deleteObject: jest.fn().mockResolvedValue(undefined),
+      copyObject: jest.fn().mockResolvedValue(undefined),
       headObject: jest.fn(),
       getObjectBuffer: jest.fn().mockResolvedValue(Buffer.from('')),
       getObjectHead: jest.fn().mockResolvedValue(Buffer.from('')),

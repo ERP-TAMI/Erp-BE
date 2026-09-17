@@ -5,6 +5,7 @@ import {
   PutObjectCommand,
   GetObjectCommand,
   DeleteObjectCommand,
+  CopyObjectCommand,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { HeadObjectResult, StorageService } from './storage.interface';
@@ -54,6 +55,16 @@ export class S3StorageService implements StorageService {
         : 'inline',
     });
     return getSignedUrl(this.client, command, { expiresIn: expiresInSeconds });
+  }
+
+  async copyObject(sourceKey: string, destinationKey: string): Promise<void> {
+    await this.client.send(
+      new CopyObjectCommand({
+        Bucket: this.bucket,
+        CopySource: `${this.bucket}/${encodeURIComponent(sourceKey)}`,
+        Key: destinationKey,
+      }),
+    );
   }
 
   async deleteObject(objectKey: string): Promise<void> {

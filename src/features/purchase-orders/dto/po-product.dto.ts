@@ -42,19 +42,13 @@ export class ProductColorItemDto {
   colorName: string;
 
   @ApiPropertyOptional({
-    description: 'Mã màu (Hex hoặc code)',
-    example: '#FFFFFF',
-  })
-  @IsOptional()
-  @IsString()
-  colorCode?: string;
-
-  @ApiPropertyOptional({
     description: 'Bảng size breakdown của màu',
     type: [ProductColorSizeItemDto],
   })
   @IsOptional()
   @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ProductColorSizeItemDto)
   sizes?: ProductColorSizeItemDto[];
 }
 
@@ -192,6 +186,8 @@ export class CreatePoProductDto {
   })
   @IsOptional()
   @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ProductColorItemDto)
   colors?: ProductColorItemDto[];
 }
 
@@ -311,6 +307,8 @@ export class UpdatePoProductDto {
   })
   @IsOptional()
   @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ProductColorItemDto)
   colors?: ProductColorItemDto[];
 }
 
