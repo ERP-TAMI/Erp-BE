@@ -1,11 +1,11 @@
 import { QueryRunner } from 'typeorm';
-import { ChangePoBomOwnerFromColorToProduct1740000000026 } from './migrations/1740000000026-ChangePoBomOwnerFromColorToProduct';
+import { ChangePoBomOwnerFromColorToProduct1740000000032 } from './migrations/1740000000032-ChangePoBomOwnerFromColorToProduct';
 
 describe('ChangePoBomOwnerFromColorToProduct migration', () => {
-  let migration: ChangePoBomOwnerFromColorToProduct1740000000026;
+  let migration: ChangePoBomOwnerFromColorToProduct1740000000032;
 
   beforeEach(() => {
-    migration = new ChangePoBomOwnerFromColorToProduct1740000000026();
+    migration = new ChangePoBomOwnerFromColorToProduct1740000000032();
   });
 
   describe('up()', () => {

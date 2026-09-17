@@ -6,7 +6,7 @@ import {
   BomType,
   BomRevisionStatus,
 } from '../../../common/enums/database.enums';
-import { ChangePoBomOwnerFromColorToProduct1740000000026 } from '../../../database/migrations/1740000000026-ChangePoBomOwnerFromColorToProduct';
+import { ChangePoBomOwnerFromColorToProduct1740000000032 } from '../../../database/migrations/1740000000032-ChangePoBomOwnerFromColorToProduct';
 
 describe('BOM Ownership and Business Rules (Section 14 Specification)', () => {
   // ──────────────────────────────────────────────────────────────────────────
@@ -144,7 +144,7 @@ describe('BOM Ownership and Business Rules (Section 14 Specification)', () => {
   // ──────────────────────────────────────────────────────────────────────────
   describe('C. Data Migration Rules', () => {
     it('7. Existing product_color BOM is correctly mapped to product BOM', async () => {
-      const migration = new ChangePoBomOwnerFromColorToProduct1740000000026();
+      const migration = new ChangePoBomOwnerFromColorToProduct1740000000032();
       const queries: string[] = [];
 
       const queryRunner = {
@@ -168,7 +168,7 @@ describe('BOM Ownership and Business Rules (Section 14 Specification)', () => {
     });
 
     it('8. Product with multiple old BOMs -> migration must FAIL FAST', async () => {
-      const migration = new ChangePoBomOwnerFromColorToProduct1740000000026();
+      const migration = new ChangePoBomOwnerFromColorToProduct1740000000032();
 
       const queryRunner = {
         query: jest.fn().mockImplementation(async (sql: string) => {
@@ -194,7 +194,7 @@ describe('BOM Ownership and Business Rules (Section 14 Specification)', () => {
     });
 
     it('9. Migration does not touch or drop bom_revisions or bom_lines tables', async () => {
-      const migration = new ChangePoBomOwnerFromColorToProduct1740000000026();
+      const migration = new ChangePoBomOwnerFromColorToProduct1740000000032();
       const queries: string[] = [];
 
       const queryRunner = {

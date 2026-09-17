@@ -8,8 +8,8 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  * - AFTER: 1 Product in PO has exactly 1 PO BOM -> all Colors share that BOM (owner = purchase_order_product_id).
  * - Fit BOM remains untouched (owner = style_id).
  */
-export class ChangePoBomOwnerFromColorToProduct1740000000026 implements MigrationInterface {
-  name = 'ChangePoBomOwnerFromColorToProduct1740000000026';
+export class ChangePoBomOwnerFromColorToProduct1740000000032 implements MigrationInterface {
+  name = 'ChangePoBomOwnerFromColorToProduct1740000000032';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
     // 1. Add column purchase_order_product_id (nullable initially for backfill)
