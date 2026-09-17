@@ -39,11 +39,21 @@ export class Bom {
   @Column({ type: 'uuid', nullable: true, name: 'current_revision_id' })
   currentRevisionId: string | null;
 
-  @Column({ type: 'varchar', length: 100, name: 'product_code_snapshot' })
-  productCodeSnapshot: string;
+  @Column({
+    type: 'varchar',
+    length: 100,
+    nullable: true,
+    name: 'product_code_snapshot',
+  })
+  productCodeSnapshot: string | null;
 
-  @Column({ type: 'varchar', length: 255, name: 'product_name_snapshot' })
-  productNameSnapshot: string;
+  @Column({
+    type: 'varchar',
+    length: 255,
+    nullable: true,
+    name: 'product_name_snapshot',
+  })
+  productNameSnapshot: string | null;
 
   @Column({
     type: 'varchar',
