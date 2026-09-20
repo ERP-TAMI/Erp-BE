@@ -23,7 +23,10 @@ import {
   STORAGE_SERVICE,
   StorageService,
 } from '../storage/storage.interface';
-import { isObjectKeyInScope } from '../storage/storage-key.util';
+import {
+  isDuplicateStorageKeyError,
+  isObjectKeyInScope,
+} from '../storage/storage-key.util';
 import { PresignStyleDocumentDto } from './dto/presign-style-document.dto';
 import { ConfirmStyleDocumentDto } from './dto/confirm-style-document.dto';
 
@@ -175,6 +178,13 @@ export class StyleDocumentsService {
         uploadedAt: now,
         purpose: DocumentPurpose.FIT_ATTACHMENT,
       };
+    }).catch((error) => {
+      if (isDuplicateStorageKeyError(error)) {
+        throw new BadRequestException(
+          'Tệp này đã được đính kèm trong hệ thống, không thể đính kèm lại.',
+        );
+      }
+      throw error;
     });
   }
 

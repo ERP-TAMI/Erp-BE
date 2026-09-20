@@ -21,7 +21,10 @@ import {
   STORAGE_SERVICE,
   StorageService,
 } from '../storage/storage.interface';
-import { isObjectKeyInScope } from '../storage/storage-key.util';
+import {
+  isDuplicateStorageKeyError,
+  isObjectKeyInScope,
+} from '../storage/storage-key.util';
 import {
   CreateStyleSampleRoundDto,
   UpdateStyleSampleRoundDto,
@@ -357,6 +360,13 @@ export class StyleSampleRoundsService {
         orderIndex,
         uploadedAt: now,
       };
+    }).catch((error) => {
+      if (isDuplicateStorageKeyError(error)) {
+        throw new BadRequestException(
+          'Ảnh này đã được đính kèm trong hệ thống, không thể đính kèm lại.',
+        );
+      }
+      throw error;
     });
   }
 
