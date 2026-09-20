@@ -201,6 +201,24 @@ export class StylesService {
 
   async remove(id: string): Promise<void> {
     const style = await this.findOne(id);
-    await this.styleRepository.remove(style);
+    try {
+      await this.styleRepository.remove(style);
+    } catch (error) {
+      if (this.isForeignKeyViolation(error)) {
+        throw new ConflictException(
+          'Không thể xoá mẫu Fit vì đang được sử dụng bởi dữ liệu khác (BOM, tài liệu sản xuất...).',
+        );
+      }
+      throw error;
+    }
+  }
+
+  private isForeignKeyViolation(error: unknown): error is { code: string } {
+    return (
+      typeof error === 'object' &&
+      error !== null &&
+      'code' in error &&
+      (error as { code?: unknown }).code === '23503'
+    );
   }
 }
