@@ -21,6 +21,7 @@ import {
   STORAGE_SERVICE,
   StorageService,
 } from '../storage/storage.interface';
+import { isObjectKeyInScope } from '../storage/storage-key.util';
 import {
   CreateStyleSampleRoundDto,
   UpdateStyleSampleRoundDto,
@@ -281,6 +282,17 @@ export class StyleSampleRoundsService {
   ): Promise<StyleSampleImageItem> {
     await this.assertStyleExists(styleId);
     await this.findRoundOrThrow(styleId, roundId);
+
+    if (
+      !isObjectKeyInScope(
+        dto.objectKey,
+        `styles/${styleId}/sample-rounds/${roundId}/images/`,
+      )
+    ) {
+      throw new BadRequestException(
+        'objectKey không thuộc phạm vi tải lên này, vui lòng lấy lại link upload.',
+      );
+    }
 
     const head = await this.storage.headObject(dto.objectKey);
     if (!head.exists) {

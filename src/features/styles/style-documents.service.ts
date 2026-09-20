@@ -23,6 +23,7 @@ import {
   STORAGE_SERVICE,
   StorageService,
 } from '../storage/storage.interface';
+import { isObjectKeyInScope } from '../storage/storage-key.util';
 import { PresignStyleDocumentDto } from './dto/presign-style-document.dto';
 import { ConfirmStyleDocumentDto } from './dto/confirm-style-document.dto';
 
@@ -110,6 +111,12 @@ export class StyleDocumentsService {
     dto: ConfirmStyleDocumentDto,
   ): Promise<StyleDocumentListItem> {
     await this.assertStyleExists(styleId);
+
+    if (!isObjectKeyInScope(dto.objectKey, `styles/${styleId}/documents/`)) {
+      throw new BadRequestException(
+        'objectKey không thuộc phạm vi tải lên này, vui lòng lấy lại link upload.',
+      );
+    }
 
     const head = await this.storage.headObject(dto.objectKey);
     if (!head.exists) {

@@ -23,3 +23,15 @@ export function isResolvableObjectKey(
 ): key is string {
   return Boolean(key) && !isLegacyLocalStorageKey(key);
 }
+
+/**
+ * `confirm` chỉ nên chấp nhận objectKey nằm trong prefix mà chính endpoint đó
+ * đã presign — nếu không check, client có thể confirm bất kỳ objectKey nào
+ * đã tồn tại trên S3 (kể cả của một bản ghi khác) vào bản ghi hiện tại.
+ */
+export function isObjectKeyInScope(
+  objectKey: string,
+  expectedPrefix: string,
+): boolean {
+  return objectKey.startsWith(expectedPrefix);
+}
