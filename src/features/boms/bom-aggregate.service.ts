@@ -140,10 +140,13 @@ export class BomAggregateService {
 
     if (query.purchaseOrderProductId) {
       const term = query.purchaseOrderProductId.trim();
-      bomQb.andWhere('(pop.id::text = :popId OR pop.product_code ILIKE :popCode)', {
-        popId: term,
-        popCode: `%${term}%`,
-      });
+      bomQb.andWhere(
+        '(pop.id::text = :popId OR pop.product_code ILIKE :popCode)',
+        {
+          popId: term,
+          popCode: `%${term}%`,
+        },
+      );
     } else if (query.product) {
       const term = query.product.trim();
       bomQb.andWhere(
@@ -158,10 +161,13 @@ export class BomAggregateService {
 
     if (query.styleId) {
       const term = query.styleId.trim();
-      bomQb.andWhere('(pop.source_style_id::text = :styleId OR style.style_code ILIKE :styleCode)', {
-        styleId: term,
-        styleCode: `%${term}%`,
-      });
+      bomQb.andWhere(
+        '(pop.source_style_id::text = :styleId OR style.style_code ILIKE :styleCode)',
+        {
+          styleId: term,
+          styleCode: `%${term}%`,
+        },
+      );
     } else if (query.style) {
       const term = query.style.trim();
       bomQb.andWhere(

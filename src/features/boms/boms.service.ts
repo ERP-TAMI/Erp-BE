@@ -114,11 +114,7 @@ export class BomsService {
     const qb = this.bomRepository.createQueryBuilder('bom');
 
     // Left join current revision for filtering
-    qb.leftJoin(
-      'bom_revisions',
-      'rev',
-      'bom.current_revision_id = rev.id',
-    );
+    qb.leftJoin('bom_revisions', 'rev', 'bom.current_revision_id = rev.id');
 
     // Left join style for Fit BOM
     qb.leftJoin('styles', 'style', 'bom.style_id = style.id');
@@ -129,11 +125,7 @@ export class BomsService {
       'pop',
       'bom.purchase_order_product_id = pop.id',
     );
-    qb.leftJoin(
-      'purchase_orders',
-      'po',
-      'pop.purchase_order_id = po.id',
-    );
+    qb.leftJoin('purchase_orders', 'po', 'pop.purchase_order_id = po.id');
 
     // ─── Filters ──────────────────────────────────────────────────────────
     if (query.type) {

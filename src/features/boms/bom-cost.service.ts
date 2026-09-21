@@ -71,7 +71,9 @@ export class BomCostService {
     }
     const consumption = Number(line.consumption) || 0;
     const unitCost = Number(line.unitCost);
-    return Math.round((consumption * unitCost + Number.EPSILON) * 10000) / 10000;
+    return (
+      Math.round((consumption * unitCost + Number.EPSILON) * 10000) / 10000
+    );
   }
 
   /**

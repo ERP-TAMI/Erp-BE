@@ -3,7 +3,6 @@ import {
   IsNotEmpty,
   IsNumber,
   IsOptional,
-  IsPositive,
   IsString,
   IsUUID,
   Min,
@@ -22,7 +21,8 @@ export class CreateBomLineDto {
   materialId: string;
 
   @ApiPropertyOptional({
-    description: 'Định mức tiêu hao vật tư (phải là số thực không âm >= 0, mặc định 0)',
+    description:
+      'Định mức tiêu hao vật tư (phải là số thực không âm >= 0, mặc định 0)',
     example: 1.25,
   })
   @IsOptional()
