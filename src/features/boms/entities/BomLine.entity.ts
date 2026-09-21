@@ -1,4 +1,13 @@
-import { Entity, Column, PrimaryGeneratedColumn, Index, Unique } from 'typeorm';
+import {
+  Entity,
+  Column,
+  PrimaryGeneratedColumn,
+  Index,
+  Unique,
+  ManyToOne,
+  JoinColumn,
+} from 'typeorm';
+import { BomRevision } from './BomRevision.entity';
 
 @Entity('bom_lines')
 @Unique('uq_bom_line_order', ['revisionId', 'orderIndex'])
@@ -13,6 +22,10 @@ export class BomLine {
 
   @Column({ type: 'uuid', name: 'revision_id' })
   revisionId: string;
+
+  @ManyToOne(() => BomRevision, (rev) => rev.lines, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'revision_id' })
+  revision?: BomRevision;
 
   @Column({ type: 'uuid', nullable: true, name: 'material_id' })
   materialId: string | null;
@@ -48,7 +61,7 @@ export class BomLine {
   @Column({
     type: 'numeric',
     precision: 18,
-    scale: 2,
+    scale: 4,
     nullable: true,
     name: 'unit_cost',
   })

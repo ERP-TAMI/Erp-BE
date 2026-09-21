@@ -1,5 +1,16 @@
-import { Entity, Column, PrimaryGeneratedColumn, Index } from 'typeorm';
+import {
+  Entity,
+  Column,
+  PrimaryGeneratedColumn,
+  Index,
+  ManyToOne,
+  OneToMany,
+  JoinColumn,
+} from 'typeorm';
 import { BomType } from '../../../common/enums/database.enums';
+import { Style } from '../../styles/entities/Style.entity';
+import { PurchaseOrderProduct } from '../../purchase-orders/entities/PurchaseOrderProduct.entity';
+import { BomRevision } from './BomRevision.entity';
 
 @Entity('boms')
 @Index('ix_boms_type_created', ['bomType', 'createdAt', 'id'])
@@ -29,6 +40,10 @@ export class Bom {
   @Column({ type: 'uuid', nullable: true, name: 'style_id' })
   styleId: string | null;
 
+  @ManyToOne(() => Style, { nullable: true })
+  @JoinColumn({ name: 'style_id' })
+  style?: Style | null;
+
   @Column({
     type: 'uuid',
     nullable: true,
@@ -36,8 +51,19 @@ export class Bom {
   })
   purchaseOrderProductId: string | null;
 
+  @ManyToOne(() => PurchaseOrderProduct, { nullable: true })
+  @JoinColumn({ name: 'purchase_order_product_id' })
+  purchaseOrderProduct?: PurchaseOrderProduct | null;
+
   @Column({ type: 'uuid', nullable: true, name: 'current_revision_id' })
   currentRevisionId: string | null;
+
+  @ManyToOne(() => BomRevision, { nullable: true })
+  @JoinColumn({ name: 'current_revision_id' })
+  currentRevision?: BomRevision | null;
+
+  @OneToMany(() => BomRevision, (rev) => rev.bom)
+  revisions?: BomRevision[];
 
   @Column({
     type: 'varchar',
