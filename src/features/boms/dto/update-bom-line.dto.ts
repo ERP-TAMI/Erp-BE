@@ -43,10 +43,10 @@ export class UpdateBomLineDto {
   @IsOptional()
   @Type(() => Number)
   @IsNumber(
-    { allowNaN: false, allowInfinity: false, maxDecimalPlaces: 6 },
+    { allowNaN: false, allowInfinity: false, maxDecimalPlaces: 2 },
     {
       message:
-        'unitCost must be a valid decimal number with up to 6 decimal places',
+        'unitCost must be a valid decimal number with up to 2 decimal places',
     },
   )
   @Min(0, { message: 'unitCost must be greater than or equal to 0' })

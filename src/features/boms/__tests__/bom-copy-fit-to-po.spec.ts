@@ -935,6 +935,9 @@ describe('BOM V2 Copy Fit BOM -> PO BOM (PR-06 Specification)', () => {
               if (id === mockSourceFitRev.id)
                 return Promise.resolve(mockSourceFitRev);
             }
+            if (entityClass === PurchaseOrderProduct) {
+              return Promise.resolve(mockPoProduct);
+            }
             return Promise.resolve(null);
           }),
           count: jest.fn().mockResolvedValue(0),
@@ -964,6 +967,36 @@ describe('BOM V2 Copy Fit BOM -> PO BOM (PR-06 Specification)', () => {
       // Verify target PO lines remain empty
       expect(mockTargetPoLines.length).toBe(0);
       expect(mockTargetPoRev.sourceRevisionId).toBeNull();
+    });
+  });
+
+  describe('10. Code Review Regression: Explicit sourceRevisionId Style Validation', () => {
+    it('rejects explicit sourceRevisionId when target PO product has no sourceStyleId', async () => {
+      setupCopyEnv();
+      mockPoProduct.sourceStyleId = null as any;
+
+      await expect(
+        service.copyFromFit(
+          mockTargetPoBom.id,
+          { sourceRevisionId: mockSourceFitRev.id },
+          'user-nvkh-1',
+          UserRoleCode.NVKH,
+        ),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('rejects explicit sourceRevisionId when Fit BOM style does not match PO product sourceStyleId', async () => {
+      setupCopyEnv();
+      mockPoProduct.sourceStyleId = 'different-style-uuid';
+
+      await expect(
+        service.copyFromFit(
+          mockTargetPoBom.id,
+          { sourceRevisionId: mockSourceFitRev.id },
+          'user-nvkh-1',
+          UserRoleCode.NVKH,
+        ),
+      ).rejects.toThrow(BadRequestException);
     });
   });
 });

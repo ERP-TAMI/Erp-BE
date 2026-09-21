@@ -73,6 +73,20 @@ describe('BOM V2 Workflow State Machine: Forward, Reject, Approve (PR-04 Specifi
 
     historyRecords = [];
 
+    const defaultMockLine = new BomLine();
+    defaultMockLine.id = 'line-wf-uuid-1';
+    defaultMockLine.revisionId = mockRevision.id;
+    defaultMockLine.materialId = 'mat-uuid-1';
+    defaultMockLine.materialNameSnapshot = 'Vải chính Cotton 100%';
+    defaultMockLine.materialGroupId = 'grp-uuid-1';
+    defaultMockLine.materialGroupSnapshot = 'Vải chính';
+    defaultMockLine.unitId = 'unit-uuid-1';
+    defaultMockLine.unitSnapshot = 'Mét';
+    defaultMockLine.consumption = 1.5;
+    defaultMockLine.unitCost = 100000;
+    defaultMockLine.note = null;
+    defaultMockLine.orderIndex = 0;
+
     dataSourceMock.transaction.mockImplementation(async (cb: any) => {
       const managerMock = {
         findOne: jest.fn().mockImplementation((entityClass, options) => {
@@ -87,6 +101,12 @@ describe('BOM V2 Workflow State Machine: Forward, Reject, Approve (PR-04 Specifi
             return Promise.resolve(null);
           }
           return Promise.resolve(null);
+        }),
+        find: jest.fn().mockImplementation((entityClass) => {
+          if (entityClass === BomLine) {
+            return Promise.resolve([defaultMockLine]);
+          }
+          return Promise.resolve([]);
         }),
         create: jest.fn().mockImplementation((entityClass, data) => {
           if (entityClass === BomRevisionStatusHistory) {
@@ -114,7 +134,9 @@ describe('BOM V2 Workflow State Machine: Forward, Reject, Approve (PR-04 Specifi
     bomRevisionRepoMock.findOne.mockImplementation(() =>
       Promise.resolve(mockRevision),
     );
-    bomLineRepoMock.find.mockResolvedValue([]);
+    bomLineRepoMock.find.mockImplementation(() =>
+      Promise.resolve([defaultMockLine]),
+    );
     bomStatusHistoryRepoMock.find.mockImplementation(() =>
       Promise.resolve(historyRecords),
     );
@@ -306,25 +328,17 @@ describe('BOM V2 Workflow State Machine: Forward, Reject, Approve (PR-04 Specifi
       );
     });
 
-    it('allows N5 (SA) to forward wait_sa_approve -> closed', async () => {
+    it('rejects forward from wait_sa_approve -> closed (single path: must use approve API)', async () => {
       setupStatefulWorkflow(BomRevisionStatus.WAIT_SA_APPROVE);
 
-      const res = await service.forward(
-        mockBom.id,
-        { reason: 'SA duyệt đóng BOM' },
-        'user-sa-1',
-        UserRoleCode.SA,
-      );
-
-      expect(res.status).toBe(BomRevisionStatus.CLOSED);
-      expect(mockRevision.status).toBe(BomRevisionStatus.CLOSED);
-      expect(mockRevision.approvedBy).toBe('user-sa-1');
-      expect(mockRevision.approvedAt).toBeInstanceOf(Date);
-      expect(historyRecords.length).toBe(1);
-      expect(historyRecords[0].oldStatus).toBe(
-        BomRevisionStatus.WAIT_SA_APPROVE,
-      );
-      expect(historyRecords[0].newStatus).toBe(BomRevisionStatus.CLOSED);
+      await expect(
+        service.forward(
+          mockBom.id,
+          { reason: 'SA duyệt đóng BOM' },
+          'user-sa-1',
+          UserRoleCode.SA,
+        ),
+      ).rejects.toThrow(BadRequestException);
     });
 
     it('rejects unauthorized roles from forwarding (403 Forbidden)', async () => {
@@ -1027,6 +1041,229 @@ describe('BOM V2 Workflow State Machine: Forward, Reject, Approve (PR-04 Specifi
       expect(() => {
         assertCanAddLine(UserRoleCode.SA, mockBom, mockRevision);
       }).toThrow(ForbiddenException);
+    });
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // 8. CODE REVIEW REGRESSION TEST SUITE (6 Invariants)
+  // ──────────────────────────────────────────────────────────────────────────
+  describe('8. Code Review Regression Test Suite (6 Invariants)', () => {
+    describe('Invariant 1: Data-Readiness Validation on Forward & Approve', () => {
+      it('rejects forward when revision has 0 lines (empty BOM)', async () => {
+        setupStatefulWorkflow(BomRevisionStatus.WAIT_NVKH);
+        dataSourceMock.transaction.mockImplementation(async (cb: any) => {
+          const managerMock = {
+            findOne: jest.fn().mockImplementation((entityClass) => {
+              if (entityClass === Bom) return Promise.resolve(mockBom);
+              if (entityClass === BomRevision)
+                return Promise.resolve(mockRevision);
+              return Promise.resolve(null);
+            }),
+            find: jest.fn().mockImplementation((entityClass) => {
+              if (entityClass === BomLine) return Promise.resolve([]); // EMPTY LINES
+              return Promise.resolve([]);
+            }),
+          };
+          return cb(managerMock);
+        });
+
+        await expect(
+          service.forward(mockBom.id, {}, 'user-nvkh', UserRoleCode.NVKH),
+        ).rejects.toThrow(BadRequestException);
+      });
+
+      it('rejects forward when line is missing materialNameSnapshot or unitSnapshot', async () => {
+        setupStatefulWorkflow(BomRevisionStatus.WAIT_NVKH);
+        const badLine = new BomLine();
+        badLine.orderIndex = 0;
+        badLine.materialNameSnapshot = ''; // INVALID SNAPSHOT
+        badLine.unitSnapshot = 'Mét';
+        badLine.consumption = 1.0;
+
+        dataSourceMock.transaction.mockImplementation(async (cb: any) => {
+          const managerMock = {
+            findOne: jest.fn().mockImplementation((entityClass) => {
+              if (entityClass === Bom) return Promise.resolve(mockBom);
+              if (entityClass === BomRevision)
+                return Promise.resolve(mockRevision);
+              return Promise.resolve(null);
+            }),
+            find: jest.fn().mockImplementation((entityClass) => {
+              if (entityClass === BomLine) return Promise.resolve([badLine]);
+              return Promise.resolve([]);
+            }),
+          };
+          return cb(managerMock);
+        });
+
+        await expect(
+          service.forward(mockBom.id, {}, 'user-nvkh', UserRoleCode.NVKH),
+        ).rejects.toThrow(BadRequestException);
+      });
+
+      it('rejects forward from N2 (WAIT_RD) if any line has consumption <= 0', async () => {
+        setupStatefulWorkflow(BomRevisionStatus.WAIT_RD);
+        const zeroConsumptionLine = new BomLine();
+        zeroConsumptionLine.orderIndex = 0;
+        zeroConsumptionLine.materialNameSnapshot = 'Vải chính';
+        zeroConsumptionLine.unitSnapshot = 'Mét';
+        zeroConsumptionLine.consumption = 0; // ZERO CONSUMPTION
+
+        dataSourceMock.transaction.mockImplementation(async (cb: any) => {
+          const managerMock = {
+            findOne: jest.fn().mockImplementation((entityClass) => {
+              if (entityClass === Bom) return Promise.resolve(mockBom);
+              if (entityClass === BomRevision)
+                return Promise.resolve(mockRevision);
+              return Promise.resolve(null);
+            }),
+            find: jest.fn().mockImplementation((entityClass) => {
+              if (entityClass === BomLine)
+                return Promise.resolve([zeroConsumptionLine]);
+              return Promise.resolve([]);
+            }),
+          };
+          return cb(managerMock);
+        });
+
+        await expect(
+          service.forward(mockBom.id, {}, 'user-rd', UserRoleCode.RD),
+        ).rejects.toThrow(BadRequestException);
+      });
+
+      it('rejects forward from N4 (WAIT_ACCOUNTING) if any line has unitCost null or < 0', async () => {
+        setupStatefulWorkflow(BomRevisionStatus.WAIT_ACCOUNTING);
+        const noCostLine = new BomLine();
+        noCostLine.orderIndex = 0;
+        noCostLine.materialNameSnapshot = 'Vải chính';
+        noCostLine.unitSnapshot = 'Mét';
+        noCostLine.consumption = 1.5;
+        noCostLine.unitCost = null; // UNPRICED
+
+        dataSourceMock.transaction.mockImplementation(async (cb: any) => {
+          const managerMock = {
+            findOne: jest.fn().mockImplementation((entityClass) => {
+              if (entityClass === Bom) return Promise.resolve(mockBom);
+              if (entityClass === BomRevision)
+                return Promise.resolve(mockRevision);
+              return Promise.resolve(null);
+            }),
+            find: jest.fn().mockImplementation((entityClass) => {
+              if (entityClass === BomLine) return Promise.resolve([noCostLine]);
+              return Promise.resolve([]);
+            }),
+          };
+          return cb(managerMock);
+        });
+
+        await expect(
+          service.forward(mockBom.id, {}, 'user-acct', UserRoleCode.ACCOUNTING),
+        ).rejects.toThrow(BadRequestException);
+      });
+
+      it('rejects approve at N5 if any line has unitCost null or consumption <= 0', async () => {
+        setupStatefulWorkflow(BomRevisionStatus.WAIT_SA_APPROVE);
+        const invalidLine = new BomLine();
+        invalidLine.orderIndex = 0;
+        invalidLine.materialNameSnapshot = 'Vải chính';
+        invalidLine.unitSnapshot = 'Mét';
+        invalidLine.consumption = 0;
+        invalidLine.unitCost = null;
+
+        dataSourceMock.transaction.mockImplementation(async (cb: any) => {
+          const managerMock = {
+            findOne: jest.fn().mockImplementation((entityClass) => {
+              if (entityClass === Bom) return Promise.resolve(mockBom);
+              if (entityClass === BomRevision)
+                return Promise.resolve(mockRevision);
+              return Promise.resolve(null);
+            }),
+            find: jest.fn().mockImplementation((entityClass) => {
+              if (entityClass === BomLine)
+                return Promise.resolve([invalidLine]);
+              return Promise.resolve([]);
+            }),
+          };
+          return cb(managerMock);
+        });
+
+        await expect(
+          service.approve(mockBom.id, {}, 'user-sa', UserRoleCode.SA),
+        ).rejects.toThrow(BadRequestException);
+      });
+    });
+
+    describe('Invariant 2: State-Based Line Mutation Permissions', () => {
+      it('confirms NVKH cannot add lines in N2 (wait_rd)', () => {
+        setupStatefulWorkflow(BomRevisionStatus.WAIT_RD);
+        expect(() => {
+          assertCanAddLine(UserRoleCode.NVKH, mockBom, mockRevision);
+        }).toThrow(ForbiddenException);
+      });
+
+      it('confirms RD cannot add lines in N1 (wait_nvkh)', () => {
+        setupStatefulWorkflow(BomRevisionStatus.WAIT_NVKH);
+        expect(() => {
+          assertCanAddLine(UserRoleCode.RD, mockBom, mockRevision);
+        }).toThrow(ForbiddenException);
+      });
+
+      it('confirms ACCOUNTING cannot update unitCost in N1 (wait_nvkh)', () => {
+        setupStatefulWorkflow(BomRevisionStatus.WAIT_NVKH);
+        expect(() => {
+          assertCanUpdateLine(UserRoleCode.ACCOUNTING, mockBom, mockRevision, {
+            unitCost: 100000,
+          });
+        }).toThrow(ForbiddenException);
+      });
+
+      it('confirms all roles cannot mutate lines in wait_sa_approve (read-only)', () => {
+        setupStatefulWorkflow(BomRevisionStatus.WAIT_SA_APPROVE);
+        const roles = [
+          UserRoleCode.NVKH,
+          UserRoleCode.RD,
+          UserRoleCode.TPKH,
+          UserRoleCode.ACCOUNTING,
+          UserRoleCode.SA,
+        ];
+        for (const r of roles) {
+          expect(() => {
+            assertCanAddLine(r, mockBom, mockRevision);
+          }).toThrow(ForbiddenException);
+        }
+      });
+    });
+
+    describe('Invariant 6: Disallow Header Editing on Closed and wait_sa_approve Revisions', () => {
+      it('rejects header update when current revision is CLOSED', async () => {
+        mockRevision.status = BomRevisionStatus.CLOSED;
+        bomRepoMock.findOne.mockResolvedValue(mockBom);
+        bomRevisionRepoMock.findOne.mockResolvedValue(mockRevision);
+
+        await expect(
+          service.update(
+            mockBom.id,
+            { deadline: '2026-12-31' },
+            'user-tpkh',
+            UserRoleCode.TPKH,
+          ),
+        ).rejects.toThrow(BadRequestException);
+      });
+
+      it('rejects header update when current revision is WAIT_SA_APPROVE', async () => {
+        mockRevision.status = BomRevisionStatus.WAIT_SA_APPROVE;
+        bomRepoMock.findOne.mockResolvedValue(mockBom);
+        bomRevisionRepoMock.findOne.mockResolvedValue(mockRevision);
+
+        await expect(
+          service.update(
+            mockBom.id,
+            { deadline: '2026-12-31' },
+            'user-tpkh',
+            UserRoleCode.TPKH,
+          ),
+        ).rejects.toThrow(BadRequestException);
+      });
     });
   });
 });

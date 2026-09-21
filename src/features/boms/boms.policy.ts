@@ -5,6 +5,7 @@ import { UpdateBomDto } from './dto/update-bom.dto';
 import { UpdateBomLineDto } from './dto/update-bom-line.dto';
 import { Bom } from './entities/Bom.entity';
 import { BomRevision } from './entities/BomRevision.entity';
+import { BomLine } from './entities/BomLine.entity';
 import { BomRevisionStatus, BomType } from '../../common/enums/database.enums';
 
 const BOM_CREATOR_ROLES = new Set<string>([
@@ -47,11 +48,32 @@ export function assertCanUpdateBomHeader(
   actorRole: string | null | undefined,
   dto: UpdateBomDto,
   bom: Bom,
+  currentRev?: BomRevision | null,
 ): void {
   if (bom.discontinuedAt) {
     throw new BadRequestException({
       code: ErrorCode.BAD_REQUEST,
       message: 'Không thể chỉnh sửa BOM đã ngừng sử dụng.',
+    });
+  }
+
+  if (
+    currentRev &&
+    (currentRev.status === BomRevisionStatus.CLOSED ||
+      (currentRev.status as any) === 'closed')
+  ) {
+    throw new BadRequestException({
+      code: ErrorCode.BAD_REQUEST,
+      message:
+        'Không thể chỉnh sửa thông tin BOM khi phiên bản hiện tại đã đóng (closed).',
+    });
+  }
+
+  if (currentRev && currentRev.status === BomRevisionStatus.WAIT_SA_APPROVE) {
+    throw new BadRequestException({
+      code: ErrorCode.BAD_REQUEST,
+      message:
+        'Không thể chỉnh sửa thông tin BOM khi phiên bản đang ở bước chờ Giám Đốc duyệt (wait_sa_approve).',
     });
   }
 
@@ -150,6 +172,44 @@ export function assertCanAddLine(
   }
 
   const roleUpper = actorRole.trim().toUpperCase();
+
+  if (currentRev?.status === BomRevisionStatus.WAIT_SA_APPROVE) {
+    forbidden(
+      'Revision đang ở bước chờ Giám Đốc duyệt (wait_sa_approve) là chỉ đọc, không thể thêm dòng vật tư.',
+    );
+  }
+
+  if (currentRev?.status === BomRevisionStatus.WAIT_ACCOUNTING) {
+    forbidden('Không thể thêm dòng vật tư ở bước Kế toán (wait_accounting).');
+  }
+
+  if (currentRev?.status === BomRevisionStatus.WAIT_TPKH_CONFIRM) {
+    if (roleUpper !== UserRoleCode.TPKH) {
+      forbidden(
+        'Chỉ Trưởng phòng Kế hoạch (TPKH) mới có quyền thêm dòng vật tư ở bước N3 (wait_tpkh_confirm).',
+      );
+    }
+    return;
+  }
+
+  if (currentRev?.status === BomRevisionStatus.WAIT_RD) {
+    if (roleUpper !== UserRoleCode.RD) {
+      forbidden(
+        'Chỉ Bộ phận Kỹ thuật (RD) mới có quyền thêm dòng vật tư ở bước N2 (wait_rd).',
+      );
+    }
+    return;
+  }
+
+  if (currentRev?.status === BomRevisionStatus.WAIT_NVKH) {
+    if (roleUpper !== UserRoleCode.NVKH) {
+      forbidden(
+        'Chỉ Nhân viên Kế hoạch (NVKH) mới có quyền thêm dòng vật tư ở bước N1 (wait_nvkh).',
+      );
+    }
+    return;
+  }
+
   if (LINE_TECHNICAL_MUTATION_ROLES.has(roleUpper)) {
     return;
   }
@@ -186,7 +246,18 @@ export function assertCanUpdateLine(
     );
   }
 
+  if (currentRev?.status === BomRevisionStatus.WAIT_SA_APPROVE) {
+    forbidden(
+      'Revision đang ở bước chờ Giám Đốc duyệt (wait_sa_approve) là chỉ đọc, không thể chỉnh sửa dòng vật tư.',
+    );
+  }
+
   if (isUnitCostUpdate) {
+    if (currentRev && currentRev.status !== BomRevisionStatus.WAIT_ACCOUNTING) {
+      forbidden(
+        'Đơn giá vật tư chỉ được phép cập nhật ở bước Kế toán (wait_accounting).',
+      );
+    }
     if (!LINE_UNIT_COST_MUTATION_ROLES.has(roleUpper)) {
       forbidden(
         'Chỉ Kế toán (ACCOUNTING) mới có quyền cập nhật đơn giá vật tư.',
@@ -195,6 +266,39 @@ export function assertCanUpdateLine(
   }
 
   if (isTechnicalUpdate) {
+    if (currentRev?.status === BomRevisionStatus.WAIT_ACCOUNTING) {
+      forbidden(
+        'Không thể cập nhật thông số kỹ thuật ở bước Kế toán (wait_accounting).',
+      );
+    }
+
+    if (currentRev?.status === BomRevisionStatus.WAIT_TPKH_CONFIRM) {
+      if (roleUpper !== UserRoleCode.TPKH) {
+        forbidden(
+          'Chỉ Trưởng phòng Kế hoạch (TPKH) mới có quyền cập nhật thông số kỹ thuật ở bước N3 (wait_tpkh_confirm).',
+        );
+      }
+      return;
+    }
+
+    if (currentRev?.status === BomRevisionStatus.WAIT_RD) {
+      if (roleUpper !== UserRoleCode.RD) {
+        forbidden(
+          'Chỉ Bộ phận Kỹ thuật (RD) mới có quyền cập nhật thông số kỹ thuật ở bước N2 (wait_rd).',
+        );
+      }
+      return;
+    }
+
+    if (currentRev?.status === BomRevisionStatus.WAIT_NVKH) {
+      if (roleUpper !== UserRoleCode.NVKH) {
+        forbidden(
+          'Chỉ Nhân viên Kế hoạch (NVKH) mới có quyền cập nhật thông số kỹ thuật ở bước N1 (wait_nvkh).',
+        );
+      }
+      return;
+    }
+
     if (!LINE_TECHNICAL_MUTATION_ROLES.has(roleUpper)) {
       forbidden(
         'Vai trò của bạn không có quyền cập nhật thông số kỹ thuật vật tư.',
@@ -216,6 +320,44 @@ export function assertCanDeleteLine(
   }
 
   const roleUpper = actorRole.trim().toUpperCase();
+
+  if (currentRev?.status === BomRevisionStatus.WAIT_SA_APPROVE) {
+    forbidden(
+      'Revision đang ở bước chờ Giám Đốc duyệt (wait_sa_approve) là chỉ đọc, không thể xóa dòng vật tư.',
+    );
+  }
+
+  if (currentRev?.status === BomRevisionStatus.WAIT_ACCOUNTING) {
+    forbidden('Không thể xóa dòng vật tư ở bước Kế toán (wait_accounting).');
+  }
+
+  if (currentRev?.status === BomRevisionStatus.WAIT_TPKH_CONFIRM) {
+    if (roleUpper !== UserRoleCode.TPKH) {
+      forbidden(
+        'Chỉ Trưởng phòng Kế hoạch (TPKH) mới có quyền xóa dòng vật tư ở bước N3 (wait_tpkh_confirm).',
+      );
+    }
+    return;
+  }
+
+  if (currentRev?.status === BomRevisionStatus.WAIT_RD) {
+    if (roleUpper !== UserRoleCode.RD) {
+      forbidden(
+        'Chỉ Bộ phận Kỹ thuật (RD) mới có quyền xóa dòng vật tư ở bước N2 (wait_rd).',
+      );
+    }
+    return;
+  }
+
+  if (currentRev?.status === BomRevisionStatus.WAIT_NVKH) {
+    if (roleUpper !== UserRoleCode.NVKH) {
+      forbidden(
+        'Chỉ Nhân viên Kế hoạch (NVKH) mới có quyền xóa dòng vật tư ở bước N1 (wait_nvkh).',
+      );
+    }
+    return;
+  }
+
   if (LINE_TECHNICAL_MUTATION_ROLES.has(roleUpper)) {
     return;
   }
@@ -236,6 +378,46 @@ export function assertCanReorderLines(
   }
 
   const roleUpper = actorRole.trim().toUpperCase();
+
+  if (currentRev?.status === BomRevisionStatus.WAIT_SA_APPROVE) {
+    forbidden(
+      'Revision đang ở bước chờ Giám Đốc duyệt (wait_sa_approve) là chỉ đọc, không thể sắp xếp lại dòng vật tư.',
+    );
+  }
+
+  if (currentRev?.status === BomRevisionStatus.WAIT_ACCOUNTING) {
+    forbidden(
+      'Không thể sắp xếp lại dòng vật tư ở bước Kế toán (wait_accounting).',
+    );
+  }
+
+  if (currentRev?.status === BomRevisionStatus.WAIT_TPKH_CONFIRM) {
+    if (roleUpper !== UserRoleCode.TPKH) {
+      forbidden(
+        'Chỉ Trưởng phòng Kế hoạch (TPKH) mới có quyền sắp xếp lại dòng vật tư ở bước N3 (wait_tpkh_confirm).',
+      );
+    }
+    return;
+  }
+
+  if (currentRev?.status === BomRevisionStatus.WAIT_RD) {
+    if (roleUpper !== UserRoleCode.RD) {
+      forbidden(
+        'Chỉ Bộ phận Kỹ thuật (RD) mới có quyền sắp xếp lại dòng vật tư ở bước N2 (wait_rd).',
+      );
+    }
+    return;
+  }
+
+  if (currentRev?.status === BomRevisionStatus.WAIT_NVKH) {
+    if (roleUpper !== UserRoleCode.NVKH) {
+      forbidden(
+        'Chỉ Nhân viên Kế hoạch (NVKH) mới có quyền sắp xếp lại dòng vật tư ở bước N1 (wait_nvkh).',
+      );
+    }
+    return;
+  }
+
   if (LINE_TECHNICAL_MUTATION_ROLES.has(roleUpper)) {
     return;
   }
@@ -268,10 +450,6 @@ export const FORWARD_TRANSITIONS: Partial<
   [BomRevisionStatus.WAIT_ACCOUNTING]: {
     nextStatus: BomRevisionStatus.WAIT_SA_APPROVE,
     allowedRoles: new Set([UserRoleCode.ACCOUNTING]),
-  },
-  [BomRevisionStatus.WAIT_SA_APPROVE]: {
-    nextStatus: BomRevisionStatus.CLOSED,
-    allowedRoles: new Set([UserRoleCode.SA]),
   },
 };
 
@@ -329,6 +507,14 @@ export function assertCanForwardBom(
     });
   }
 
+  if (currentRev.status === BomRevisionStatus.WAIT_SA_APPROVE) {
+    throw new BadRequestException({
+      code: ErrorCode.BAD_REQUEST,
+      message:
+        'Bước wait_sa_approve không thể forward. Vui lòng sử dụng API approve để phê duyệt và đóng BOM.',
+    });
+  }
+
   const transitionRule = FORWARD_TRANSITIONS[currentRev.status];
   if (!transitionRule) {
     throw new BadRequestException(
@@ -350,6 +536,113 @@ export function assertCanForwardBom(
   }
 
   return transitionRule.nextStatus;
+}
+
+export function assertRevisionDataReadyForForward(
+  currentStatus: BomRevisionStatus,
+  lines: BomLine[],
+): void {
+  if (!lines || lines.length === 0) {
+    throw new BadRequestException({
+      code: ErrorCode.BAD_REQUEST,
+      message:
+        'BOM revision phải có ít nhất một dòng vật tư trước khi chuyển nấc.',
+    });
+  }
+
+  for (const line of lines) {
+    if (!line.materialNameSnapshot || !line.materialNameSnapshot.trim()) {
+      throw new BadRequestException({
+        code: ErrorCode.BAD_REQUEST,
+        message: `Dòng vật tư thứ ${line.orderIndex + 1} thiếu tên vật tư snapshot.`,
+      });
+    }
+    if (!line.unitSnapshot || !line.unitSnapshot.trim()) {
+      throw new BadRequestException({
+        code: ErrorCode.BAD_REQUEST,
+        message: `Dòng vật tư "${line.materialNameSnapshot}" thiếu đơn vị tính snapshot.`,
+      });
+    }
+  }
+
+  if (
+    currentStatus === BomRevisionStatus.WAIT_RD ||
+    currentStatus === BomRevisionStatus.WAIT_TPKH_CONFIRM ||
+    currentStatus === BomRevisionStatus.WAIT_ACCOUNTING
+  ) {
+    for (const line of lines) {
+      if (
+        line.consumption === null ||
+        line.consumption === undefined ||
+        Number(line.consumption) <= 0
+      ) {
+        throw new BadRequestException({
+          code: ErrorCode.BAD_REQUEST,
+          message: `Dòng vật tư "${line.materialNameSnapshot}" chưa có định mức tiêu hao hợp lệ (consumption phải > 0).`,
+        });
+      }
+    }
+  }
+
+  if (currentStatus === BomRevisionStatus.WAIT_ACCOUNTING) {
+    for (const line of lines) {
+      if (
+        line.unitCost === null ||
+        line.unitCost === undefined ||
+        Number(line.unitCost) < 0
+      ) {
+        throw new BadRequestException({
+          code: ErrorCode.BAD_REQUEST,
+          message: `Dòng vật tư "${line.materialNameSnapshot}" chưa có đơn giá hợp lệ (unit_cost phải khác null và >= 0).`,
+        });
+      }
+    }
+  }
+}
+
+export function assertRevisionDataReadyForApprove(lines: BomLine[]): void {
+  if (!lines || lines.length === 0) {
+    throw new BadRequestException({
+      code: ErrorCode.BAD_REQUEST,
+      message:
+        'BOM revision phải có ít nhất một dòng vật tư trước khi phê duyệt.',
+    });
+  }
+
+  for (const line of lines) {
+    if (!line.materialNameSnapshot || !line.materialNameSnapshot.trim()) {
+      throw new BadRequestException({
+        code: ErrorCode.BAD_REQUEST,
+        message: `Dòng vật tư thứ ${line.orderIndex + 1} thiếu tên vật tư snapshot.`,
+      });
+    }
+    if (!line.unitSnapshot || !line.unitSnapshot.trim()) {
+      throw new BadRequestException({
+        code: ErrorCode.BAD_REQUEST,
+        message: `Dòng vật tư "${line.materialNameSnapshot}" thiếu đơn vị tính snapshot.`,
+      });
+    }
+    if (
+      line.consumption === null ||
+      line.consumption === undefined ||
+      Number(line.consumption) <= 0
+    ) {
+      throw new BadRequestException({
+        code: ErrorCode.BAD_REQUEST,
+        message: `Dòng vật tư "${line.materialNameSnapshot}" chưa có định mức tiêu hao hợp lệ (consumption phải > 0).`,
+      });
+    }
+    if (
+      line.unitCost === null ||
+      line.unitCost === undefined ||
+      Number(line.unitCost) < 0
+    ) {
+      throw new BadRequestException({
+        code: ErrorCode.BAD_REQUEST,
+        message: `Dòng vật tư "${line.materialNameSnapshot}" chưa có đơn giá hợp lệ (unit_cost phải khác null và >= 0).`,
+      });
+    }
+  }
 }
 
 export function assertCanRejectBom(

@@ -55,6 +55,8 @@ import {
   assertCanApproveBom,
   assertCanCreateRevision,
   assertCanCopyFitToPo,
+  assertRevisionDataReadyForForward,
+  assertRevisionDataReadyForApprove,
 } from './boms.policy';
 import { BomRevisionStatus, BomType } from '../../common/enums/database.enums';
 
@@ -964,7 +966,14 @@ export class BomsService {
       throw new NotFoundException(`Không tìm thấy BOM với ID: ${id}`);
     }
 
-    assertCanUpdateBomHeader(roleCode, dto, bom);
+    let currentRev: BomRevision | null = null;
+    if (bom.currentRevisionId) {
+      currentRev = await this.bomRevisionRepository.findOne({
+        where: { id: bom.currentRevisionId },
+      });
+    }
+
+    assertCanUpdateBomHeader(roleCode, dto, bom, currentRev);
 
     if (dto.deadline !== undefined) {
       bom.deadline = dto.deadline ? new Date(dto.deadline) : null;
@@ -1280,7 +1289,10 @@ export class BomsService {
 
       // 3. Accounting field (only if provided)
       if (dto.unitCost !== undefined) {
-        line.unitCost = dto.unitCost !== null ? Number(dto.unitCost) : null;
+        line.unitCost =
+          dto.unitCost !== null
+            ? Math.round(Number(dto.unitCost) * 100) / 100
+            : null;
       }
 
       // 4. Order index
@@ -1516,14 +1528,15 @@ export class BomsService {
       const nextStatus = assertCanForwardBom(bom, currentRev, roleCode);
       const oldStatus = currentRev.status;
 
+      const lines = await manager.find(BomLine, {
+        where: { revisionId: currentRev.id },
+        order: { orderIndex: 'ASC' },
+      });
+      assertRevisionDataReadyForForward(currentRev.status, lines);
+
       currentRev.status = nextStatus;
-      if (nextStatus === BomRevisionStatus.CLOSED) {
-        currentRev.approvedBy = userId ?? null;
-        currentRev.approvedAt = new Date();
-      } else {
-        currentRev.approvedBy = null;
-        currentRev.approvedAt = null;
-      }
+      currentRev.approvedBy = null;
+      currentRev.approvedAt = null;
       currentRev.rowVersion = Number(currentRev.rowVersion) + 1;
       await manager.save(BomRevision, currentRev);
 
@@ -1664,6 +1677,12 @@ export class BomsService {
       }
 
       assertCanApproveBom(bom, currentRev, roleCode);
+
+      const lines = await manager.find(BomLine, {
+        where: { revisionId: currentRev.id },
+        order: { orderIndex: 'ASC' },
+      });
+      assertRevisionDataReadyForApprove(lines);
 
       const oldStatus = currentRev.status;
       currentRev.status = BomRevisionStatus.CLOSED;
@@ -2255,19 +2274,26 @@ export class BomsService {
         }
 
         // Verify source Fit BOM belongs to the same style as target PO product
-        if (targetBom.purchaseOrderProductId) {
-          const poProduct = await manager.findOne(PurchaseOrderProduct, {
-            where: { id: targetBom.purchaseOrderProductId },
-          });
-          if (
-            poProduct?.sourceStyleId &&
-            sourceBom.styleId &&
-            sourceBom.styleId !== poProduct.sourceStyleId
-          ) {
-            throw new BadRequestException(
-              'Source revision thuộc Fit BOM của style khác, không thuộc style của sản phẩm đơn hàng này.',
-            );
-          }
+        if (!targetBom.purchaseOrderProductId) {
+          throw new BadRequestException(
+            'Target PO BOM không liên kết với sản phẩm đơn hàng.',
+          );
+        }
+        const poProduct = await manager.findOne(PurchaseOrderProduct, {
+          where: { id: targetBom.purchaseOrderProductId },
+        });
+        if (!poProduct?.sourceStyleId) {
+          throw new BadRequestException(
+            'Sản phẩm đơn hàng không liên kết với style gốc (sourceStyleId), không thể sao chép từ Fit BOM.',
+          );
+        }
+        if (
+          !sourceBom.styleId ||
+          sourceBom.styleId !== poProduct.sourceStyleId
+        ) {
+          throw new BadRequestException(
+            'Source revision thuộc Fit BOM của style khác, không khớp với style của sản phẩm đơn hàng này.',
+          );
         }
       } else {
         // Auto-resolve via target BOM's purchaseOrderProduct -> sourceStyleId

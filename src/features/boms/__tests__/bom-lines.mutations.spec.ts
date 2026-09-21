@@ -273,7 +273,9 @@ describe('BOM Lines Mutations: Add, Update, Delete, Reorder, Snapshot & Field Au
         bomType: BomType.PO,
         bomCode: 'BOM-PO01-P01',
       });
-      const currentRev = createMockRevision();
+      const currentRev = createMockRevision({
+        status: BomRevisionStatus.WAIT_RD,
+      });
       const material = createMockMaterial();
 
       dataSourceMock.transaction.mockImplementation(async (cb: any) => {
@@ -314,7 +316,9 @@ describe('BOM Lines Mutations: Add, Update, Delete, Reorder, Snapshot & Field Au
 
     it('allows TPKH (N3) to add line and see costs', async () => {
       const bom = createMockBom();
-      const currentRev = createMockRevision();
+      const currentRev = createMockRevision({
+        status: BomRevisionStatus.WAIT_TPKH_CONFIRM,
+      });
       const material = createMockMaterial();
 
       dataSourceMock.transaction.mockImplementation(async (cb: any) => {
@@ -575,6 +579,7 @@ describe('BOM Lines Mutations: Add, Update, Delete, Reorder, Snapshot & Field Au
 
     it('allows NVKH/RD/TPKH to update materialId and refreshes snapshots', async () => {
       const { bom, currentRev, line } = setupExistingLine();
+      currentRev.status = BomRevisionStatus.WAIT_RD;
       const newMaterial = createMockMaterial({
         id: 'mat-new',
         materialName: 'Polyester Blend 200gsm',
@@ -626,6 +631,7 @@ describe('BOM Lines Mutations: Add, Update, Delete, Reorder, Snapshot & Field Au
 
     it('rejects NVKH/RD/TPKH from updating unitCost with 403 Forbidden', async () => {
       const { bom, currentRev, line } = setupExistingLine();
+      currentRev.status = BomRevisionStatus.WAIT_ACCOUNTING;
 
       dataSourceMock.transaction.mockImplementation(async (cb: any) => {
         const managerMock = {
@@ -652,6 +658,7 @@ describe('BOM Lines Mutations: Add, Update, Delete, Reorder, Snapshot & Field Au
 
     it('allows ACCOUNTING (N4) to update unitCost', async () => {
       const { bom, currentRev, line } = setupExistingLine();
+      currentRev.status = BomRevisionStatus.WAIT_ACCOUNTING;
 
       dataSourceMock.transaction.mockImplementation(async (cb: any) => {
         const managerMock = {
@@ -682,6 +689,7 @@ describe('BOM Lines Mutations: Add, Update, Delete, Reorder, Snapshot & Field Au
 
     it('rejects ACCOUNTING (N4) from updating technical fields (consumption)', async () => {
       const { bom, currentRev, line } = setupExistingLine();
+      currentRev.status = BomRevisionStatus.WAIT_ACCOUNTING;
 
       dataSourceMock.transaction.mockImplementation(async (cb: any) => {
         const managerMock = {
@@ -740,7 +748,9 @@ describe('BOM Lines Mutations: Add, Update, Delete, Reorder, Snapshot & Field Au
   describe('3. Delete BOM Line (DELETE /api/v1/boms/:id/lines/:lineId)', () => {
     it('allows NVKH/RD/TPKH to delete line and re-compacts order indices', async () => {
       const bom = createMockBom();
-      const currentRev = createMockRevision();
+      const currentRev = createMockRevision({
+        status: BomRevisionStatus.WAIT_TPKH_CONFIRM,
+      });
       const lineToDelete = new BomLine();
       lineToDelete.id = 'line-to-delete';
       lineToDelete.revisionId = currentRev.id;
