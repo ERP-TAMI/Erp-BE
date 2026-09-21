@@ -954,6 +954,9 @@ export class BomsService {
   /**
    * Updates BOM header fields (deadline, rdNote).
    * Enforces role authorization per field and rejects changes on discontinued BOMs.
+   * Atomic within transaction with pessimistic write locking to prevent
+   * a stale-read race where a concurrent forward/approve could change the
+   * revision status between the read and the save.
    */
   async update(
     id: string,
@@ -961,32 +964,38 @@ export class BomsService {
     userId?: string,
     roleCode?: string,
   ): Promise<BomDetailDto> {
-    const bom = await this.bomRepository.findOne({ where: { id } });
-    if (!bom) {
-      throw new NotFoundException(`Không tìm thấy BOM với ID: ${id}`);
-    }
-
-    let currentRev: BomRevision | null = null;
-    if (bom.currentRevisionId) {
-      currentRev = await this.bomRevisionRepository.findOne({
-        where: { id: bom.currentRevisionId },
+    await this.dataSource.transaction(async (manager) => {
+      const bom = await manager.findOne(Bom, {
+        where: { id },
+        lock: { mode: 'pessimistic_write' },
       });
-    }
+      if (!bom) {
+        throw new NotFoundException(`Không tìm thấy BOM với ID: ${id}`);
+      }
 
-    assertCanUpdateBomHeader(roleCode, dto, bom, currentRev);
+      let currentRev: BomRevision | null = null;
+      if (bom.currentRevisionId) {
+        currentRev = await manager.findOne(BomRevision, {
+          where: { id: bom.currentRevisionId },
+          lock: { mode: 'pessimistic_write' },
+        });
+      }
 
-    if (dto.deadline !== undefined) {
-      bom.deadline = dto.deadline ? new Date(dto.deadline) : null;
-    }
+      assertCanUpdateBomHeader(roleCode, dto, bom, currentRev);
 
-    if (dto.rdNote !== undefined) {
-      bom.rdNote = dto.rdNote ? dto.rdNote.trim() : null;
-    }
+      if (dto.deadline !== undefined) {
+        bom.deadline = dto.deadline ? new Date(dto.deadline) : null;
+      }
 
-    bom.updatedBy = userId ?? null;
-    bom.rowVersion = Number(bom.rowVersion) + 1;
+      if (dto.rdNote !== undefined) {
+        bom.rdNote = dto.rdNote ? dto.rdNote.trim() : null;
+      }
 
-    await this.bomRepository.save(bom);
+      bom.updatedBy = userId ?? null;
+      bom.rowVersion = Number(bom.rowVersion) + 1;
+
+      await manager.save(Bom, bom);
+    });
 
     return this.findOne(id, roleCode);
   }
@@ -1065,7 +1074,10 @@ export class BomsService {
     userRole?: string | null,
   ): Promise<BomLineResponseDto> {
     return this.dataSource.transaction(async (manager) => {
-      const bom = await manager.findOne(Bom, { where: { id: bomId } });
+      const bom = await manager.findOne(Bom, {
+        where: { id: bomId },
+        lock: { mode: 'pessimistic_write' },
+      });
       if (!bom) {
         throw new NotFoundException(`Không tìm thấy BOM với ID: ${bomId}`);
       }
@@ -1076,6 +1088,7 @@ export class BomsService {
 
       const currentRev = await manager.findOne(BomRevision, {
         where: { id: bom.currentRevisionId },
+        lock: { mode: 'pessimistic_write' },
       });
       if (!currentRev || currentRev.bomId !== bom.id) {
         throw new BadRequestException(
@@ -1202,7 +1215,10 @@ export class BomsService {
     userRole?: string | null,
   ): Promise<BomLineResponseDto> {
     return this.dataSource.transaction(async (manager) => {
-      const bom = await manager.findOne(Bom, { where: { id: bomId } });
+      const bom = await manager.findOne(Bom, {
+        where: { id: bomId },
+        lock: { mode: 'pessimistic_write' },
+      });
       if (!bom) {
         throw new NotFoundException(`Không tìm thấy BOM với ID: ${bomId}`);
       }
@@ -1213,6 +1229,7 @@ export class BomsService {
 
       const currentRev = await manager.findOne(BomRevision, {
         where: { id: bom.currentRevisionId },
+        lock: { mode: 'pessimistic_write' },
       });
       if (!currentRev || currentRev.bomId !== bom.id) {
         throw new BadRequestException(
@@ -1341,7 +1358,10 @@ export class BomsService {
     userRole?: string | null,
   ): Promise<{ success: boolean; message: string }> {
     return this.dataSource.transaction(async (manager) => {
-      const bom = await manager.findOne(Bom, { where: { id: bomId } });
+      const bom = await manager.findOne(Bom, {
+        where: { id: bomId },
+        lock: { mode: 'pessimistic_write' },
+      });
       if (!bom) {
         throw new NotFoundException(`Không tìm thấy BOM với ID: ${bomId}`);
       }
@@ -1352,6 +1372,7 @@ export class BomsService {
 
       const currentRev = await manager.findOne(BomRevision, {
         where: { id: bom.currentRevisionId },
+        lock: { mode: 'pessimistic_write' },
       });
       if (!currentRev || currentRev.bomId !== bom.id) {
         throw new BadRequestException(
@@ -1410,7 +1431,10 @@ export class BomsService {
     userRole?: string | null,
   ): Promise<BomLineResponseDto[]> {
     return this.dataSource.transaction(async (manager) => {
-      const bom = await manager.findOne(Bom, { where: { id: bomId } });
+      const bom = await manager.findOne(Bom, {
+        where: { id: bomId },
+        lock: { mode: 'pessimistic_write' },
+      });
       if (!bom) {
         throw new NotFoundException(`Không tìm thấy BOM với ID: ${bomId}`);
       }
@@ -1421,6 +1445,7 @@ export class BomsService {
 
       const currentRev = await manager.findOne(BomRevision, {
         where: { id: bom.currentRevisionId },
+        lock: { mode: 'pessimistic_write' },
       });
       if (!currentRev || currentRev.bomId !== bom.id) {
         throw new BadRequestException(

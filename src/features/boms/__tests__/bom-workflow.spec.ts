@@ -1236,10 +1236,8 @@ describe('BOM V2 Workflow State Machine: Forward, Reject, Approve (PR-04 Specifi
 
     describe('Invariant 6: Disallow Header Editing on Closed and wait_sa_approve Revisions', () => {
       it('rejects header update when current revision is CLOSED', async () => {
-        mockRevision.status = BomRevisionStatus.CLOSED;
-        bomRepoMock.findOne.mockResolvedValue(mockBom);
-        bomRevisionRepoMock.findOne.mockResolvedValue(mockRevision);
-
+        setupStatefulWorkflow(BomRevisionStatus.CLOSED);
+        // dataSource.transaction now used – setupStatefulWorkflow already sets it up
         await expect(
           service.update(
             mockBom.id,
@@ -1251,10 +1249,7 @@ describe('BOM V2 Workflow State Machine: Forward, Reject, Approve (PR-04 Specifi
       });
 
       it('rejects header update when current revision is WAIT_SA_APPROVE', async () => {
-        mockRevision.status = BomRevisionStatus.WAIT_SA_APPROVE;
-        bomRepoMock.findOne.mockResolvedValue(mockBom);
-        bomRevisionRepoMock.findOne.mockResolvedValue(mockRevision);
-
+        setupStatefulWorkflow(BomRevisionStatus.WAIT_SA_APPROVE);
         await expect(
           service.update(
             mockBom.id,
@@ -1264,6 +1259,278 @@ describe('BOM V2 Workflow State Machine: Forward, Reject, Approve (PR-04 Specifi
           ),
         ).rejects.toThrow(BadRequestException);
       });
+    });
+  });
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // 8. materialGroupSnapshot enforcement (P1 – bom-v2-flow.md §N1→N2 gate)
+  // ────────────────────────────────────────────────────────────────────────────
+  describe('8. materialGroupSnapshot mandatory at forward and approve', () => {
+    function makeLineWithoutGroup(): BomLine {
+      const line = new BomLine();
+      line.id = 'line-no-group';
+      line.revisionId = 'rev-wf-uuid-1';
+      line.materialId = 'mat-no-group';
+      line.materialNameSnapshot = 'Phụ liệu không có nhóm';
+      line.materialGroupId = null; // material was created without a group
+      line.materialGroupSnapshot = null; // → snapshot is also null
+      line.unitId = 'unit-uuid-1';
+      line.unitSnapshot = 'Cái';
+      line.consumption = 1.0;
+      line.unitCost = 5000;
+      line.orderIndex = 0;
+      return line;
+    }
+
+    it('[forward] blocks N1→N2 when any line has null materialGroupSnapshot', async () => {
+      setupStatefulWorkflow(BomRevisionStatus.WAIT_NVKH);
+
+      // Override manager.find to return a line without a group snapshot
+      const lineWithoutGroup = makeLineWithoutGroup();
+      dataSourceMock.transaction.mockImplementation(async (cb: any) => {
+        const mgr = {
+          findOne: jest
+            .fn()
+            .mockImplementation((entityClass: any, options: any) => {
+              if (entityClass === Bom && options?.where?.id === mockBom.id)
+                return Promise.resolve(mockBom);
+              if (
+                entityClass === BomRevision &&
+                options?.where?.id === mockRevision.id
+              )
+                return Promise.resolve(mockRevision);
+              return Promise.resolve(null);
+            }),
+          find: jest.fn().mockImplementation((entityClass: any) => {
+            if (entityClass === BomLine)
+              return Promise.resolve([lineWithoutGroup]);
+            return Promise.resolve([]);
+          }),
+          create: jest.fn().mockImplementation((_: any, data: any) => data),
+          save: jest
+            .fn()
+            .mockImplementation((_: any, entity: any) =>
+              Promise.resolve(entity),
+            ),
+        };
+        return cb(mgr);
+      });
+
+      await expect(
+        service.forward(
+          mockBom.id,
+          { reason: 'Chuyển bước N1' },
+          'user-nvkh',
+          UserRoleCode.NVKH,
+        ),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('[forward] blocks N1→N2 when any line has empty-string materialGroupSnapshot', async () => {
+      setupStatefulWorkflow(BomRevisionStatus.WAIT_NVKH);
+
+      const lineEmptyGroup = makeLineWithoutGroup();
+      lineEmptyGroup.materialGroupSnapshot = '   '; // whitespace-only
+      dataSourceMock.transaction.mockImplementation(async (cb: any) => {
+        const mgr = {
+          findOne: jest
+            .fn()
+            .mockImplementation((entityClass: any, options: any) => {
+              if (entityClass === Bom && options?.where?.id === mockBom.id)
+                return Promise.resolve(mockBom);
+              if (
+                entityClass === BomRevision &&
+                options?.where?.id === mockRevision.id
+              )
+                return Promise.resolve(mockRevision);
+              return Promise.resolve(null);
+            }),
+          find: jest.fn().mockImplementation((entityClass: any) => {
+            if (entityClass === BomLine)
+              return Promise.resolve([lineEmptyGroup]);
+            return Promise.resolve([]);
+          }),
+          create: jest.fn().mockImplementation((_: any, data: any) => data),
+          save: jest
+            .fn()
+            .mockImplementation((_: any, entity: any) =>
+              Promise.resolve(entity),
+            ),
+        };
+        return cb(mgr);
+      });
+
+      await expect(
+        service.forward(
+          mockBom.id,
+          { reason: 'Chuyển bước N1' },
+          'user-nvkh',
+          UserRoleCode.NVKH,
+        ),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('[approve] blocks approval when any line has null materialGroupSnapshot', async () => {
+      setupStatefulWorkflow(BomRevisionStatus.WAIT_SA_APPROVE);
+
+      const lineWithoutGroup = makeLineWithoutGroup();
+      dataSourceMock.transaction.mockImplementation(async (cb: any) => {
+        const mgr = {
+          findOne: jest
+            .fn()
+            .mockImplementation((entityClass: any, options: any) => {
+              if (entityClass === Bom && options?.where?.id === mockBom.id)
+                return Promise.resolve(mockBom);
+              if (
+                entityClass === BomRevision &&
+                options?.where?.id === mockRevision.id
+              )
+                return Promise.resolve(mockRevision);
+              return Promise.resolve(null);
+            }),
+          find: jest.fn().mockImplementation((entityClass: any) => {
+            if (entityClass === BomLine)
+              return Promise.resolve([lineWithoutGroup]);
+            return Promise.resolve([]);
+          }),
+          create: jest.fn().mockImplementation((_: any, data: any) => data),
+          save: jest
+            .fn()
+            .mockImplementation((_: any, entity: any) =>
+              Promise.resolve(entity),
+            ),
+        };
+        return cb(mgr);
+      });
+
+      await expect(
+        service.approve(
+          mockBom.id,
+          { reason: 'SA phê duyệt' },
+          'user-sa',
+          UserRoleCode.SA,
+        ),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('[forward] succeeds when all lines have a valid materialGroupSnapshot', async () => {
+      // This is the happy-path regression: ensure we did NOT break normal flow
+      setupStatefulWorkflow(BomRevisionStatus.WAIT_NVKH);
+      // setupStatefulWorkflow sets defaultMockLine which already has materialGroupSnapshot = 'Vải chính'
+      const result = await service.forward(
+        mockBom.id,
+        { reason: 'NVKH hoàn tất' },
+        'user-nvkh',
+        UserRoleCode.NVKH,
+      );
+      expect(result.status).toBe(BomRevisionStatus.WAIT_RD);
+    });
+  });
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // 9. Stale-write concurrency guard (P1 – pessimistic_write lock)
+  //
+  //    Unit-test proxy: simulate a race where concurrent forward has already
+  //    advanced the revision to WAIT_RD *before* a stale addLine request
+  //    re-reads state inside the transaction.  The policy check on the locked
+  //    revision must reject the stale write with BadRequestException.
+  // ────────────────────────────────────────────────────────────────────────────
+  describe('9. Stale-write concurrency guard (pessimistic_write simulation)', () => {
+    it('rejects addLine when revision was advanced to wait_rd (simulates stale request after forward)', async () => {
+      setupStatefulWorkflow(BomRevisionStatus.WAIT_NVKH);
+
+      // The "stale" client started at WAIT_NVKH, but by the time the DB lock
+      // is acquired the concurrent forward has already committed → revision is now WAIT_RD.
+      // Our transaction manager returns the already-advanced revision.
+      const advancedRevision = new BomRevision();
+      Object.assign(advancedRevision, mockRevision);
+      advancedRevision.status = BomRevisionStatus.WAIT_RD; // post-forward state
+
+      dataSourceMock.transaction.mockImplementation(async (cb: any) => {
+        const mgr = {
+          findOne: jest
+            .fn()
+            .mockImplementation((entityClass: any, options: any) => {
+              if (entityClass === Bom && options?.where?.id === mockBom.id)
+                return Promise.resolve(mockBom);
+              if (
+                entityClass === BomRevision &&
+                options?.where?.id === mockRevision.id
+              )
+                return Promise.resolve(advancedRevision); // locked read sees advanced state
+              return Promise.resolve(null);
+            }),
+          find: jest.fn().mockResolvedValue([]),
+          create: jest.fn().mockImplementation((_: any, data: any) => data),
+          save: jest
+            .fn()
+            .mockImplementation((_: any, entity: any) =>
+              Promise.resolve(entity),
+            ),
+          createQueryBuilder: jest.fn().mockReturnValue({
+            where: jest.fn().mockReturnThis(),
+            orderBy: jest.fn().mockReturnThis(),
+            getOne: jest.fn().mockResolvedValue(null),
+          }),
+        };
+        return cb(mgr);
+      });
+
+      // NVKH can only add lines at WAIT_NVKH.  The locked read returns WAIT_RD
+      // → assertCanAddLine should throw ForbiddenException.
+      await expect(
+        service.addLine(
+          mockBom.id,
+          { materialId: 'mat-new', consumption: 1.0 },
+          'user-nvkh',
+          UserRoleCode.NVKH,
+        ),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('rejects updateLine when revision was advanced to closed (simulates stale request after approve)', async () => {
+      setupStatefulWorkflow(BomRevisionStatus.WAIT_SA_APPROVE);
+
+      const closedRevision = new BomRevision();
+      Object.assign(closedRevision, mockRevision);
+      closedRevision.status = BomRevisionStatus.CLOSED;
+
+      dataSourceMock.transaction.mockImplementation(async (cb: any) => {
+        const mgr = {
+          findOne: jest
+            .fn()
+            .mockImplementation((entityClass: any, options: any) => {
+              if (entityClass === Bom && options?.where?.id === mockBom.id)
+                return Promise.resolve(mockBom);
+              if (
+                entityClass === BomRevision &&
+                options?.where?.id === mockRevision.id
+              )
+                return Promise.resolve(closedRevision);
+              return Promise.resolve(null);
+            }),
+          find: jest.fn().mockResolvedValue([]),
+          create: jest.fn().mockImplementation((_: any, data: any) => data),
+          save: jest
+            .fn()
+            .mockImplementation((_: any, entity: any) =>
+              Promise.resolve(entity),
+            ),
+        };
+        return cb(mgr);
+      });
+
+      // assertRevisionNotClosed fires before the role guard and throws
+      // BadRequestException (not ForbiddenException) for a CLOSED revision.
+      await expect(
+        service.updateLine(
+          mockBom.id,
+          'line-xyz',
+          { consumption: 2.0 },
+          'user-nvkh',
+          UserRoleCode.NVKH,
+        ),
+      ).rejects.toThrow(BadRequestException);
     });
   });
 });

@@ -61,7 +61,7 @@ export class BomLine {
   @Column({
     type: 'numeric',
     precision: 18,
-    scale: 2,
+    scale: 4,
     nullable: true,
     name: 'unit_cost',
   })

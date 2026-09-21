@@ -22,6 +22,7 @@ import {
   BomRevisionStatus,
   BomType,
 } from '../../../common/enums/database.enums';
+import { UserRoleCode } from '../../user-management/dto/query-users.dto';
 
 describe('BOM Mutations: Create, Update Header, Discontinue (PR-02 Specification)', () => {
   let service: BomsService;
@@ -457,6 +458,33 @@ describe('BOM Mutations: Create, Update Header, Discontinue (PR-02 Specification
   // D. PATCH HEADER (deadline, rdNote)
   // ──────────────────────────────────────────────────────────────────────────
   describe('D. Update BOM Header (PATCH /:id)', () => {
+    /**
+     * Helper: set up dataSourceMock.transaction so it resolves with the given
+     * bom and optional revision inside the manager mock, mirroring how the
+     * update() method now runs entirely within a transaction.
+     */
+    function setupHeaderTxMock(bom: Bom, rev: BomRevision | null = null) {
+      bomRepoMock.findOne.mockResolvedValue(bom);
+      if (rev) {
+        bomRevisionRepoMock.findOne.mockResolvedValue(rev);
+      }
+      const saveMock = jest
+        .fn()
+        .mockImplementation((_: any, entity: any) => Promise.resolve(entity));
+      dataSourceMock.transaction.mockImplementation(async (cb: any) => {
+        const mgr = {
+          findOne: jest.fn().mockImplementation((entityClass: any) => {
+            if (entityClass === Bom) return Promise.resolve(bom);
+            if (entityClass === BomRevision) return Promise.resolve(rev);
+            return Promise.resolve(null);
+          }),
+          save: saveMock,
+        };
+        return cb(mgr);
+      });
+      return saveMock;
+    }
+
     it('26. updates deadline successfully when authorized (NVKH, TPKH, SA)', async () => {
       const bom = new Bom();
       bom.id = 'bom-to-update';
@@ -466,7 +494,7 @@ describe('BOM Mutations: Create, Update Header, Discontinue (PR-02 Specification
       bom.deadline = null;
       bom.rowVersion = 1;
 
-      bomRepoMock.findOne.mockResolvedValue(bom);
+      const saveMock = setupHeaderTxMock(bom, null);
 
       const targetDeadline = '2026-11-01T00:00:00.000Z';
       await service.update(
@@ -476,12 +504,13 @@ describe('BOM Mutations: Create, Update Header, Discontinue (PR-02 Specification
         'NVKH',
       );
 
-      expect(bomRepoMock.save).toHaveBeenCalledWith(
+      expect(saveMock).toHaveBeenCalledWith(
+        Bom,
         expect.objectContaining({
           id: 'bom-to-update',
           deadline: new Date(targetDeadline),
-          bomCode: 'BOM-ORIGINAL', // 30. bom_code không thay đổi
-          bomType: BomType.FIT, // 31. type không thay đổi
+          bomCode: 'BOM-ORIGINAL',
+          bomType: BomType.FIT,
           rowVersion: 2,
         }),
       );
@@ -494,7 +523,7 @@ describe('BOM Mutations: Create, Update Header, Discontinue (PR-02 Specification
       bom.rdNote = null;
       bom.rowVersion = 1;
 
-      bomRepoMock.findOne.mockResolvedValue(bom);
+      const saveMock = setupHeaderTxMock(bom, null);
 
       await service.update(
         'bom-rd-update',
@@ -503,7 +532,8 @@ describe('BOM Mutations: Create, Update Header, Discontinue (PR-02 Specification
         'RD',
       );
 
-      expect(bomRepoMock.save).toHaveBeenCalledWith(
+      expect(saveMock).toHaveBeenCalledWith(
+        Bom,
         expect.objectContaining({
           rdNote: 'New RD Note',
           rowVersion: 2,
@@ -515,7 +545,8 @@ describe('BOM Mutations: Create, Update Header, Discontinue (PR-02 Specification
       const bom = new Bom();
       bom.id = 'bom-1';
       bom.discontinuedAt = null;
-      bomRepoMock.findOne.mockResolvedValue(bom);
+
+      setupHeaderTxMock(bom, null);
 
       await expect(
         service.update(
@@ -531,7 +562,8 @@ describe('BOM Mutations: Create, Update Header, Discontinue (PR-02 Specification
       const bom = new Bom();
       bom.id = 'bom-1';
       bom.discontinuedAt = null;
-      bomRepoMock.findOne.mockResolvedValue(bom);
+
+      setupHeaderTxMock(bom, null);
 
       await expect(
         service.update(
@@ -546,8 +578,9 @@ describe('BOM Mutations: Create, Update Header, Discontinue (PR-02 Specification
     it('35. rejects header update on a discontinued BOM (BadRequestException)', async () => {
       const bom = new Bom();
       bom.id = 'bom-discontinued';
-      bom.discontinuedAt = new Date(); // Discontinued!
-      bomRepoMock.findOne.mockResolvedValue(bom);
+      bom.discontinuedAt = new Date();
+
+      setupHeaderTxMock(bom, null);
 
       await expect(
         service.update(
@@ -560,7 +593,13 @@ describe('BOM Mutations: Create, Update Header, Discontinue (PR-02 Specification
     });
 
     it('36. rejects header update when BOM does not exist (NotFoundException)', async () => {
-      bomRepoMock.findOne.mockResolvedValue(null);
+      dataSourceMock.transaction.mockImplementation(async (cb: any) => {
+        const mgr = {
+          findOne: jest.fn().mockResolvedValue(null),
+          save: jest.fn(),
+        };
+        return cb(mgr);
+      });
 
       await expect(
         service.update(
@@ -570,6 +609,38 @@ describe('BOM Mutations: Create, Update Header, Discontinue (PR-02 Specification
           'TPKH',
         ),
       ).rejects.toThrow(NotFoundException);
+    });
+
+    it('45-47. rejects line mutation on a CLOSED revision with BadRequestException (not ForbiddenException)', async () => {
+      const mockBom = new Bom();
+      mockBom.id = 'bom-closed';
+      const mockRev = new BomRevision();
+      mockRev.id = 'rev-closed';
+      mockRev.status = BomRevisionStatus.CLOSED;
+
+      dataSourceMock.transaction.mockImplementation(async (cb: any) => {
+        const mgr = {
+          findOne: jest.fn().mockImplementation((entityClass: any) => {
+            if (entityClass === Bom) return Promise.resolve(mockBom);
+            if (entityClass === BomRevision) return Promise.resolve(mockRev);
+            return Promise.resolve(null);
+          }),
+          save: jest.fn(),
+        };
+        return cb(mgr);
+      });
+
+      // Any role trying to mutate a CLOSED revision gets BadRequestException
+      // from assertRevisionNotClosed (not ForbiddenException).
+      await expect(
+        service.updateLine(
+          mockBom.id,
+          'line-xyz',
+          { consumption: 2.0 },
+          'user-nvkh',
+          UserRoleCode.NVKH,
+        ),
+      ).rejects.toThrow(BadRequestException);
     });
   });
 

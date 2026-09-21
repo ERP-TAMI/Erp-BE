@@ -557,6 +557,12 @@ export function assertRevisionDataReadyForForward(
         message: `Dòng vật tư thứ ${line.orderIndex + 1} thiếu tên vật tư snapshot.`,
       });
     }
+    if (!line.materialGroupSnapshot || !line.materialGroupSnapshot.trim()) {
+      throw new BadRequestException({
+        code: ErrorCode.BAD_REQUEST,
+        message: `Dòng vật tư "${line.materialNameSnapshot}" thiếu nhóm vật tư snapshot. Vui lòng gán nhóm vật tư cho vật tư này trước khi chuyển nấc.`,
+      });
+    }
     if (!line.unitSnapshot || !line.unitSnapshot.trim()) {
       throw new BadRequestException({
         code: ErrorCode.BAD_REQUEST,
@@ -614,6 +620,12 @@ export function assertRevisionDataReadyForApprove(lines: BomLine[]): void {
       throw new BadRequestException({
         code: ErrorCode.BAD_REQUEST,
         message: `Dòng vật tư thứ ${line.orderIndex + 1} thiếu tên vật tư snapshot.`,
+      });
+    }
+    if (!line.materialGroupSnapshot || !line.materialGroupSnapshot.trim()) {
+      throw new BadRequestException({
+        code: ErrorCode.BAD_REQUEST,
+        message: `Dòng vật tư "${line.materialNameSnapshot}" thiếu nhóm vật tư snapshot. Vui lòng gán nhóm vật tư cho vật tư này trước khi phê duyệt.`,
       });
     }
     if (!line.unitSnapshot || !line.unitSnapshot.trim()) {
