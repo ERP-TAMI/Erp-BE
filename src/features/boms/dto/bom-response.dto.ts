@@ -40,6 +40,7 @@ export interface ProductColorDetailDto {
 export interface PurchaseOrderProductSummaryDto {
   id: string;
   purchaseOrderId: string;
+  sourceStyleId?: string | null;
   productCode: string;
   productName: string;
   category?: string | null;
@@ -51,6 +52,7 @@ export interface PurchaseOrderProductSummaryDto {
 export interface PurchaseOrderProductDetailDto {
   id: string;
   purchaseOrderId: string;
+  sourceStyleId?: string | null;
   productCode: string;
   productName: string;
   category?: string | null;

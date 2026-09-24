@@ -375,6 +375,7 @@ export class BomsService {
           ? {
               id: poProduct.id,
               purchaseOrderId: poProduct.purchaseOrderId,
+              sourceStyleId: poProduct.sourceStyleId ?? null,
               productCode: poProduct.productCode,
               productName: poProduct.productName,
               category: poProduct.category,
@@ -584,6 +585,7 @@ export class BomsService {
         ? {
             id: poProduct.id,
             purchaseOrderId: poProduct.purchaseOrderId,
+            sourceStyleId: poProduct.sourceStyleId ?? null,
             productCode: poProduct.productCode,
             productName: poProduct.productName,
             category: poProduct.category,
@@ -596,6 +598,7 @@ export class BomsService {
         ? {
             id: poProduct.id,
             purchaseOrderId: poProduct.purchaseOrderId,
+            sourceStyleId: poProduct.sourceStyleId ?? null,
             productCode: poProduct.productCode,
             productName: poProduct.productName,
             category: poProduct.category,
@@ -1011,25 +1014,32 @@ export class BomsService {
     userId?: string,
     roleCode?: string,
   ): Promise<BomDetailDto> {
-    const bom = await this.bomRepository.findOne({ where: { id } });
-    if (!bom) {
-      throw new NotFoundException(`Không tìm thấy BOM với ID: ${id}`);
-    }
+    await this.dataSource.transaction(async (manager) => {
+      const bom = await manager.findOne(Bom, {
+        where: { id },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!bom) {
+        throw new NotFoundException(`Không tìm thấy BOM với ID: ${id}`);
+      }
 
-    assertCanDiscontinueBom(roleCode, bom);
+      assertCanDiscontinueBom(roleCode, bom);
 
-    const cleanReason = dto.reason ? dto.reason.trim() : '';
-    if (!cleanReason) {
-      throw new BadRequestException('Lý do ngừng sử dụng không được để trống.');
-    }
+      const cleanReason = dto.reason ? dto.reason.trim() : '';
+      if (!cleanReason) {
+        throw new BadRequestException(
+          'Lý do ngừng sử dụng không được để trống.',
+        );
+      }
 
-    bom.discontinuedAt = new Date();
-    bom.discontinuedBy = userId ?? null;
-    bom.discontinuedReason = cleanReason;
-    bom.updatedBy = userId ?? null;
-    bom.rowVersion = Number(bom.rowVersion) + 1;
+      bom.discontinuedAt = new Date();
+      bom.discontinuedBy = userId ?? null;
+      bom.discontinuedReason = cleanReason;
+      bom.updatedBy = userId ?? null;
+      bom.rowVersion = Number(bom.rowVersion) + 1;
 
-    await this.bomRepository.save(bom);
+      await manager.save(Bom, bom);
+    });
 
     return this.findOne(id, roleCode);
   }
@@ -1306,10 +1316,7 @@ export class BomsService {
 
       // 3. Accounting field (only if provided)
       if (dto.unitCost !== undefined) {
-        line.unitCost =
-          dto.unitCost !== null
-            ? Math.round(Number(dto.unitCost) * 100) / 100
-            : null;
+        line.unitCost = dto.unitCost !== null ? Number(dto.unitCost) : null;
       }
 
       // 4. Order index
@@ -1484,6 +1491,34 @@ export class BomsService {
             'Một hoặc nhiều dòng vật tư không thuộc revision hiện tại.',
           );
         }
+      }
+
+      const allCurrentLines = await manager.find(BomLine, {
+        where: { revisionId: currentRev.id },
+      });
+      if (lineIds.length !== allCurrentLines.length) {
+        throw new BadRequestException(
+          'Danh sách sắp xếp phải bao gồm đầy đủ các dòng của revision hiện tại.',
+        );
+      }
+
+      const currentLineIds = new Set(allCurrentLines.map((line) => line.id));
+      if (lineIds.some((lineId) => !currentLineIds.has(lineId))) {
+        throw new BadRequestException(
+          'Danh sách sắp xếp chứa dòng không thuộc revision hiện tại.',
+        );
+      }
+
+      const expectedOrderIndices = new Set(
+        allCurrentLines.map((_line, index) => index),
+      );
+      if (
+        orderIndices.length !== expectedOrderIndices.size ||
+        orderIndices.some((orderIndex) => !expectedOrderIndices.has(orderIndex))
+      ) {
+        throw new BadRequestException(
+          'orderIndex phải là dãy liên tiếp bắt đầu từ 0.',
+        );
       }
 
       // 2-phase update
@@ -1845,6 +1880,17 @@ export class BomsService {
         );
         await manager.save(BomLine, clonedLines);
       }
+
+      const history = manager.create(BomRevisionStatusHistory, {
+        revisionId: savedRevision.id,
+        oldStatus: null,
+        newStatus: BomRevisionStatus.WAIT_NVKH,
+        action: 'create',
+        reason: cleanReason,
+        changedBy: userId ?? null,
+        changedAt: new Date(),
+      });
+      await manager.save(BomRevisionStatusHistory, history);
 
       bom.currentRevisionId = savedRevision.id;
       bom.updatedBy = userId ?? null;

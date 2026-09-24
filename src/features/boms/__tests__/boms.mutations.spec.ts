@@ -78,7 +78,19 @@ describe('BOM Mutations: Create, Update Header, Discontinue (PR-02 Specification
     };
 
     dataSourceMock = {
-      transaction: jest.fn(),
+      transaction: jest.fn().mockImplementation(async (cb: any) =>
+        cb({
+          findOne: jest.fn().mockImplementation((entityClass, options) => {
+            if (entityClass === Bom) {
+              return bomRepoMock.findOne(options);
+            }
+            return Promise.resolve(null);
+          }),
+          save: jest
+            .fn()
+            .mockImplementation((_entityClass, data) => bomRepoMock.save(data)),
+        }),
+      ),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -673,6 +685,36 @@ describe('BOM Mutations: Create, Update Header, Discontinue (PR-02 Specification
           rowVersion: 2,
         }),
       );
+    });
+
+    it('locks the BOM row before discontinuing to protect currentRevisionId from concurrent revision creation', async () => {
+      const bom = new Bom();
+      bom.id = 'bom-active';
+      bom.discontinuedAt = null;
+      bom.rowVersion = 1;
+      bomRepoMock.findOne.mockResolvedValue(bom);
+
+      const managerFindOne = jest.fn().mockResolvedValue(bom);
+      const managerSave = jest.fn().mockResolvedValue(bom);
+      dataSourceMock.transaction.mockImplementation(async (cb: any) =>
+        cb({ findOne: managerFindOne, save: managerSave }),
+      );
+
+      await service.discontinue(
+        'bom-active',
+        { reason: 'Concurrency guard' },
+        'sa-id',
+        'SA',
+      );
+
+      expect(managerFindOne).toHaveBeenCalledWith(
+        Bom,
+        expect.objectContaining({
+          where: { id: 'bom-active' },
+          lock: { mode: 'pessimistic_write' },
+        }),
+      );
+      expect(managerSave).toHaveBeenCalledWith(Bom, bom);
     });
 
     it('41-42. rejects discontinue request with empty or whitespace-only reason (BadRequestException)', async () => {

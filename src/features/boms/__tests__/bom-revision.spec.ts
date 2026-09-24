@@ -159,6 +159,11 @@ describe('BOM V2 Revision Management + History + Detail + Diff (PR-05 Specificat
             });
             return l;
           }
+          if (entityClass === BomRevisionStatusHistory) {
+            return Object.assign(new BomRevisionStatusHistory(), data, {
+              id: `history-uuid-${mockHistories.length + 1}`,
+            });
+          }
           return data;
         }),
         save: jest.fn().mockImplementation((entityClass, data) => {
@@ -177,6 +182,12 @@ describe('BOM V2 Revision Management + History + Detail + Diff (PR-05 Specificat
             } else {
               mockRevisions.push(data);
             }
+          }
+          if (
+            data instanceof BomRevisionStatusHistory ||
+            entityClass === BomRevisionStatusHistory
+          ) {
+            mockHistories.push(data);
           }
           return Promise.resolve(data);
         }),
@@ -353,6 +364,19 @@ describe('BOM V2 Revision Management + History + Detail + Diff (PR-05 Specificat
       const rev1 = mockRevisions.find((r) => r.revisionNo === 1);
       expect(rev1?.status).toBe(BomRevisionStatus.CLOSED);
       expect(rev1?.approvedBy).toBe('user-sa-1');
+
+      expect(mockHistories).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            revisionId: 'rev-uuid-2',
+            oldStatus: null,
+            newStatus: BomRevisionStatus.WAIT_NVKH,
+            action: 'create',
+            reason: 'Cập nhật định mức sau sản xuất thử',
+            changedBy: 'user-nvkh-1',
+          }),
+        ]),
+      );
     });
 
     it('successfully creates Revision 3 from closed Revision 2', async () => {
@@ -818,8 +842,10 @@ describe('BOM V2 Revision Management + History + Detail + Diff (PR-05 Specificat
       expect(rev1History.length).toBe(1);
       expect(rev1History[0].action).toBe('approve');
 
-      expect(rev2History.length).toBe(1);
-      expect(rev2History[0].action).toBe('forward');
+      expect(rev2History.length).toBe(2);
+      expect(rev2History.map((history) => history.action)).toEqual(
+        expect.arrayContaining(['create', 'forward']),
+      );
     });
   });
 

@@ -678,13 +678,13 @@ describe('BOM Lines Mutations: Add, Update, Delete, Reorder, Snapshot & Field Au
       const res = await service.updateLine(
         'bom-1',
         'line-1',
-        { unitCost: 75.5 },
+        { unitCost: 75.1234 },
         'user-acct',
         'ACCOUNTING',
       );
 
-      expect(res.unitCost).toBe(75.5);
-      expect(res.lineCost).toBe(75.5 * line.consumption);
+      expect(res.unitCost).toBe(75.1234);
+      expect(res.lineCost).toBe(75.1234 * line.consumption);
     });
 
     it('rejects ACCOUNTING (N4) from updating technical fields (consumption)', async () => {
@@ -906,6 +906,62 @@ describe('BOM Lines Mutations: Add, Update, Delete, Reorder, Snapshot & Field Au
             items: [
               { lineId: 'line-1', orderIndex: 0 },
               { lineId: 'line-2', orderIndex: 0 },
+            ],
+          },
+          'user-nvkh',
+          'NVKH',
+        ),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('rejects reorder when the payload omits a current line or uses non-contiguous indices', async () => {
+      const bom = createMockBom();
+      const currentRev = createMockRevision();
+      const l1 = new BomLine();
+      l1.id = 'line-1';
+      l1.revisionId = currentRev.id;
+      const l2 = new BomLine();
+      l2.id = 'line-2';
+      l2.revisionId = currentRev.id;
+
+      dataSourceMock.transaction.mockImplementation(async (cb: any) => {
+        const managerMock = {
+          findOne: jest.fn().mockImplementation((entityClass) => {
+            if (entityClass === Bom) return Promise.resolve(bom);
+            if (entityClass === BomRevision) return Promise.resolve(currentRev);
+            return Promise.resolve(null);
+          }),
+          find: jest
+            .fn()
+            .mockImplementation((_entityClass, options) =>
+              options?.where?.revisionId
+                ? Promise.resolve([l1, l2])
+                : options?.where?.id
+                  ? Promise.resolve(
+                      options.where.id._value?.length === 1 ? [l1] : [l1, l2],
+                    )
+                  : Promise.resolve([]),
+            ),
+        };
+        return cb(managerMock);
+      });
+
+      await expect(
+        service.reorderLines(
+          'bom-1',
+          { items: [{ lineId: 'line-1', orderIndex: 0 }] },
+          'user-nvkh',
+          'NVKH',
+        ),
+      ).rejects.toThrow(BadRequestException);
+
+      await expect(
+        service.reorderLines(
+          'bom-1',
+          {
+            items: [
+              { lineId: 'line-1', orderIndex: 1 },
+              { lineId: 'line-2', orderIndex: 2 },
             ],
           },
           'user-nvkh',
