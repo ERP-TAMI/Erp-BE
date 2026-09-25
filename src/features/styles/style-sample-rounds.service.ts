@@ -306,68 +306,70 @@ export class StyleSampleRoundsService {
 
     const now = new Date();
 
-    return this.dataSource.transaction(async (manager) => {
-      const docRepo = manager.getRepository(Document);
-      const versionRepo = manager.getRepository(DocumentVersion);
-      const imageRepo = manager.getRepository(StyleSampleImage);
+    return this.dataSource
+      .transaction(async (manager) => {
+        const docRepo = manager.getRepository(Document);
+        const versionRepo = manager.getRepository(DocumentVersion);
+        const imageRepo = manager.getRepository(StyleSampleImage);
 
-      const doc = await docRepo.save(
-        docRepo.create({
-          title: dto.fileName,
-          createdBy: userId || (null as any),
-          createdAt: now,
-        }),
-      );
-
-      const version = await versionRepo.save(
-        versionRepo.create({
-          documentId: doc.id,
-          versionNo: 1,
-          originalFileName: dto.fileName,
-          storageKey: dto.objectKey,
-          mimeType: dto.mimeType,
-          byteSize: dto.sizeBytes,
-          status: UploadStatus.READY,
-          uploadedBy: userId || (null as any),
-          uploadedAt: now,
-        }),
-      );
-
-      doc.currentVersionId = version.id;
-      await docRepo.save(doc);
-
-      const orderIndex = await imageRepo.count({
-        where: { sampleRoundId: roundId },
-      });
-      const image = await imageRepo.save(
-        imageRepo.create({
-          sampleRoundId: roundId,
-          documentVersionId: version.id,
-          orderIndex,
-        }),
-      );
-
-      const url = await this.storage.getPresignedGetUrl(
-        dto.objectKey,
-        PRESIGN_GET_EXPIRY_SECONDS,
-      );
-
-      return {
-        id: image.id,
-        url,
-        fileName: dto.fileName,
-        mimeType: dto.mimeType,
-        orderIndex,
-        uploadedAt: now,
-      };
-    }).catch((error) => {
-      if (isDuplicateStorageKeyError(error)) {
-        throw new BadRequestException(
-          'Ảnh này đã được đính kèm trong hệ thống, không thể đính kèm lại.',
+        const doc = await docRepo.save(
+          docRepo.create({
+            title: dto.fileName,
+            createdBy: userId || (null as any),
+            createdAt: now,
+          }),
         );
-      }
-      throw error;
-    });
+
+        const version = await versionRepo.save(
+          versionRepo.create({
+            documentId: doc.id,
+            versionNo: 1,
+            originalFileName: dto.fileName,
+            storageKey: dto.objectKey,
+            mimeType: dto.mimeType,
+            byteSize: dto.sizeBytes,
+            status: UploadStatus.READY,
+            uploadedBy: userId || (null as any),
+            uploadedAt: now,
+          }),
+        );
+
+        doc.currentVersionId = version.id;
+        await docRepo.save(doc);
+
+        const orderIndex = await imageRepo.count({
+          where: { sampleRoundId: roundId },
+        });
+        const image = await imageRepo.save(
+          imageRepo.create({
+            sampleRoundId: roundId,
+            documentVersionId: version.id,
+            orderIndex,
+          }),
+        );
+
+        const url = await this.storage.getPresignedGetUrl(
+          dto.objectKey,
+          PRESIGN_GET_EXPIRY_SECONDS,
+        );
+
+        return {
+          id: image.id,
+          url,
+          fileName: dto.fileName,
+          mimeType: dto.mimeType,
+          orderIndex,
+          uploadedAt: now,
+        };
+      })
+      .catch((error) => {
+        if (isDuplicateStorageKeyError(error)) {
+          throw new BadRequestException(
+            'Ảnh này đã được đính kèm trong hệ thống, không thể đính kèm lại.',
+          );
+        }
+        throw error;
+      });
   }
 
   async getImageDownloadUrl(

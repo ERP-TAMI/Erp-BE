@@ -36,10 +36,30 @@ export const FIT_BOM_DEMO_SEED: FitBomSeed[] = [
     createdByEmail: 'nvkh@tami.test',
     approvedByEmail: null,
     lines: [
-      { materialCode: 'BT-001', consumption: 1, unitCost: 350, note: 'Nút lưng quần' },
-      { materialCode: 'ZP-001', consumption: 1, unitCost: 1200, note: 'Khoá kéo trước' },
-      { materialCode: 'TAPE-001', consumption: 0.8, unitCost: 800, note: 'Dây thun lưng' },
-      { materialCode: 'FUS-BLK', consumption: 0.15, unitCost: 15000, note: 'Ép cạp lưng' },
+      {
+        materialCode: 'BT-001',
+        consumption: 1,
+        unitCost: 350,
+        note: 'Nút lưng quần',
+      },
+      {
+        materialCode: 'ZP-001',
+        consumption: 1,
+        unitCost: 1200,
+        note: 'Khoá kéo trước',
+      },
+      {
+        materialCode: 'TAPE-001',
+        consumption: 0.8,
+        unitCost: 800,
+        note: 'Dây thun lưng',
+      },
+      {
+        materialCode: 'FUS-BLK',
+        consumption: 0.15,
+        unitCost: 15000,
+        note: 'Ép cạp lưng',
+      },
     ],
   },
   {
@@ -51,10 +71,30 @@ export const FIT_BOM_DEMO_SEED: FitBomSeed[] = [
     createdByEmail: 'nvkh@tami.test',
     approvedByEmail: 'sa@tami.test',
     lines: [
-      { materialCode: 'HT-001', consumption: 1, unitCost: 900, note: 'Hangtag chính' },
-      { materialCode: 'ML-001', consumption: 1, unitCost: 300, note: 'Nhãn chính (main label)' },
-      { materialCode: 'CL-001', consumption: 1, unitCost: 200, note: 'Nhãn hướng dẫn giặt' },
-      { materialCode: 'SL-001', consumption: 1, unitCost: 200, note: 'Nhãn size' },
+      {
+        materialCode: 'HT-001',
+        consumption: 1,
+        unitCost: 900,
+        note: 'Hangtag chính',
+      },
+      {
+        materialCode: 'ML-001',
+        consumption: 1,
+        unitCost: 300,
+        note: 'Nhãn chính (main label)',
+      },
+      {
+        materialCode: 'CL-001',
+        consumption: 1,
+        unitCost: 200,
+        note: 'Nhãn hướng dẫn giặt',
+      },
+      {
+        materialCode: 'SL-001',
+        consumption: 1,
+        unitCost: 200,
+        note: 'Nhãn size',
+      },
     ],
   },
 ];
@@ -64,7 +104,9 @@ async function getUserId(
   email: string | null,
 ): Promise<string | null> {
   if (!email) return null;
-  const rows = await manager.query(`SELECT id FROM users WHERE email = $1`, [email]);
+  const rows = await manager.query(`SELECT id FROM users WHERE email = $1`, [
+    email,
+  ]);
   return rows[0]?.id ?? null;
 }
 
@@ -82,9 +124,10 @@ async function upsertStyle(
   );
   if (inserted.length > 0) return inserted[0].id as string;
 
-  const existing = await manager.query(`SELECT id FROM styles WHERE style_code = $1`, [
-    seed.styleCode,
-  ]);
+  const existing = await manager.query(
+    `SELECT id FROM styles WHERE style_code = $1`,
+    [seed.styleCode],
+  );
   return existing[0].id as string;
 }
 
@@ -104,9 +147,10 @@ async function upsertFitBom(
   );
   if (inserted.length > 0) return inserted[0].id as string;
 
-  const existing = await manager.query(`SELECT id FROM boms WHERE bom_code = $1`, [
-    seed.bomCode,
-  ]);
+  const existing = await manager.query(
+    `SELECT id FROM boms WHERE bom_code = $1`,
+    [seed.bomCode],
+  );
   return existing[0].id as string;
 }
 
@@ -136,10 +180,10 @@ async function upsertRevision(
           )
         )[0].id;
 
-  await manager.query(`UPDATE boms SET current_revision_id = $1 WHERE id = $2`, [
-    revisionId,
-    bomId,
-  ]);
+  await manager.query(
+    `UPDATE boms SET current_revision_id = $1 WHERE id = $2`,
+    [revisionId, bomId],
+  );
 
   return revisionId;
 }
@@ -218,17 +262,30 @@ export async function seedFitBomDemo(manager: EntityManager): Promise<void> {
 
     const styleId = await upsertStyle(manager, seed, createdBy);
     const bomId = await upsertFitBom(manager, styleId, seed, createdBy);
-    const revisionId = await upsertRevision(manager, bomId, seed, createdBy, approvedBy);
+    const revisionId = await upsertRevision(
+      manager,
+      bomId,
+      seed,
+      createdBy,
+      approvedBy,
+    );
 
     for (let i = 0; i < seed.lines.length; i++) {
       await upsertLine(manager, revisionId, seed.lines[i], i);
     }
 
-    await ensureRevisionHistory(manager, revisionId, seed, approvedBy ?? createdBy);
+    await ensureRevisionHistory(
+      manager,
+      revisionId,
+      seed,
+      approvedBy ?? createdBy,
+    );
   }
 }
 
-export async function seedFitBomDemoCatalog(dataSource: DataSource): Promise<void> {
+export async function seedFitBomDemoCatalog(
+  dataSource: DataSource,
+): Promise<void> {
   await dataSource.transaction(seedFitBomDemo);
 }
 

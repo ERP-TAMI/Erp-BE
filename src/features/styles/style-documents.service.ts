@@ -130,62 +130,64 @@ export class StyleDocumentsService {
 
     const now = new Date();
 
-    return this.dataSource.transaction(async (manager) => {
-      const docRepo = manager.getRepository(Document);
-      const versionRepo = manager.getRepository(DocumentVersion);
-      const styleDocRepo = manager.getRepository(StyleDocument);
+    return this.dataSource
+      .transaction(async (manager) => {
+        const docRepo = manager.getRepository(Document);
+        const versionRepo = manager.getRepository(DocumentVersion);
+        const styleDocRepo = manager.getRepository(StyleDocument);
 
-      const doc = await docRepo.save(
-        docRepo.create({
-          title: dto.fileName,
-          createdBy: userId || (null as any),
-          createdAt: now,
-        }),
-      );
+        const doc = await docRepo.save(
+          docRepo.create({
+            title: dto.fileName,
+            createdBy: userId || (null as any),
+            createdAt: now,
+          }),
+        );
 
-      const version = await versionRepo.save(
-        versionRepo.create({
+        const version = await versionRepo.save(
+          versionRepo.create({
+            documentId: doc.id,
+            versionNo: 1,
+            originalFileName: dto.fileName,
+            storageKey: dto.objectKey,
+            mimeType: dto.mimeType,
+            byteSize: dto.sizeBytes,
+            status: UploadStatus.READY,
+            uploadedBy: userId || (null as any),
+            uploadedAt: now,
+          }),
+        );
+
+        doc.currentVersionId = version.id;
+        await docRepo.save(doc);
+
+        await styleDocRepo.save(
+          styleDocRepo.create({
+            styleId,
+            documentId: doc.id,
+            purpose: DocumentPurpose.FIT_ATTACHMENT,
+            linkedBy: userId ?? null,
+            linkedAt: now,
+          }),
+        );
+
+        return {
           documentId: doc.id,
-          versionNo: 1,
-          originalFileName: dto.fileName,
-          storageKey: dto.objectKey,
+          fileName: dto.fileName,
           mimeType: dto.mimeType,
           byteSize: dto.sizeBytes,
-          status: UploadStatus.READY,
-          uploadedBy: userId || (null as any),
           uploadedAt: now,
-        }),
-      );
-
-      doc.currentVersionId = version.id;
-      await docRepo.save(doc);
-
-      await styleDocRepo.save(
-        styleDocRepo.create({
-          styleId,
-          documentId: doc.id,
           purpose: DocumentPurpose.FIT_ATTACHMENT,
-          linkedBy: userId ?? null,
-          linkedAt: now,
-        }),
-      );
-
-      return {
-        documentId: doc.id,
-        fileName: dto.fileName,
-        mimeType: dto.mimeType,
-        byteSize: dto.sizeBytes,
-        uploadedAt: now,
-        purpose: DocumentPurpose.FIT_ATTACHMENT,
-      };
-    }).catch((error) => {
-      if (isDuplicateStorageKeyError(error)) {
-        throw new BadRequestException(
-          'Tệp này đã được đính kèm trong hệ thống, không thể đính kèm lại.',
-        );
-      }
-      throw error;
-    });
+        };
+      })
+      .catch((error) => {
+        if (isDuplicateStorageKeyError(error)) {
+          throw new BadRequestException(
+            'Tệp này đã được đính kèm trong hệ thống, không thể đính kèm lại.',
+          );
+        }
+        throw error;
+      });
   }
 
   async list(styleId: string): Promise<StyleDocumentListItem[]> {
