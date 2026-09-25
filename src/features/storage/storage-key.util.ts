@@ -23,3 +23,26 @@ export function isResolvableObjectKey(
 ): key is string {
   return Boolean(key) && !isLegacyLocalStorageKey(key);
 }
+
+/**
+ * `confirm` chỉ nên chấp nhận objectKey nằm trong prefix mà chính endpoint đó
+ * đã presign — nếu không check, client có thể confirm bất kỳ objectKey nào
+ * đã tồn tại trên S3 (kể cả của một bản ghi khác) vào bản ghi hiện tại.
+ */
+export function isObjectKeyInScope(
+  objectKey: string,
+  expectedPrefix: string,
+): boolean {
+  return objectKey.startsWith(expectedPrefix);
+}
+
+/**
+ * `document_versions.storage_key` có UNIQUE constraint — confirm cùng một
+ * objectKey lần thứ hai (double-submit, retry sau lỗi mạng) ném
+ * QueryFailedError ra ngoài thành 500 kèm nguyên tên ràng buộc trong DB.
+ * Gọi hàm này trong `.catch()` của transaction để đổi thành 400 đọc được.
+ */
+export function isDuplicateStorageKeyError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error ?? '');
+  return message.includes('document_versions_storage_key_key');
+}
