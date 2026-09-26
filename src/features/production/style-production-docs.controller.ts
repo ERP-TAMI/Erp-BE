@@ -14,6 +14,7 @@ import {
 } from '@nestjs/common';
 import type { Response } from 'express';
 import { StyleProductionDocsService } from './style-production-docs.service';
+import { Auth } from '../../common/decorators/auth.decorator';
 import {
   CreateStyleProductionDocDto,
   UpdateStyleProductionDocDto,
@@ -22,6 +23,7 @@ import {
   ResyncProductionDocDto,
 } from './dto';
 
+@Auth()
 @Controller('styles/:styleId/production-docs')
 export class StyleProductionDocsController {
   constructor(private readonly service: StyleProductionDocsService) {}
