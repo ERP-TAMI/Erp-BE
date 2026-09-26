@@ -235,8 +235,7 @@ export function assertCanUpdateLine(
   const isTechnicalUpdate =
     dto.materialId !== undefined ||
     dto.consumption !== undefined ||
-    dto.note !== undefined ||
-    dto.orderIndex !== undefined;
+    dto.note !== undefined;
 
   const isUnitCostUpdate = dto.unitCost !== undefined;
 

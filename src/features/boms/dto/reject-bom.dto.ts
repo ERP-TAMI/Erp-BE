@@ -3,8 +3,9 @@ import { Transform } from 'class-transformer';
 import { ApiProperty } from '@nestjs/swagger';
 import { BomRevisionStatus } from '../../../common/enums/database.enums';
 import { IsAbsent } from './create-bom.dto';
+import { ExpectedRowVersionDto } from './expected-row-version.dto';
 
-export class RejectBomDto {
+export class RejectBomDto extends ExpectedRowVersionDto {
   @ApiProperty({
     enum: BomRevisionStatus,
     description:

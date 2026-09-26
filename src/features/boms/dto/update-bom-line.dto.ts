@@ -1,11 +1,4 @@
-import {
-  IsInt,
-  IsNumber,
-  IsOptional,
-  IsString,
-  IsUUID,
-  Min,
-} from 'class-validator';
+import { IsNumber, IsOptional, IsString, IsUUID, Min } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { IsAbsent } from './create-bom.dto';
@@ -59,16 +52,6 @@ export class UpdateBomLineDto {
   @IsOptional()
   @IsString()
   note?: string | null;
-
-  @ApiPropertyOptional({
-    description: 'Thứ tự hiển thị',
-    example: 1,
-  })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt({ message: 'orderIndex must be an integer' })
-  @Min(0, { message: 'orderIndex must be greater than or equal to 0' })
-  orderIndex?: number;
 
   // Reject client-injected snapshots and calculated fields
   @IsAbsent({

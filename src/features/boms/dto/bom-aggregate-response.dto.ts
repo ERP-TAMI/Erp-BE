@@ -45,6 +45,13 @@ export class BomAggregateItemDto {
   materialId: string;
 
   @ApiProperty({
+    description: 'Mã vật tư hiện tại từ danh mục nguyên phụ liệu',
+    example: 'FAB-00042',
+    nullable: true,
+  })
+  materialCode: string | null;
+
+  @ApiProperty({
     description: 'Snapshot tên vật tư lịch sử',
     example: 'Vải Cotton 100% 220gsm',
   })

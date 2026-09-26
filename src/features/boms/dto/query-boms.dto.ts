@@ -20,13 +20,6 @@ export class QueryBomsDto {
   @IsString()
   status?: string;
 
-  @ApiPropertyOptional({
-    description: 'Search term across bom_code, style, po, product',
-  })
-  @IsOptional()
-  @IsString()
-  search?: string;
-
   @ApiPropertyOptional({ description: 'Filter by exact BOM code' })
   @IsOptional()
   @IsString()
@@ -49,6 +42,11 @@ export class QueryBomsDto {
   @IsString()
   product?: string;
 
+  @ApiPropertyOptional({ description: 'Filter by PO product color name' })
+  @IsOptional()
+  @IsString()
+  color?: string;
+
   @ApiPropertyOptional({ description: 'Page number', default: 1 })
   @IsOptional()
   @Type(() => Number)
@@ -61,7 +59,7 @@ export class QueryBomsDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  @Max(200)
+  @Max(100)
   limit?: number = 10;
 
   @ApiPropertyOptional({ description: 'Sort field', default: 'createdAt' })

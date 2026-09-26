@@ -101,6 +101,21 @@ export class BomsService {
     private readonly dataSource: DataSource,
   ) {}
 
+  private assertExpectedRowVersion(
+    currentRev: BomRevision,
+    expectedRowVersion: number,
+  ): void {
+    const currentRowVersion = Number(currentRev.rowVersion);
+    if (currentRowVersion !== Number(expectedRowVersion)) {
+      throw new ConflictException({
+        message:
+          'BOM đã được cập nhật bởi người khác. Hãy tải lại dữ liệu trước khi tiếp tục.',
+        expectedRowVersion: Number(expectedRowVersion),
+        currentRowVersion,
+      });
+    }
+  }
+
   /**
    * List BOMs with pagination, filtering, and live relation data.
    * Eliminates N+1 queries using bulk fetches for quantities, colors, and costs.
@@ -145,21 +160,6 @@ export class BomsService {
       }
     }
 
-    if (query.search?.trim()) {
-      const searchParam = `%${query.search.trim()}%`;
-      qb.andWhere(
-        `(
-          bom.bom_code ILIKE :search
-          OR style.style_code ILIKE :search
-          OR style.style_name ILIKE :search
-          OR pop.product_code ILIKE :search
-          OR pop.product_name ILIKE :search
-          OR po.po_code ILIKE :search
-        )`,
-        { search: searchParam },
-      );
-    }
-
     if (query.bomCode?.trim()) {
       qb.andWhere('bom.bom_code ILIKE :bomCode', {
         bomCode: `%${query.bomCode.trim()}%`,
@@ -169,7 +169,7 @@ export class BomsService {
     if (query.style?.trim()) {
       const styleFilter = query.style.trim();
       qb.andWhere(
-        '(style.style_code ILIKE :styleFilter OR bom.style_id::text = :styleRaw)',
+        '(style.style_code ILIKE :styleFilter OR style.style_name ILIKE :styleFilter OR bom.style_id::text = :styleRaw)',
         {
           styleFilter: `%${styleFilter}%`,
           styleRaw: styleFilter,
@@ -188,12 +188,23 @@ export class BomsService {
     if (query.product?.trim()) {
       const prodFilter = query.product.trim();
       qb.andWhere(
-        '(pop.product_code ILIKE :prodFilter OR bom.purchase_order_product_id::text = :prodRaw)',
+        '(pop.product_code ILIKE :prodFilter OR pop.product_name ILIKE :prodFilter OR bom.purchase_order_product_id::text = :prodRaw)',
         {
           prodFilter: `%${prodFilter}%`,
           prodRaw: prodFilter,
         },
       );
+    }
+
+    if (query.color?.trim()) {
+      qb.leftJoin(
+        'purchase_order_product_colors',
+        'popc',
+        'pop.id = popc.product_id',
+      );
+      qb.andWhere('popc.color_name ILIKE :colorFilter', {
+        colorFilter: `%${query.color.trim()}%`,
+      });
     }
 
     // ─── Sorting & Pagination ─────────────────────────────────────────────
@@ -647,7 +658,9 @@ export class BomsService {
       costPerUnit,
       currentOrderQuantity,
       currentOrderCost,
-      rowVersion: bom.rowVersion,
+      rowVersion: currentRevision
+        ? Number(currentRevision.rowVersion)
+        : Number(bom.rowVersion),
       createdAt: bom.createdAt,
       updatedAt: bom.updatedAt,
     };
@@ -994,6 +1007,11 @@ export class BomsService {
         bom.rdNote = dto.rdNote ? dto.rdNote.trim() : null;
       }
 
+      if (currentRev) {
+        currentRev.rowVersion = Number(currentRev.rowVersion) + 1;
+        await manager.save(BomRevision, currentRev);
+      }
+
       bom.updatedBy = userId ?? null;
       bom.rowVersion = Number(bom.rowVersion) + 1;
 
@@ -1023,6 +1041,22 @@ export class BomsService {
         throw new NotFoundException(`Không tìm thấy BOM với ID: ${id}`);
       }
 
+      if (!bom.currentRevisionId) {
+        throw new BadRequestException('BOM chưa có revision hiện tại.');
+      }
+
+      const currentRev = await manager.findOne(BomRevision, {
+        where: { id: bom.currentRevisionId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!currentRev || currentRev.bomId !== bom.id) {
+        throw new BadRequestException(
+          'Current revision không hợp lệ hoặc không thuộc BOM này.',
+        );
+      }
+
+      this.assertExpectedRowVersion(currentRev, dto.expectedRowVersion);
+
       assertCanDiscontinueBom(roleCode, bom);
 
       const cleanReason = dto.reason ? dto.reason.trim() : '';
@@ -1036,8 +1070,10 @@ export class BomsService {
       bom.discontinuedBy = userId ?? null;
       bom.discontinuedReason = cleanReason;
       bom.updatedBy = userId ?? null;
+      currentRev.rowVersion = Number(currentRev.rowVersion) + 1;
       bom.rowVersion = Number(bom.rowVersion) + 1;
 
+      await manager.save(BomRevision, currentRev);
       await manager.save(Bom, bom);
     });
 
@@ -1200,6 +1236,10 @@ export class BomsService {
 
       try {
         const savedLine = await manager.save(BomLine, line);
+        currentRev.rowVersion = Number(currentRev.rowVersion) + 1;
+        bom.rowVersion = Number(bom.rowVersion) + 1;
+        await manager.save(BomRevision, currentRev);
+        await manager.save(Bom, bom);
         return this.mapLineToDto(savedLine, userRole);
       } catch (err: any) {
         if (err?.code === '23505') {
@@ -1319,30 +1359,12 @@ export class BomsService {
         line.unitCost = dto.unitCost !== null ? Number(dto.unitCost) : null;
       }
 
-      // 4. Order index
-      if (dto.orderIndex !== undefined && dto.orderIndex !== line.orderIndex) {
-        const targetIdx = dto.orderIndex;
-        // Check if target index exists in current revision
-        const otherLine = await manager.findOne(BomLine, {
-          where: { revisionId: currentRev.id, orderIndex: targetIdx },
-        });
-
-        // Temp move current line to safe offset
-        await manager.update(BomLine, { id: line.id }, { orderIndex: 1000000 });
-
-        if (otherLine && otherLine.id !== line.id) {
-          await manager.update(
-            BomLine,
-            { id: otherLine.id },
-            { orderIndex: line.orderIndex },
-          );
-        }
-
-        line.orderIndex = targetIdx;
-      }
-
       try {
         const savedLine = await manager.save(BomLine, line);
+        currentRev.rowVersion = Number(currentRev.rowVersion) + 1;
+        bom.rowVersion = Number(bom.rowVersion) + 1;
+        await manager.save(BomRevision, currentRev);
+        await manager.save(Bom, bom);
         return this.mapLineToDto(savedLine, userRole);
       } catch (err: any) {
         if (err?.code === '23505') {
@@ -1423,6 +1445,11 @@ export class BomsService {
           { orderIndex: i },
         );
       }
+
+      currentRev.rowVersion = Number(currentRev.rowVersion) + 1;
+      bom.rowVersion = Number(bom.rowVersion) + 1;
+      await manager.save(BomRevision, currentRev);
+      await manager.save(Bom, bom);
 
       return { success: true, message: 'Đã xóa dòng vật tư thành công.' };
     });
@@ -1543,6 +1570,11 @@ export class BomsService {
         order: { orderIndex: 'ASC' },
       });
 
+      currentRev.rowVersion = Number(currentRev.rowVersion) + 1;
+      bom.rowVersion = Number(bom.rowVersion) + 1;
+      await manager.save(BomRevision, currentRev);
+      await manager.save(Bom, bom);
+
       return updatedLines.map((l) => this.mapLineToDto(l, userRole));
     });
   }
@@ -1584,6 +1616,8 @@ export class BomsService {
           'Current revision không hợp lệ hoặc không thuộc BOM này.',
         );
       }
+
+      this.assertExpectedRowVersion(currentRev, dto.expectedRowVersion);
 
       const nextStatus = assertCanForwardBom(bom, currentRev, roleCode);
       const oldStatus = currentRev.status;
@@ -1656,6 +1690,8 @@ export class BomsService {
           'Current revision không hợp lệ hoặc không thuộc BOM này.',
         );
       }
+
+      this.assertExpectedRowVersion(currentRev, dto.expectedRowVersion);
 
       const cleanReason = dto?.reason ? dto.reason.trim() : '';
       assertCanRejectBom(
@@ -1735,6 +1771,8 @@ export class BomsService {
           'Current revision không hợp lệ hoặc không thuộc BOM này.',
         );
       }
+
+      this.assertExpectedRowVersion(currentRev, dto.expectedRowVersion);
 
       assertCanApproveBom(bom, currentRev, roleCode);
 
@@ -2460,6 +2498,7 @@ export class BomsService {
 
       // 8. Update Target Revision Lineage (sourceRevisionId)
       targetRev.sourceRevisionId = sourceRev.id;
+      targetRev.rowVersion = Number(targetRev.rowVersion) + 1;
       await manager.save(BomRevision, targetRev);
 
       // 9. Increment Target BOM rowVersion

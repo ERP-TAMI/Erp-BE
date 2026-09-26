@@ -4,6 +4,7 @@ export * from './bom-response.dto';
 export * from './create-bom.dto';
 export * from './update-bom.dto';
 export * from './discontinue-bom.dto';
+export * from './expected-row-version.dto';
 export * from './create-bom-line.dto';
 export * from './update-bom-line.dto';
 export * from './reorder-bom-lines.dto';

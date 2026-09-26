@@ -135,6 +135,7 @@ export interface BomDetailDto {
   costPerUnit: number | null;
   currentOrderQuantity: number | null;
   currentOrderCost: number | null;
+  /** Optimistic concurrency version of the current revision. */
   rowVersion: number;
   createdAt: Date;
   updatedAt: Date;

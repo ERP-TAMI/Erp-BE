@@ -1,8 +1,9 @@
 import { IsOptional, IsString } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { IsAbsent } from './create-bom.dto';
+import { ExpectedRowVersionDto } from './expected-row-version.dto';
 
-export class ApproveBomDto {
+export class ApproveBomDto extends ExpectedRowVersionDto {
   @ApiPropertyOptional({
     description: 'Ghi chú khi phê duyệt (nếu có)',
     example: 'Đồng ý phê duyệt đóng BOM cho sản xuất',
