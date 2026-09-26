@@ -1,5 +1,13 @@
-import { Entity, Column, PrimaryGeneratedColumn, Index } from 'typeorm';
+import {
+  Entity,
+  Column,
+  PrimaryGeneratedColumn,
+  Index,
+  ManyToOne,
+  JoinColumn,
+} from 'typeorm';
 import { BomRevisionStatus } from '../../../common/enums/database.enums';
+import { BomRevision } from './BomRevision.entity';
 
 @Entity('bom_revision_status_history')
 @Index('ix_bom_revision_status_history', ['revisionId', 'changedAt', 'id'])
@@ -9,6 +17,12 @@ export class BomRevisionStatusHistory {
 
   @Column({ type: 'uuid', name: 'revision_id' })
   revisionId: string;
+
+  @ManyToOne(() => BomRevision, (rev) => rev.statusHistory, {
+    onDelete: 'CASCADE',
+  })
+  @JoinColumn({ name: 'revision_id' })
+  revision?: BomRevision;
 
   @Column({
     type: 'enum',
