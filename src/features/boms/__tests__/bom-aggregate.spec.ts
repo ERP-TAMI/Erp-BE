@@ -29,6 +29,290 @@ describe('BOM V2 NPL Aggregate & Backend Completion (PR-07 Specification)', () =
   let mockRevisions: any[];
   let mockLines: any[];
   let mockColorSizeRows: any[];
+  let aggregateAndWhereSpy: jest.Mock;
+  let aggregateQueryMetrics: { rawQueryCount: number };
+
+  type QueryState = {
+    joins: Array<{ kind: 'inner' | 'left'; alias: string }>;
+    filters: Array<{ sql: string; params?: Record<string, unknown> }>;
+    selections: Array<{ expression: string; alias?: string }>;
+    groupBy: string[];
+    offset: number;
+    limit: number;
+  };
+
+  function eligibleBoms() {
+    return mockBoms.filter((bom) => {
+      if (bom.bomType !== BomType.PO || bom.discontinuedAt) return false;
+      const revision = mockRevisions.find(
+        (candidate) => candidate.id === bom.currentRevisionId,
+      );
+      return revision?.status === BomRevisionStatus.CLOSED;
+    });
+  }
+
+  function selectedLines(state: QueryState) {
+    const materialId = state.filters
+      .map((filter) => filter.params?.materialId)
+      .find((value) => typeof value === 'string');
+    const materialSearch = state.filters
+      .map((filter) => filter.params?.materialSearch)
+      .find((value) => typeof value === 'string');
+    const eligible = eligibleBoms();
+    const revisionIds = new Set(eligible.map((bom) => bom.currentRevisionId));
+
+    return mockLines.filter((line) => {
+      if (!revisionIds.has(line.revisionId) || !line.materialId) return false;
+      if (materialId && line.materialId !== materialId) return false;
+      if (
+        materialSearch &&
+        !`${line.materialNameSnapshot ?? ''} ${line.materialGroupSnapshot ?? ''}`
+          .toLowerCase()
+          .includes(String(materialSearch).replaceAll('%', '').toLowerCase())
+      ) {
+        return false;
+      }
+      return true;
+    });
+  }
+
+  function queryGroupRows(state: QueryState) {
+    const eligible = eligibleBoms();
+    const lines = selectedLines(state);
+    const groups = new Map<string, any>();
+
+    for (const bom of eligible) {
+      const productId = bom.purchaseOrderProductId;
+      for (const line of lines.filter(
+        (candidate) => candidate.revisionId === bom.currentRevisionId,
+      )) {
+        const quantities = mockColorSizeRows.filter(
+          (row) => row.productId === productId,
+        );
+        const joinedRows = quantities.length ? quantities : [null];
+        const key = JSON.stringify([line.materialId, line.unitSnapshot]);
+        let group = groups.get(key);
+        if (!group) {
+          group = {
+            materialId: line.materialId,
+            materialCode: null,
+            materialNameSnapshot: line.materialNameSnapshot,
+            materialGroupSnapshot: line.materialGroupSnapshot,
+            unitSnapshot: line.unitSnapshot,
+            totalRequiredQuantity: 0,
+            totalEstimatedCost: 0,
+            bomIds: new Set<string>(),
+            productIds: new Set<string>(),
+            unitCosts: [] as number[],
+            hasNullUnitCost: false,
+          };
+          groups.set(key, group);
+        }
+        group.materialNameSnapshot = [
+          group.materialNameSnapshot,
+          line.materialNameSnapshot,
+        ]
+          .filter(Boolean)
+          .sort((a: string, b: string) => a.localeCompare(b))[0];
+        group.materialGroupSnapshot =
+          [group.materialGroupSnapshot, line.materialGroupSnapshot]
+            .filter(Boolean)
+            .sort((a: string, b: string) => a.localeCompare(b))[0] ?? null;
+        group.bomIds.add(bom.id);
+        group.productIds.add(productId);
+        group.hasNullUnitCost ||= line.unitCost == null;
+        if (line.unitCost != null) group.unitCosts.push(Number(line.unitCost));
+
+        for (const quantity of joinedRows) {
+          const required =
+            Number(line.consumption) * Number(quantity?.quantity ?? 0);
+          group.totalRequiredQuantity += required;
+          group.totalEstimatedCost += required * Number(line.unitCost ?? 0);
+        }
+      }
+    }
+
+    const rows = [...groups.values()].map((group) => ({
+      materialId: group.materialId,
+      materialCode: group.materialCode,
+      materialNameSnapshot: group.materialNameSnapshot,
+      materialGroupSnapshot: group.materialGroupSnapshot,
+      unitSnapshot: group.unitSnapshot,
+      totalRequiredQuantity: group.totalRequiredQuantity,
+      totalEstimatedCost: group.totalEstimatedCost,
+      bomCount: group.bomIds.size,
+      poProductCount: group.productIds.size,
+      hasNullUnitCost: group.hasNullUnitCost,
+      minUnitCost: group.unitCosts.length ? Math.min(...group.unitCosts) : null,
+      maxUnitCost: group.unitCosts.length ? Math.max(...group.unitCosts) : null,
+    }));
+    rows.sort(
+      (a, b) =>
+        a.materialNameSnapshot.localeCompare(b.materialNameSnapshot) ||
+        a.materialId.localeCompare(b.materialId) ||
+        a.unitSnapshot.localeCompare(b.unitSnapshot),
+    );
+    const totalGroups = rows.length;
+    return rows
+      .slice(state.offset, state.offset + state.limit)
+      .map((row) => ({ ...row, totalGroups }));
+  }
+
+  function queryBreakdownRows(state: QueryState) {
+    const pageGroups = new Set<string>();
+    for (const filter of state.filters) {
+      for (const [key, value] of Object.entries(filter.params ?? {})) {
+        if (key.startsWith('pageMaterial')) {
+          const suffix = key.slice('pageMaterial'.length);
+          pageGroups.add(
+            JSON.stringify([value, filter.params?.[`pageUnit${suffix}`]]),
+          );
+        }
+      }
+    }
+    const aliases = new Set(
+      state.selections.map((selection) => selection.alias),
+    );
+    const hasColor = aliases.has('colorName');
+    const hasSize = aliases.has('sizeLabel');
+    const hasProduct = aliases.has('productId');
+    const groups = new Map<string, any>();
+
+    for (const bom of eligibleBoms()) {
+      for (const line of selectedLines(state).filter(
+        (candidate) => candidate.revisionId === bom.currentRevisionId,
+      )) {
+        if (
+          !pageGroups.has(JSON.stringify([line.materialId, line.unitSnapshot]))
+        )
+          continue;
+        for (const row of mockColorSizeRows.filter(
+          (candidate) => candidate.productId === bom.purchaseOrderProductId,
+        )) {
+          const keyParts = [
+            line.materialId,
+            line.unitSnapshot,
+            ...(hasProduct ? [bom.purchaseOrderProductId] : []),
+            ...(hasColor ? [row.colorName] : []),
+            ...(hasSize ? [row.sizeLabel] : []),
+          ];
+          const key = JSON.stringify(keyParts);
+          let group = groups.get(key);
+          if (!group) {
+            group = {
+              materialId: line.materialId,
+              unitSnapshot: line.unitSnapshot,
+              ...(hasProduct
+                ? {
+                    productId: bom.purchaseOrderProductId,
+                    productCode: bom.purchaseOrderProductId,
+                    productName: bom.purchaseOrderProductId,
+                  }
+                : {}),
+              ...(hasColor ? { colorName: row.colorName } : {}),
+              ...(hasSize ? { sizeLabel: row.sizeLabel } : {}),
+              requiredQuantity: 0,
+            };
+            groups.set(key, group);
+          }
+          group.requiredQuantity +=
+            Number(line.consumption) * Number(row.quantity ?? 0);
+        }
+      }
+    }
+    return [...groups.values()];
+  }
+
+  function makeAggregateQueryBuilder(initialState?: QueryState): any {
+    const state: QueryState = initialState
+      ? {
+          ...initialState,
+          joins: [...initialState.joins],
+          filters: initialState.filters.map((filter) => ({ ...filter })),
+          selections: [...initialState.selections],
+          groupBy: [...initialState.groupBy],
+        }
+      : {
+          joins: [],
+          filters: [],
+          selections: [],
+          groupBy: [],
+          offset: 0,
+          limit: 100,
+        };
+    const qb: any = {};
+    qb.innerJoin = jest.fn((_entity, alias) => {
+      state.joins.push({ kind: 'inner', alias });
+      return qb;
+    });
+    qb.leftJoin = jest.fn((_entity, alias) => {
+      state.joins.push({ kind: 'left', alias });
+      return qb;
+    });
+    qb.where = jest.fn((sql, params) => {
+      state.filters.push({ sql, params });
+      return qb;
+    });
+    qb.andWhere = jest.fn((sql, params) => {
+      state.filters.push({ sql, params });
+      aggregateAndWhereSpy(sql, params);
+      return qb;
+    });
+    qb.select = jest.fn((expression, alias) => {
+      state.selections = [{ expression, alias }];
+      return qb;
+    });
+    qb.addSelect = jest.fn((expression, alias) => {
+      state.selections.push({ expression, alias });
+      return qb;
+    });
+    qb.groupBy = jest.fn((expression) => {
+      state.groupBy = [expression];
+      return qb;
+    });
+    qb.addGroupBy = jest.fn((expression) => {
+      state.groupBy.push(expression);
+      return qb;
+    });
+    qb.orderBy = jest.fn(() => qb);
+    qb.addOrderBy = jest.fn(() => qb);
+    qb.offset = jest.fn((value) => {
+      state.offset = value;
+      return qb;
+    });
+    qb.limit = jest.fn((value) => {
+      state.limit = value;
+      return qb;
+    });
+    qb.clone = jest.fn(() => makeAggregateQueryBuilder(state));
+    qb.getRawOne = jest.fn().mockImplementation(() => {
+      aggregateQueryMetrics.rawQueryCount += 1;
+      if (
+        state.selections.some((selection) => selection.alias === 'totalBoms')
+      ) {
+        const boms = eligibleBoms();
+        return Promise.resolve({
+          totalBoms: boms.length,
+          totalProducts: new Set(boms.map((bom) => bom.purchaseOrderProductId))
+            .size,
+          totalPurchaseOrders: new Set(
+            boms.map((bom) => bom.purchaseOrderProductId),
+          ).size,
+        });
+      }
+      return Promise.resolve({ totalGroups: queryGroupRows(state).length });
+    });
+    qb.getRawMany = jest.fn().mockImplementation(() => {
+      aggregateQueryMetrics.rawQueryCount += 1;
+      const isBreakdown = state.joins.some(
+        (join) => join.alias === 'cs' && join.kind === 'inner',
+      );
+      return Promise.resolve(
+        isBreakdown ? queryBreakdownRows(state) : queryGroupRows(state),
+      );
+    });
+    return qb;
+  }
 
   function setupAggregateEnv() {
     // BOM 1 (PO BOM, Closed, Product 1)
@@ -186,50 +470,11 @@ describe('BOM V2 NPL Aggregate & Backend Completion (PR-07 Specification)', () =
       { productId: 'pop-2', colorName: 'Đen', sizeLabel: 'L', quantity: 100 },
     ];
 
-    // Setup QueryBuilder mocks
-    bomRepoMock.createQueryBuilder.mockReturnValue({
-      innerJoin: jest.fn().mockReturnThis(),
-      leftJoin: jest.fn().mockReturnThis(),
-      where: jest.fn().mockReturnThis(),
-      andWhere: jest.fn().mockReturnThis(),
-      select: jest.fn().mockReturnThis(),
-      getMany: jest.fn().mockImplementation(() => {
-        // Return only eligible PO BOMs: type = PO, not discontinued, closed
-        return Promise.resolve(
-          mockBoms.filter((b) => {
-            if (b.bomType !== BomType.PO) return false;
-            if (b.discontinuedAt) return false;
-            const rev = mockRevisions.find((r) => r.id === b.currentRevisionId);
-            if (!rev || rev.status !== BomRevisionStatus.CLOSED) return false;
-            return true;
-          }),
-        );
-      }),
-    });
-
-    poColorSizeRepoMock.createQueryBuilder.mockReturnValue({
-      innerJoin: jest.fn().mockReturnThis(),
-      where: jest.fn().mockReturnThis(),
-      select: jest.fn().mockReturnThis(),
-      addSelect: jest.fn().mockReturnThis(),
-      groupBy: jest.fn().mockReturnThis(),
-      addGroupBy: jest.fn().mockReturnThis(),
-      getRawMany: jest.fn().mockImplementation(() => {
-        return Promise.resolve(mockColorSizeRows);
-      }),
-    });
-
-    bomLineRepoMock.createQueryBuilder.mockReturnValue({
-      where: jest.fn().mockReturnThis(),
-      andWhere: jest.fn().mockReturnThis(),
-      orderBy: jest.fn().mockReturnThis(),
-      getMany: jest.fn().mockImplementation(() => {
-        const eligibleRevIds = ['rev-po-1', 'rev-po-2'];
-        return Promise.resolve(
-          mockLines.filter((l) => eligibleRevIds.includes(l.revisionId)),
-        );
-      }),
-    });
+    aggregateAndWhereSpy = jest.fn();
+    aggregateQueryMetrics = { rawQueryCount: 0 };
+    bomRepoMock.createQueryBuilder.mockImplementation(() =>
+      makeAggregateQueryBuilder(),
+    );
 
     poProductRepoMock.createQueryBuilder.mockReturnValue({
       select: jest.fn().mockReturnThis(),
@@ -588,19 +833,13 @@ describe('BOM V2 NPL Aggregate & Backend Completion (PR-07 Specification)', () =
   // 7. ANTI-N+1 PERFORMANCE VERIFICATION (Section 19)
   // ──────────────────────────────────────────────────────────────────────────
   describe('7. Anti-N+1 Performance Verification', () => {
-    it('executes exactly 3 bulk queries regardless of the number of BOMs', async () => {
+    it('executes two database queries regardless of the number of BOMs', async () => {
       setupAggregateEnv();
 
       await aggregateService.aggregate({});
 
-      // Query 1: bomRepository.createQueryBuilder (1 call)
       expect(bomRepoMock.createQueryBuilder).toHaveBeenCalledTimes(1);
-
-      // Query 2: poColorSizeRepository.createQueryBuilder (1 call)
-      expect(poColorSizeRepoMock.createQueryBuilder).toHaveBeenCalledTimes(1);
-
-      // Query 3: bomLineRepository.createQueryBuilder (1 call)
-      expect(bomLineRepoMock.createQueryBuilder).toHaveBeenCalledTimes(1);
+      expect(aggregateQueryMetrics.rawQueryCount).toBe(2);
     });
   });
 
@@ -611,17 +850,6 @@ describe('BOM V2 NPL Aggregate & Backend Completion (PR-07 Specification)', () =
     it('filters aggregated items by specific materialId', async () => {
       setupAggregateEnv();
 
-      bomLineRepoMock.createQueryBuilder.mockReturnValue({
-        where: jest.fn().mockReturnThis(),
-        andWhere: jest.fn().mockReturnThis(),
-        orderBy: jest.fn().mockReturnThis(),
-        getMany: jest.fn().mockImplementation(() => {
-          return Promise.resolve(
-            mockLines.filter((l) => l.materialId === 'mat-A'),
-          );
-        }),
-      });
-
       const result = await aggregateService.aggregate({ materialId: 'mat-A' });
       expect(result.data.length).toBe(1);
       expect(result.data[0].materialId).toBe('mat-A');
@@ -630,15 +858,7 @@ describe('BOM V2 NPL Aggregate & Backend Completion (PR-07 Specification)', () =
     it('filters by purchaseOrder code using query builder', async () => {
       setupAggregateEnv();
 
-      const andWhereSpy = jest.fn().mockReturnThis();
-      bomRepoMock.createQueryBuilder.mockReturnValueOnce({
-        innerJoin: jest.fn().mockReturnThis(),
-        leftJoin: jest.fn().mockReturnThis(),
-        where: jest.fn().mockReturnThis(),
-        andWhere: andWhereSpy,
-        select: jest.fn().mockReturnThis(),
-        getMany: jest.fn().mockResolvedValue([mockBoms[0]]),
-      });
+      const andWhereSpy = (aggregateAndWhereSpy = jest.fn());
 
       await aggregateService.aggregate({ purchaseOrder: 'PO-2026-001' });
       expect(andWhereSpy).toHaveBeenCalledWith(
@@ -650,15 +870,7 @@ describe('BOM V2 NPL Aggregate & Backend Completion (PR-07 Specification)', () =
     it('filters by product code using query builder', async () => {
       setupAggregateEnv();
 
-      const andWhereSpy = jest.fn().mockReturnThis();
-      bomRepoMock.createQueryBuilder.mockReturnValueOnce({
-        innerJoin: jest.fn().mockReturnThis(),
-        leftJoin: jest.fn().mockReturnThis(),
-        where: jest.fn().mockReturnThis(),
-        andWhere: andWhereSpy,
-        select: jest.fn().mockReturnThis(),
-        getMany: jest.fn().mockResolvedValue([mockBoms[0]]),
-      });
+      const andWhereSpy = (aggregateAndWhereSpy = jest.fn());
 
       await aggregateService.aggregate({ product: 'PRD-POLO-001' });
       expect(andWhereSpy).toHaveBeenCalledWith(
@@ -670,15 +882,7 @@ describe('BOM V2 NPL Aggregate & Backend Completion (PR-07 Specification)', () =
     it('filters by style code or styleId using query builder', async () => {
       setupAggregateEnv();
 
-      const andWhereSpy = jest.fn().mockReturnThis();
-      bomRepoMock.createQueryBuilder.mockReturnValueOnce({
-        innerJoin: jest.fn().mockReturnThis(),
-        leftJoin: jest.fn().mockReturnThis(),
-        where: jest.fn().mockReturnThis(),
-        andWhere: andWhereSpy,
-        select: jest.fn().mockReturnThis(),
-        getMany: jest.fn().mockResolvedValue([mockBoms[0]]),
-      });
+      const andWhereSpy = (aggregateAndWhereSpy = jest.fn());
 
       await aggregateService.aggregate({ style: 'ST-POLO' });
       expect(andWhereSpy).toHaveBeenCalledWith(
@@ -778,15 +982,7 @@ describe('BOM V2 NPL Aggregate & Backend Completion (PR-07 Specification)', () =
     it('filters by exact purchaseOrderId', async () => {
       setupAggregateEnv();
 
-      const andWhereSpy = jest.fn().mockReturnThis();
-      bomRepoMock.createQueryBuilder.mockReturnValueOnce({
-        innerJoin: jest.fn().mockReturnThis(),
-        leftJoin: jest.fn().mockReturnThis(),
-        where: jest.fn().mockReturnThis(),
-        andWhere: andWhereSpy,
-        select: jest.fn().mockReturnThis(),
-        getMany: jest.fn().mockResolvedValue([mockBoms[0]]),
-      });
+      const andWhereSpy = (aggregateAndWhereSpy = jest.fn());
 
       await aggregateService.aggregate({ purchaseOrderId: 'po-uuid-123' });
       expect(andWhereSpy).toHaveBeenCalledWith(
@@ -801,15 +997,7 @@ describe('BOM V2 NPL Aggregate & Backend Completion (PR-07 Specification)', () =
     it('filters by exact purchaseOrderProductId', async () => {
       setupAggregateEnv();
 
-      const andWhereSpy = jest.fn().mockReturnThis();
-      bomRepoMock.createQueryBuilder.mockReturnValueOnce({
-        innerJoin: jest.fn().mockReturnThis(),
-        leftJoin: jest.fn().mockReturnThis(),
-        where: jest.fn().mockReturnThis(),
-        andWhere: andWhereSpy,
-        select: jest.fn().mockReturnThis(),
-        getMany: jest.fn().mockResolvedValue([mockBoms[0]]),
-      });
+      const andWhereSpy = (aggregateAndWhereSpy = jest.fn());
 
       await aggregateService.aggregate({
         purchaseOrderProductId: 'pop-uuid-456',

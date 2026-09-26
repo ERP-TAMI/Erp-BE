@@ -37,6 +37,19 @@ describe('BOM Mutations: Create, Update Header, Discontinue (PR-02 Specification
   let poColorSizeRepoMock: any;
   let dataSourceMock: any;
 
+  const discontinueWithVersion = (
+    id: string,
+    dto: any,
+    userId: string,
+    roleCode: string,
+  ) =>
+    service.discontinue(
+      id,
+      { ...dto, expectedRowVersion: dto.expectedRowVersion ?? 1 } as any,
+      userId,
+      roleCode,
+    );
+
   beforeEach(async () => {
     bomRepoMock = {
       findOne: jest.fn(),
@@ -45,6 +58,7 @@ describe('BOM Mutations: Create, Update Header, Discontinue (PR-02 Specification
     bomRevisionRepoMock = {
       findOne: jest.fn(),
       find: jest.fn().mockResolvedValue([]),
+      save: jest.fn().mockImplementation((entity) => Promise.resolve(entity)),
     };
     bomLineRepoMock = {
       find: jest.fn().mockResolvedValue([]),
@@ -84,11 +98,18 @@ describe('BOM Mutations: Create, Update Header, Discontinue (PR-02 Specification
             if (entityClass === Bom) {
               return bomRepoMock.findOne(options);
             }
+            if (entityClass === BomRevision) {
+              return bomRevisionRepoMock.findOne(options);
+            }
             return Promise.resolve(null);
           }),
           save: jest
             .fn()
-            .mockImplementation((_entityClass, data) => bomRepoMock.save(data)),
+            .mockImplementation((entityClass, data) =>
+              entityClass === BomRevision
+                ? bomRevisionRepoMock.save(data)
+                : bomRepoMock.save(data),
+            ),
         }),
       ),
     };
@@ -660,16 +681,32 @@ describe('BOM Mutations: Create, Update Header, Discontinue (PR-02 Specification
   // E. DISCONTINUE BOM (POST /:id/discontinue)
   // ──────────────────────────────────────────────────────────────────────────
   describe('E. Discontinue BOM (POST /:id/discontinue)', () => {
-    it('37-40. discontinues BOM successfully for TPKH and SA, sets discontinuedAt, discontinuedBy, and reason', async () => {
+    function setupDiscontinueMocks(
+      discontinuedAt: Date | null = null,
+      bomId = 'bom-active',
+    ) {
       const bom = new Bom();
-      bom.id = 'bom-active';
-      bom.discontinuedAt = null;
+      bom.id = bomId;
+      bom.currentRevisionId = 'rev-active';
+      bom.discontinuedAt = discontinuedAt;
       bom.discontinuedReason = null;
       bom.rowVersion = 1;
 
-      bomRepoMock.findOne.mockResolvedValue(bom);
+      const revision = new BomRevision();
+      revision.id = 'rev-active';
+      revision.bomId = bom.id;
+      revision.rowVersion = 1;
+      revision.status = BomRevisionStatus.CLOSED;
 
-      await service.discontinue(
+      bomRepoMock.findOne.mockResolvedValue(bom);
+      bomRevisionRepoMock.findOne.mockResolvedValue(revision);
+      return { bom, revision };
+    }
+
+    it('37-40. discontinues BOM successfully for TPKH and SA, sets discontinuedAt, discontinuedBy, and reason', async () => {
+      setupDiscontinueMocks();
+
+      await discontinueWithVersion(
         'bom-active',
         { reason: 'Customer canceled the whole order' },
         'tpkh-id',
@@ -688,19 +725,21 @@ describe('BOM Mutations: Create, Update Header, Discontinue (PR-02 Specification
     });
 
     it('locks the BOM row before discontinuing to protect currentRevisionId from concurrent revision creation', async () => {
-      const bom = new Bom();
-      bom.id = 'bom-active';
-      bom.discontinuedAt = null;
-      bom.rowVersion = 1;
-      bomRepoMock.findOne.mockResolvedValue(bom);
+      const { bom, revision } = setupDiscontinueMocks();
 
-      const managerFindOne = jest.fn().mockResolvedValue(bom);
+      const managerFindOne = jest
+        .fn()
+        .mockImplementation((entityClass) =>
+          entityClass === Bom
+            ? Promise.resolve(bom)
+            : Promise.resolve(revision),
+        );
       const managerSave = jest.fn().mockResolvedValue(bom);
       dataSourceMock.transaction.mockImplementation(async (cb: any) =>
         cb({ findOne: managerFindOne, save: managerSave }),
       );
 
-      await service.discontinue(
+      await discontinueWithVersion(
         'bom-active',
         { reason: 'Concurrency guard' },
         'sa-id',
@@ -718,17 +757,14 @@ describe('BOM Mutations: Create, Update Header, Discontinue (PR-02 Specification
     });
 
     it('41-42. rejects discontinue request with empty or whitespace-only reason (BadRequestException)', async () => {
-      const bom = new Bom();
-      bom.id = 'bom-active';
-      bom.discontinuedAt = null;
-      bomRepoMock.findOne.mockResolvedValue(bom);
+      setupDiscontinueMocks();
 
       await expect(
-        service.discontinue('bom-active', { reason: '' }, 'tpkh-id', 'TPKH'),
+        discontinueWithVersion('bom-active', { reason: '' }, 'tpkh-id', 'TPKH'),
       ).rejects.toThrow(BadRequestException);
 
       await expect(
-        service.discontinue(
+        discontinueWithVersion(
           'bom-active',
           { reason: '     ' },
           'tpkh-id',
@@ -738,13 +774,10 @@ describe('BOM Mutations: Create, Update Header, Discontinue (PR-02 Specification
     });
 
     it('43. rejects unauthorized roles attempting to discontinue BOM (e.g. NVKH, RD, ACCOUNTING)', async () => {
-      const bom = new Bom();
-      bom.id = 'bom-active';
-      bom.discontinuedAt = null;
-      bomRepoMock.findOne.mockResolvedValue(bom);
+      setupDiscontinueMocks();
 
       await expect(
-        service.discontinue(
+        discontinueWithVersion(
           'bom-active',
           { reason: 'Test' },
           'user-id',
@@ -753,11 +786,16 @@ describe('BOM Mutations: Create, Update Header, Discontinue (PR-02 Specification
       ).rejects.toThrow(ForbiddenException);
 
       await expect(
-        service.discontinue('bom-active', { reason: 'Test' }, 'user-id', 'RD'),
+        discontinueWithVersion(
+          'bom-active',
+          { reason: 'Test' },
+          'user-id',
+          'RD',
+        ),
       ).rejects.toThrow(ForbiddenException);
 
       await expect(
-        service.discontinue(
+        discontinueWithVersion(
           'bom-active',
           { reason: 'Test' },
           'user-id',
@@ -767,13 +805,10 @@ describe('BOM Mutations: Create, Update Header, Discontinue (PR-02 Specification
     });
 
     it('44. rejects discontinue on an already discontinued BOM (BadRequestException)', async () => {
-      const bom = new Bom();
-      bom.id = 'bom-already-discontinued';
-      bom.discontinuedAt = new Date(); // Already discontinued
-      bomRepoMock.findOne.mockResolvedValue(bom);
+      setupDiscontinueMocks(new Date(), 'bom-already-discontinued');
 
       await expect(
-        service.discontinue(
+        discontinueWithVersion(
           'bom-already-discontinued',
           { reason: 'Discontinue again' },
           'sa-id',

@@ -48,6 +48,20 @@ describe('BOM V2 Workflow State Machine: Forward, Reject, Approve (PR-04 Specifi
   let mockRevision: BomRevision;
   let historyRecords: BomRevisionStatusHistory[];
 
+  const withExpectedRowVersion = (dto: any = {}) => ({
+    ...dto,
+    expectedRowVersion:
+      dto.expectedRowVersion ?? Number(mockRevision?.rowVersion ?? 1),
+  });
+  const workflow = {
+    forward: (id: string, dto: any, userId: string, roleCode: any) =>
+      service.forward(id, withExpectedRowVersion(dto) as any, userId, roleCode),
+    reject: (id: string, dto: any, userId: string, roleCode: any) =>
+      service.reject(id, withExpectedRowVersion(dto) as any, userId, roleCode),
+    approve: (id: string, dto: any, userId: string, roleCode: any) =>
+      service.approve(id, withExpectedRowVersion(dto) as any, userId, roleCode),
+  };
+
   function setupStatefulWorkflow(initialStatus = BomRevisionStatus.WAIT_NVKH) {
     mockBom = new Bom();
     mockBom.id = 'bom-wf-uuid-1';
@@ -250,7 +264,7 @@ describe('BOM V2 Workflow State Machine: Forward, Reject, Approve (PR-04 Specifi
     it('allows N1 (NVKH) to forward wait_nvkh -> wait_rd', async () => {
       setupStatefulWorkflow(BomRevisionStatus.WAIT_NVKH);
 
-      const res = await service.forward(
+      const res = await workflow.forward(
         mockBom.id,
         { reason: 'NVKH hoàn tất thông tin cơ bản' },
         'user-nvkh-1',
@@ -270,7 +284,7 @@ describe('BOM V2 Workflow State Machine: Forward, Reject, Approve (PR-04 Specifi
     it('allows N2 (RD) to forward wait_rd -> wait_tpkh_confirm', async () => {
       setupStatefulWorkflow(BomRevisionStatus.WAIT_RD);
 
-      const res = await service.forward(
+      const res = await workflow.forward(
         mockBom.id,
         { reason: 'RD hoàn tất định mức mẫu' },
         'user-rd-1',
@@ -289,7 +303,7 @@ describe('BOM V2 Workflow State Machine: Forward, Reject, Approve (PR-04 Specifi
     it('allows N3 (TPKH) to forward wait_tpkh_confirm -> wait_accounting', async () => {
       setupStatefulWorkflow(BomRevisionStatus.WAIT_TPKH_CONFIRM);
 
-      const res = await service.forward(
+      const res = await workflow.forward(
         mockBom.id,
         { reason: 'TPKH xác nhận thông số kỹ thuật chuẩn' },
         'user-tpkh-1',
@@ -310,7 +324,7 @@ describe('BOM V2 Workflow State Machine: Forward, Reject, Approve (PR-04 Specifi
     it('allows N4 (ACCOUNTING) to forward wait_accounting -> wait_sa_approve', async () => {
       setupStatefulWorkflow(BomRevisionStatus.WAIT_ACCOUNTING);
 
-      const res = await service.forward(
+      const res = await workflow.forward(
         mockBom.id,
         { reason: 'Kế toán hoàn tất áp giá vật tư' },
         'user-acct-1',
@@ -332,7 +346,7 @@ describe('BOM V2 Workflow State Machine: Forward, Reject, Approve (PR-04 Specifi
       setupStatefulWorkflow(BomRevisionStatus.WAIT_SA_APPROVE);
 
       await expect(
-        service.forward(
+        workflow.forward(
           mockBom.id,
           { reason: 'SA duyệt đóng BOM' },
           'user-sa-1',
@@ -345,44 +359,44 @@ describe('BOM V2 Workflow State Machine: Forward, Reject, Approve (PR-04 Specifi
       // NVKH at wait_rd
       setupStatefulWorkflow(BomRevisionStatus.WAIT_RD);
       await expect(
-        service.forward(mockBom.id, {}, 'user-nvkh', UserRoleCode.NVKH),
+        workflow.forward(mockBom.id, {}, 'user-nvkh', UserRoleCode.NVKH),
       ).rejects.toThrow(ForbiddenException);
 
       // RD at wait_nvkh
       setupStatefulWorkflow(BomRevisionStatus.WAIT_NVKH);
       await expect(
-        service.forward(mockBom.id, {}, 'user-rd', UserRoleCode.RD),
+        workflow.forward(mockBom.id, {}, 'user-rd', UserRoleCode.RD),
       ).rejects.toThrow(ForbiddenException);
 
       // TPKH at wait_rd
       setupStatefulWorkflow(BomRevisionStatus.WAIT_RD);
       await expect(
-        service.forward(mockBom.id, {}, 'user-tpkh', UserRoleCode.TPKH),
+        workflow.forward(mockBom.id, {}, 'user-tpkh', UserRoleCode.TPKH),
       ).rejects.toThrow(ForbiddenException);
 
       // ACCOUNTING at wait_tpkh_confirm
       setupStatefulWorkflow(BomRevisionStatus.WAIT_TPKH_CONFIRM);
       await expect(
-        service.forward(mockBom.id, {}, 'user-acct', UserRoleCode.ACCOUNTING),
+        workflow.forward(mockBom.id, {}, 'user-acct', UserRoleCode.ACCOUNTING),
       ).rejects.toThrow(ForbiddenException);
 
       // SA at wait_accounting
       setupStatefulWorkflow(BomRevisionStatus.WAIT_ACCOUNTING);
       await expect(
-        service.forward(mockBom.id, {}, 'user-sa', UserRoleCode.SA),
+        workflow.forward(mockBom.id, {}, 'user-sa', UserRoleCode.SA),
       ).rejects.toThrow(ForbiddenException);
 
       // Anonymous / null role
       setupStatefulWorkflow(BomRevisionStatus.WAIT_NVKH);
       await expect(
-        service.forward(mockBom.id, {}, 'user-anon', null as any),
+        workflow.forward(mockBom.id, {}, 'user-anon', null as any),
       ).rejects.toThrow(ForbiddenException);
     });
 
     it('rejects forward from closed status (400 Bad Request)', async () => {
       setupStatefulWorkflow(BomRevisionStatus.CLOSED);
       await expect(
-        service.forward(mockBom.id, {}, 'user-sa', UserRoleCode.SA),
+        workflow.forward(mockBom.id, {}, 'user-sa', UserRoleCode.SA),
       ).rejects.toThrow(BadRequestException);
     });
   });
@@ -394,7 +408,7 @@ describe('BOM V2 Workflow State Machine: Forward, Reject, Approve (PR-04 Specifi
     it('allows N2 (RD) to reject wait_rd -> wait_nvkh', async () => {
       setupStatefulWorkflow(BomRevisionStatus.WAIT_RD);
 
-      const res = await service.reject(
+      const res = await workflow.reject(
         mockBom.id,
         {
           targetStatus: BomRevisionStatus.WAIT_NVKH,
@@ -417,7 +431,7 @@ describe('BOM V2 Workflow State Machine: Forward, Reject, Approve (PR-04 Specifi
     it('allows N3 (TPKH) to reject wait_tpkh_confirm -> wait_rd and -> wait_nvkh', async () => {
       // N3 -> N2
       setupStatefulWorkflow(BomRevisionStatus.WAIT_TPKH_CONFIRM);
-      let res = await service.reject(
+      let res = await workflow.reject(
         mockBom.id,
         {
           targetStatus: BomRevisionStatus.WAIT_RD,
@@ -430,7 +444,7 @@ describe('BOM V2 Workflow State Machine: Forward, Reject, Approve (PR-04 Specifi
 
       // N3 -> N1
       setupStatefulWorkflow(BomRevisionStatus.WAIT_TPKH_CONFIRM);
-      res = await service.reject(
+      res = await workflow.reject(
         mockBom.id,
         {
           targetStatus: BomRevisionStatus.WAIT_NVKH,
@@ -445,7 +459,7 @@ describe('BOM V2 Workflow State Machine: Forward, Reject, Approve (PR-04 Specifi
     it('allows N4 (ACCOUNTING) to reject wait_accounting -> wait_tpkh_confirm', async () => {
       setupStatefulWorkflow(BomRevisionStatus.WAIT_ACCOUNTING);
 
-      const res = await service.reject(
+      const res = await workflow.reject(
         mockBom.id,
         {
           targetStatus: BomRevisionStatus.WAIT_TPKH_CONFIRM,
@@ -470,7 +484,7 @@ describe('BOM V2 Workflow State Machine: Forward, Reject, Approve (PR-04 Specifi
 
       for (const target of targets) {
         setupStatefulWorkflow(BomRevisionStatus.WAIT_SA_APPROVE);
-        const res = await service.reject(
+        const res = await workflow.reject(
           mockBom.id,
           {
             targetStatus: target,
@@ -488,7 +502,7 @@ describe('BOM V2 Workflow State Machine: Forward, Reject, Approve (PR-04 Specifi
       // N3 -> N4 (future forward node)
       setupStatefulWorkflow(BomRevisionStatus.WAIT_TPKH_CONFIRM);
       await expect(
-        service.reject(
+        workflow.reject(
           mockBom.id,
           {
             targetStatus: BomRevisionStatus.WAIT_ACCOUNTING,
@@ -502,7 +516,7 @@ describe('BOM V2 Workflow State Machine: Forward, Reject, Approve (PR-04 Specifi
       // N4 -> N2 (skipping N3 backwards is forbidden for N4)
       setupStatefulWorkflow(BomRevisionStatus.WAIT_ACCOUNTING);
       await expect(
-        service.reject(
+        workflow.reject(
           mockBom.id,
           {
             targetStatus: BomRevisionStatus.WAIT_RD,
@@ -516,7 +530,7 @@ describe('BOM V2 Workflow State Machine: Forward, Reject, Approve (PR-04 Specifi
       // N5 -> closed via reject is forbidden
       setupStatefulWorkflow(BomRevisionStatus.WAIT_SA_APPROVE);
       await expect(
-        service.reject(
+        workflow.reject(
           mockBom.id,
           {
             targetStatus: BomRevisionStatus.CLOSED,
@@ -530,7 +544,7 @@ describe('BOM V2 Workflow State Machine: Forward, Reject, Approve (PR-04 Specifi
       // N1 -> any reject is forbidden
       setupStatefulWorkflow(BomRevisionStatus.WAIT_NVKH);
       await expect(
-        service.reject(
+        workflow.reject(
           mockBom.id,
           {
             targetStatus: BomRevisionStatus.WAIT_RD,
@@ -544,7 +558,7 @@ describe('BOM V2 Workflow State Machine: Forward, Reject, Approve (PR-04 Specifi
       // Reject to same status
       setupStatefulWorkflow(BomRevisionStatus.WAIT_RD);
       await expect(
-        service.reject(
+        workflow.reject(
           mockBom.id,
           {
             targetStatus: BomRevisionStatus.WAIT_RD,
@@ -561,7 +575,7 @@ describe('BOM V2 Workflow State Machine: Forward, Reject, Approve (PR-04 Specifi
 
       // Empty string
       await expect(
-        service.reject(
+        workflow.reject(
           mockBom.id,
           {
             targetStatus: BomRevisionStatus.WAIT_NVKH,
@@ -574,7 +588,7 @@ describe('BOM V2 Workflow State Machine: Forward, Reject, Approve (PR-04 Specifi
 
       // Whitespace only
       await expect(
-        service.reject(
+        workflow.reject(
           mockBom.id,
           {
             targetStatus: BomRevisionStatus.WAIT_NVKH,
@@ -590,7 +604,7 @@ describe('BOM V2 Workflow State Machine: Forward, Reject, Approve (PR-04 Specifi
       // NVKH at wait_rd
       setupStatefulWorkflow(BomRevisionStatus.WAIT_RD);
       await expect(
-        service.reject(
+        workflow.reject(
           mockBom.id,
           {
             targetStatus: BomRevisionStatus.WAIT_NVKH,
@@ -604,7 +618,7 @@ describe('BOM V2 Workflow State Machine: Forward, Reject, Approve (PR-04 Specifi
       // RD at wait_tpkh_confirm
       setupStatefulWorkflow(BomRevisionStatus.WAIT_TPKH_CONFIRM);
       await expect(
-        service.reject(
+        workflow.reject(
           mockBom.id,
           {
             targetStatus: BomRevisionStatus.WAIT_RD,
@@ -624,7 +638,7 @@ describe('BOM V2 Workflow State Machine: Forward, Reject, Approve (PR-04 Specifi
     it('allows SA to approve BOM at wait_sa_approve -> closed with approvedBy and approvedAt', async () => {
       setupStatefulWorkflow(BomRevisionStatus.WAIT_SA_APPROVE);
 
-      const res = await service.approve(
+      const res = await workflow.approve(
         mockBom.id,
         { reason: 'Phê duyệt ban hành BOM sản xuất chính thức' },
         'user-sa-uuid',
@@ -659,7 +673,7 @@ describe('BOM V2 Workflow State Machine: Forward, Reject, Approve (PR-04 Specifi
 
       for (const role of nonSaRoles) {
         await expect(
-          service.approve(mockBom.id, {}, 'user-other', role),
+          workflow.approve(mockBom.id, {}, 'user-other', role),
         ).rejects.toThrow(ForbiddenException);
       }
     });
@@ -675,7 +689,7 @@ describe('BOM V2 Workflow State Machine: Forward, Reject, Approve (PR-04 Specifi
       for (const status of prematureStatuses) {
         setupStatefulWorkflow(status);
         await expect(
-          service.approve(mockBom.id, {}, 'user-sa', UserRoleCode.SA),
+          workflow.approve(mockBom.id, {}, 'user-sa', UserRoleCode.SA),
         ).rejects.toThrow(BadRequestException);
       }
     });
@@ -683,7 +697,7 @@ describe('BOM V2 Workflow State Machine: Forward, Reject, Approve (PR-04 Specifi
     it('rejects approve when BOM is already closed (400 Bad Request)', async () => {
       setupStatefulWorkflow(BomRevisionStatus.CLOSED);
       await expect(
-        service.approve(mockBom.id, {}, 'user-sa', UserRoleCode.SA),
+        workflow.approve(mockBom.id, {}, 'user-sa', UserRoleCode.SA),
       ).rejects.toThrow(BadRequestException);
     });
   });
@@ -698,12 +712,12 @@ describe('BOM V2 Workflow State Machine: Forward, Reject, Approve (PR-04 Specifi
 
       // Forward
       await expect(
-        service.forward(mockBom.id, {}, 'user-rd', UserRoleCode.RD),
+        workflow.forward(mockBom.id, {}, 'user-rd', UserRoleCode.RD),
       ).rejects.toThrow(BadRequestException);
 
       // Reject
       await expect(
-        service.reject(
+        workflow.reject(
           mockBom.id,
           { targetStatus: BomRevisionStatus.WAIT_NVKH, reason: 'Test' },
           'user-rd',
@@ -713,7 +727,7 @@ describe('BOM V2 Workflow State Machine: Forward, Reject, Approve (PR-04 Specifi
 
       // Approve
       await expect(
-        service.approve(mockBom.id, {}, 'user-sa', UserRoleCode.SA),
+        workflow.approve(mockBom.id, {}, 'user-sa', UserRoleCode.SA),
       ).rejects.toThrow(BadRequestException);
     });
 
@@ -722,12 +736,12 @@ describe('BOM V2 Workflow State Machine: Forward, Reject, Approve (PR-04 Specifi
 
       // Forward
       await expect(
-        service.forward(mockBom.id, {}, 'user-sa', UserRoleCode.SA),
+        workflow.forward(mockBom.id, {}, 'user-sa', UserRoleCode.SA),
       ).rejects.toThrow(BadRequestException);
 
       // Reject
       await expect(
-        service.reject(
+        workflow.reject(
           mockBom.id,
           { targetStatus: BomRevisionStatus.WAIT_SA_APPROVE, reason: 'Test' },
           'user-sa',
@@ -737,18 +751,23 @@ describe('BOM V2 Workflow State Machine: Forward, Reject, Approve (PR-04 Specifi
 
       // Approve
       await expect(
-        service.approve(mockBom.id, {}, 'user-sa', UserRoleCode.SA),
+        workflow.approve(mockBom.id, {}, 'user-sa', UserRoleCode.SA),
       ).rejects.toThrow(BadRequestException);
     });
 
     it('throws NotFoundException when BOM does not exist (404)', async () => {
       setupStatefulWorkflow();
       await expect(
-        service.forward('non-existent-bom', {}, 'user-nvkh', UserRoleCode.NVKH),
+        workflow.forward(
+          'non-existent-bom',
+          {},
+          'user-nvkh',
+          UserRoleCode.NVKH,
+        ),
       ).rejects.toThrow(NotFoundException);
 
       await expect(
-        service.reject(
+        workflow.reject(
           'non-existent-bom',
           { targetStatus: BomRevisionStatus.WAIT_NVKH, reason: 'Not found' },
           'user-rd',
@@ -757,7 +776,7 @@ describe('BOM V2 Workflow State Machine: Forward, Reject, Approve (PR-04 Specifi
       ).rejects.toThrow(NotFoundException);
 
       await expect(
-        service.approve('non-existent-bom', {}, 'user-sa', UserRoleCode.SA),
+        workflow.approve('non-existent-bom', {}, 'user-sa', UserRoleCode.SA),
       ).rejects.toThrow(NotFoundException);
     });
   });
@@ -772,7 +791,7 @@ describe('BOM V2 Workflow State Machine: Forward, Reject, Approve (PR-04 Specifi
       const originalRevNo = mockRevision.revisionNo;
 
       // 1. N1 (NVKH) forward -> wait_rd
-      await service.forward(
+      await workflow.forward(
         mockBom.id,
         { reason: 'Step 1: NVKH forward' },
         'user-nvkh',
@@ -781,7 +800,7 @@ describe('BOM V2 Workflow State Machine: Forward, Reject, Approve (PR-04 Specifi
       expect(mockRevision.status).toBe(BomRevisionStatus.WAIT_RD);
 
       // 2. N2 (RD) forward -> wait_tpkh_confirm
-      await service.forward(
+      await workflow.forward(
         mockBom.id,
         { reason: 'Step 2: RD forward' },
         'user-rd',
@@ -790,7 +809,7 @@ describe('BOM V2 Workflow State Machine: Forward, Reject, Approve (PR-04 Specifi
       expect(mockRevision.status).toBe(BomRevisionStatus.WAIT_TPKH_CONFIRM);
 
       // 3. N3 (TPKH) forward -> wait_accounting
-      await service.forward(
+      await workflow.forward(
         mockBom.id,
         { reason: 'Step 3: TPKH forward' },
         'user-tpkh',
@@ -799,7 +818,7 @@ describe('BOM V2 Workflow State Machine: Forward, Reject, Approve (PR-04 Specifi
       expect(mockRevision.status).toBe(BomRevisionStatus.WAIT_ACCOUNTING);
 
       // 4. N4 (ACCOUNTING) forward -> wait_sa_approve
-      await service.forward(
+      await workflow.forward(
         mockBom.id,
         { reason: 'Step 4: ACCOUNTING forward' },
         'user-acct',
@@ -808,7 +827,7 @@ describe('BOM V2 Workflow State Machine: Forward, Reject, Approve (PR-04 Specifi
       expect(mockRevision.status).toBe(BomRevisionStatus.WAIT_SA_APPROVE);
 
       // 5. N5 (SA) approve -> closed
-      const finalBom = await service.approve(
+      const finalBom = await workflow.approve(
         mockBom.id,
         { reason: 'Step 5: SA approve closed' },
         'user-sa',
@@ -870,11 +889,11 @@ describe('BOM V2 Workflow State Machine: Forward, Reject, Approve (PR-04 Specifi
       const originalRevNo = mockRevision.revisionNo;
 
       // N1 -> N2
-      await service.forward(mockBom.id, {}, 'user-nvkh', UserRoleCode.NVKH);
+      await workflow.forward(mockBom.id, {}, 'user-nvkh', UserRoleCode.NVKH);
       expect(mockRevision.status).toBe(BomRevisionStatus.WAIT_RD);
 
       // N2 reject -> N1
-      await service.reject(
+      await workflow.reject(
         mockBom.id,
         {
           targetStatus: BomRevisionStatus.WAIT_NVKH,
@@ -886,15 +905,15 @@ describe('BOM V2 Workflow State Machine: Forward, Reject, Approve (PR-04 Specifi
       expect(mockRevision.status).toBe(BomRevisionStatus.WAIT_NVKH);
 
       // N1 -> N2
-      await service.forward(mockBom.id, {}, 'user-nvkh', UserRoleCode.NVKH);
+      await workflow.forward(mockBom.id, {}, 'user-nvkh', UserRoleCode.NVKH);
       expect(mockRevision.status).toBe(BomRevisionStatus.WAIT_RD);
 
       // N2 -> N3
-      await service.forward(mockBom.id, {}, 'user-rd', UserRoleCode.RD);
+      await workflow.forward(mockBom.id, {}, 'user-rd', UserRoleCode.RD);
       expect(mockRevision.status).toBe(BomRevisionStatus.WAIT_TPKH_CONFIRM);
 
       // N3 reject -> N1
-      await service.reject(
+      await workflow.reject(
         mockBom.id,
         {
           targetStatus: BomRevisionStatus.WAIT_NVKH,
@@ -906,15 +925,15 @@ describe('BOM V2 Workflow State Machine: Forward, Reject, Approve (PR-04 Specifi
       expect(mockRevision.status).toBe(BomRevisionStatus.WAIT_NVKH);
 
       // N1 -> N2
-      await service.forward(mockBom.id, {}, 'user-nvkh', UserRoleCode.NVKH);
+      await workflow.forward(mockBom.id, {}, 'user-nvkh', UserRoleCode.NVKH);
       expect(mockRevision.status).toBe(BomRevisionStatus.WAIT_RD);
 
       // N2 -> N3
-      await service.forward(mockBom.id, {}, 'user-rd', UserRoleCode.RD);
+      await workflow.forward(mockBom.id, {}, 'user-rd', UserRoleCode.RD);
       expect(mockRevision.status).toBe(BomRevisionStatus.WAIT_TPKH_CONFIRM);
 
       // N3 reject -> N2
-      await service.reject(
+      await workflow.reject(
         mockBom.id,
         { targetStatus: BomRevisionStatus.WAIT_RD, reason: 'Reject 3: to N2' },
         'user-tpkh',
@@ -923,15 +942,15 @@ describe('BOM V2 Workflow State Machine: Forward, Reject, Approve (PR-04 Specifi
       expect(mockRevision.status).toBe(BomRevisionStatus.WAIT_RD);
 
       // N2 -> N3
-      await service.forward(mockBom.id, {}, 'user-rd', UserRoleCode.RD);
+      await workflow.forward(mockBom.id, {}, 'user-rd', UserRoleCode.RD);
       expect(mockRevision.status).toBe(BomRevisionStatus.WAIT_TPKH_CONFIRM);
 
       // N3 -> N4
-      await service.forward(mockBom.id, {}, 'user-tpkh', UserRoleCode.TPKH);
+      await workflow.forward(mockBom.id, {}, 'user-tpkh', UserRoleCode.TPKH);
       expect(mockRevision.status).toBe(BomRevisionStatus.WAIT_ACCOUNTING);
 
       // N4 reject -> N3
-      await service.reject(
+      await workflow.reject(
         mockBom.id,
         {
           targetStatus: BomRevisionStatus.WAIT_TPKH_CONFIRM,
@@ -943,11 +962,11 @@ describe('BOM V2 Workflow State Machine: Forward, Reject, Approve (PR-04 Specifi
       expect(mockRevision.status).toBe(BomRevisionStatus.WAIT_TPKH_CONFIRM);
 
       // N3 -> N4
-      await service.forward(mockBom.id, {}, 'user-tpkh', UserRoleCode.TPKH);
+      await workflow.forward(mockBom.id, {}, 'user-tpkh', UserRoleCode.TPKH);
       expect(mockRevision.status).toBe(BomRevisionStatus.WAIT_ACCOUNTING);
 
       // N4 -> N5
-      await service.forward(
+      await workflow.forward(
         mockBom.id,
         {},
         'user-acct',
@@ -956,7 +975,7 @@ describe('BOM V2 Workflow State Machine: Forward, Reject, Approve (PR-04 Specifi
       expect(mockRevision.status).toBe(BomRevisionStatus.WAIT_SA_APPROVE);
 
       // N5 reject -> N2
-      await service.reject(
+      await workflow.reject(
         mockBom.id,
         {
           targetStatus: BomRevisionStatus.WAIT_RD,
@@ -1068,7 +1087,7 @@ describe('BOM V2 Workflow State Machine: Forward, Reject, Approve (PR-04 Specifi
         });
 
         await expect(
-          service.forward(mockBom.id, {}, 'user-nvkh', UserRoleCode.NVKH),
+          workflow.forward(mockBom.id, {}, 'user-nvkh', UserRoleCode.NVKH),
         ).rejects.toThrow(BadRequestException);
       });
 
@@ -1097,7 +1116,7 @@ describe('BOM V2 Workflow State Machine: Forward, Reject, Approve (PR-04 Specifi
         });
 
         await expect(
-          service.forward(mockBom.id, {}, 'user-nvkh', UserRoleCode.NVKH),
+          workflow.forward(mockBom.id, {}, 'user-nvkh', UserRoleCode.NVKH),
         ).rejects.toThrow(BadRequestException);
       });
 
@@ -1127,7 +1146,7 @@ describe('BOM V2 Workflow State Machine: Forward, Reject, Approve (PR-04 Specifi
         });
 
         await expect(
-          service.forward(mockBom.id, {}, 'user-rd', UserRoleCode.RD),
+          workflow.forward(mockBom.id, {}, 'user-rd', UserRoleCode.RD),
         ).rejects.toThrow(BadRequestException);
       });
 
@@ -1157,7 +1176,12 @@ describe('BOM V2 Workflow State Machine: Forward, Reject, Approve (PR-04 Specifi
         });
 
         await expect(
-          service.forward(mockBom.id, {}, 'user-acct', UserRoleCode.ACCOUNTING),
+          workflow.forward(
+            mockBom.id,
+            {},
+            'user-acct',
+            UserRoleCode.ACCOUNTING,
+          ),
         ).rejects.toThrow(BadRequestException);
       });
 
@@ -1188,7 +1212,7 @@ describe('BOM V2 Workflow State Machine: Forward, Reject, Approve (PR-04 Specifi
         });
 
         await expect(
-          service.approve(mockBom.id, {}, 'user-sa', UserRoleCode.SA),
+          workflow.approve(mockBom.id, {}, 'user-sa', UserRoleCode.SA),
         ).rejects.toThrow(BadRequestException);
       });
     });
@@ -1317,7 +1341,7 @@ describe('BOM V2 Workflow State Machine: Forward, Reject, Approve (PR-04 Specifi
       });
 
       await expect(
-        service.forward(
+        workflow.forward(
           mockBom.id,
           { reason: 'Chuyển bước N1' },
           'user-nvkh',
@@ -1361,7 +1385,7 @@ describe('BOM V2 Workflow State Machine: Forward, Reject, Approve (PR-04 Specifi
       });
 
       await expect(
-        service.forward(
+        workflow.forward(
           mockBom.id,
           { reason: 'Chuyển bước N1' },
           'user-nvkh',
@@ -1404,7 +1428,7 @@ describe('BOM V2 Workflow State Machine: Forward, Reject, Approve (PR-04 Specifi
       });
 
       await expect(
-        service.approve(
+        workflow.approve(
           mockBom.id,
           { reason: 'SA phê duyệt' },
           'user-sa',
@@ -1417,7 +1441,7 @@ describe('BOM V2 Workflow State Machine: Forward, Reject, Approve (PR-04 Specifi
       // This is the happy-path regression: ensure we did NOT break normal flow
       setupStatefulWorkflow(BomRevisionStatus.WAIT_NVKH);
       // setupStatefulWorkflow sets defaultMockLine which already has materialGroupSnapshot = 'Vải chính'
-      const result = await service.forward(
+      const result = await workflow.forward(
         mockBom.id,
         { reason: 'NVKH hoàn tất' },
         'user-nvkh',

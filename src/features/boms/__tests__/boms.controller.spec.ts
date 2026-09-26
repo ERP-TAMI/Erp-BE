@@ -602,6 +602,7 @@ describe('BomsController (HTTP API & Role Masking)', () => {
         .post(`/api/v1/boms/${validUuid}/discontinue`)
         .send({
           reason: 'Client cancelled style production',
+          expectedRowVersion: 1,
         })
         .expect(200);
 
@@ -611,7 +612,7 @@ describe('BomsController (HTTP API & Role Masking)', () => {
       );
       expect(bomsServiceMock.discontinue).toHaveBeenCalledWith(
         validUuid,
-        { reason: 'Client cancelled style production' },
+        { reason: 'Client cancelled style production', expectedRowVersion: 1 },
         'tpkh-id',
         'TPKH',
       );
@@ -807,13 +808,16 @@ describe('BomsController (HTTP API & Role Masking)', () => {
 
       const res = await request(app.getHttpServer())
         .post(`/api/v1/boms/${validBomId}/forward`)
-        .send({ reason: 'Hoàn thành nấc N1' })
+        .send({ reason: 'Hoàn thành nấc N1', expectedRowVersion: 1 })
         .expect(200);
 
       expect(res.body.status).toBe(BomRevisionStatus.WAIT_RD);
       expect(bomsServiceMock.forward).toHaveBeenCalledWith(
         validBomId,
-        expect.objectContaining({ reason: 'Hoàn thành nấc N1' }),
+        expect.objectContaining({
+          reason: 'Hoàn thành nấc N1',
+          expectedRowVersion: 1,
+        }),
         'nvkh-id',
         'NVKH',
       );
@@ -841,6 +845,7 @@ describe('BomsController (HTTP API & Role Masking)', () => {
         .send({
           targetStatus: BomRevisionStatus.WAIT_NVKH,
           reason: 'Yêu cầu kiểm tra lại định mức',
+          expectedRowVersion: 1,
         })
         .expect(200);
 
@@ -850,6 +855,7 @@ describe('BomsController (HTTP API & Role Masking)', () => {
         expect.objectContaining({
           targetStatus: BomRevisionStatus.WAIT_NVKH,
           reason: 'Yêu cầu kiểm tra lại định mức',
+          expectedRowVersion: 1,
         }),
         'rd-id',
         'RD',
@@ -895,13 +901,16 @@ describe('BomsController (HTTP API & Role Masking)', () => {
 
       const res = await request(app.getHttpServer())
         .post(`/api/v1/boms/${validBomId}/approve`)
-        .send({ reason: 'Phê duyệt đóng BOM' })
+        .send({ reason: 'Phê duyệt đóng BOM', expectedRowVersion: 1 })
         .expect(200);
 
       expect(res.body.status).toBe(BomRevisionStatus.CLOSED);
       expect(bomsServiceMock.approve).toHaveBeenCalledWith(
         validBomId,
-        expect.objectContaining({ reason: 'Phê duyệt đóng BOM' }),
+        expect.objectContaining({
+          reason: 'Phê duyệt đóng BOM',
+          expectedRowVersion: 1,
+        }),
         'sa-id',
         'SA',
       );

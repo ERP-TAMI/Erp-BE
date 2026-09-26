@@ -772,6 +772,9 @@ describe('BOM Lines Mutations: Add, Update, Delete, Reorder, Snapshot & Field Au
           find: jest.fn().mockResolvedValue([remainingLine]),
           remove: jest.fn().mockResolvedValue(lineToDelete),
           update: jest.fn().mockResolvedValue({ affected: 1 }),
+          save: jest
+            .fn()
+            .mockImplementation((_, entity) => Promise.resolve(entity)),
         };
         return cb(managerMock);
       });
@@ -845,6 +848,9 @@ describe('BOM Lines Mutations: Add, Update, Delete, Reorder, Snapshot & Field Au
             return Promise.resolve([]);
           }),
           update: jest.fn().mockResolvedValue({ affected: 1 }),
+          save: jest
+            .fn()
+            .mockImplementation((_, entity) => Promise.resolve(entity)),
         };
         return cb(managerMock);
       });
