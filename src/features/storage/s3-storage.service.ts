@@ -14,19 +14,44 @@ import { HeadObjectResult, StorageService } from './storage.interface';
 export class S3StorageService implements StorageService {
   private readonly client: S3Client;
   private readonly bucket: string;
+  private readonly trustedHosts: string[];
 
   constructor(config: ConfigService) {
     this.bucket = config.getOrThrow<string>('AWS_S3_BUCKET');
+    const region = config.getOrThrow<string>('AWS_S3_REGION');
     const endpoint = config.get<string>('AWS_S3_ENDPOINT');
 
     this.client = new S3Client({
-      region: config.getOrThrow<string>('AWS_S3_REGION'),
+      region,
       credentials: {
         accessKeyId: config.getOrThrow<string>('AWS_S3_ACCESS_KEY_ID'),
         secretAccessKey: config.getOrThrow<string>('AWS_S3_SECRET_ACCESS_KEY'),
       },
       ...(endpoint ? { endpoint, forcePathStyle: true } : {}),
     });
+
+    // Every host a presigned URL from this service could ever use — virtual
+    // hosted-style S3 (with and without the region segment, us-east-1 signs
+    // both ways depending on SDK version) and, for local/dev, the configured
+    // custom endpoint (path-style).
+    this.trustedHosts = [
+      `${this.bucket}.s3.${region}.amazonaws.com`,
+      `${this.bucket}.s3.amazonaws.com`,
+      ...(endpoint ? [this.safeHostname(endpoint)].filter(Boolean) : []),
+    ] as string[];
+  }
+
+  private safeHostname(url: string): string | null {
+    try {
+      return new URL(url).hostname;
+    } catch {
+      return null;
+    }
+  }
+
+  isTrustedObjectHost(urlString: string): boolean {
+    const hostname = this.safeHostname(urlString);
+    return hostname !== null && this.trustedHosts.includes(hostname);
   }
 
   async getPresignedPutUrl(

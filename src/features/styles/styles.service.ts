@@ -11,7 +11,11 @@ import { Style } from './entities/Style.entity';
 import { StyleStatus } from '../../common/enums/database.enums';
 import { CreateStyleDto, UpdateStyleDto, StyleQueryDto } from './dto';
 import { STORAGE_SERVICE, StorageService } from '../storage/storage.interface';
-import { isResolvableObjectKey } from '../storage/storage-key.util';
+import {
+  isResolvableObjectKey,
+  isObjectKeyInScope,
+} from '../storage/storage-key.util';
+import { DEFAULT_MAX_UPLOAD_SIZE_BYTES } from '../../common/utils/file-validation';
 
 export interface PaginatedResult<T> {
   data: T[];
@@ -50,6 +54,39 @@ export class StylesService {
     return { ...style, baseImageKey };
   }
 
+  // A client-supplied baseImageKey must be one this style's own presign
+  // request produced (styles/${id}/documents/...) — otherwise any user could
+  // point a style at another resource's object (cross-resource hijack) and
+  // read it back via withResolvedBaseImage(). Mirrors the isObjectKeyInScope
+  // check style-documents/style-sample-rounds already do at confirm().
+  private async validateAndResolveBaseImageKey(
+    objectKey: string | null,
+    styleId: string,
+  ): Promise<string | null> {
+    if (!objectKey) return null;
+
+    if (!isObjectKeyInScope(objectKey, `styles/${styleId}/`)) {
+      throw new BadRequestException(
+        'baseImageKey không hợp lệ cho mẫu Fit này',
+      );
+    }
+
+    const head = await this.storage.headObject(objectKey);
+    if (!head.exists) {
+      throw new BadRequestException(
+        'Không tìm thấy ảnh đã tải lên, vui lòng thử tải lại',
+      );
+    }
+    if (head.sizeBytes && head.sizeBytes > DEFAULT_MAX_UPLOAD_SIZE_BYTES) {
+      await this.storage.deleteObject(objectKey);
+      throw new BadRequestException(
+        `Dung lượng ảnh vượt quá giới hạn ${(DEFAULT_MAX_UPLOAD_SIZE_BYTES / (1024 * 1024)).toFixed(0)}MB`,
+      );
+    }
+
+    return objectKey;
+  }
+
   async create(dto: CreateStyleDto, userId?: string): Promise<Style> {
     const styleCodeClean = dto.styleCode?.trim();
     if (!styleCodeClean) {
@@ -76,7 +113,9 @@ export class StylesService {
       styleName: styleNameClean,
       description: dto.description?.trim() ?? null,
       category: dto.category?.trim() ?? null,
-      baseImageKey: dto.baseImageKey ?? null,
+      // baseImageKey can only be attached via update(), once the style has
+      // an id to scope the object key to — see validateAndResolveBaseImageKey.
+      baseImageKey: null,
       status: dto.status ?? StyleStatus.DRAFT,
       createdBy: userId ?? null,
       updatedBy: userId ?? null,
@@ -187,7 +226,10 @@ export class StylesService {
       style.category = dto.category?.trim() ?? null;
     }
     if (dto.baseImageKey !== undefined) {
-      style.baseImageKey = dto.baseImageKey ?? null;
+      style.baseImageKey = await this.validateAndResolveBaseImageKey(
+        dto.baseImageKey ?? null,
+        id,
+      );
     }
     if (dto.status !== undefined) {
       style.status = dto.status;

@@ -303,6 +303,14 @@ export class StyleSampleRoundsService {
         'Ảnh chưa được tải lên thành công, vui lòng thử upload lại.',
       );
     }
+    // sizeBytes at presign is client-declared and unenforceable — S3 presigned
+    // PUT has no way to cap it. Check the real uploaded size here instead.
+    if (head.sizeBytes && head.sizeBytes > MAX_SAMPLE_IMAGE_SIZE_BYTES) {
+      await this.storage.deleteObject(dto.objectKey);
+      throw new BadRequestException(
+        `Dung lượng ảnh vượt quá giới hạn ${(MAX_SAMPLE_IMAGE_SIZE_BYTES / (1024 * 1024)).toFixed(0)}MB.`,
+      );
+    }
 
     const now = new Date();
 
