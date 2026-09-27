@@ -18,7 +18,7 @@ export class ManagementDashboardService {
     const rows = await this.dataSource.query<DashboardSummaryRow[]>(
       `
         WITH selected_purchase_orders AS (
-          SELECT purchase_order.id, purchase_order.status
+          SELECT purchase_order.status, purchase_order.deadline
           FROM purchase_orders AS purchase_order
           WHERE purchase_order.received_date >= $1::date
             AND purchase_order.received_date < $2::date
@@ -32,14 +32,9 @@ export class ManagementDashboardService {
             ) AS completed_purchase_orders,
             COUNT(*) FILTER (
               WHERE selected_purchase_order.status NOT IN ('closed', 'cancelled')
-                AND EXISTS (
-                  SELECT 1
-                  FROM purchase_order_products AS product
-                  WHERE product.purchase_order_id = selected_purchase_order.id
-                    AND product.deadline < (
-                      CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Ho_Chi_Minh'
-                    )::date
-                )
+                AND selected_purchase_order.deadline < (
+                  CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Ho_Chi_Minh'
+                )::date
             ) AS overdue_purchase_orders
           FROM selected_purchase_orders AS selected_purchase_order
         ),

@@ -1,8 +1,8 @@
 import { QueryRunner } from 'typeorm';
-import { RemoveDirectorManagementAccess1740000000017 } from './migrations/1740000000017-RemoveDirectorManagementAccess';
+import { RemoveDirectorManagementAccess1740000000035 } from './migrations/1740000000035-RemoveDirectorManagementAccess';
 
-describe('RemoveDirectorManagementAccess1740000000017', () => {
-  const migration = new RemoveDirectorManagementAccess1740000000017();
+describe('RemoveDirectorManagementAccess1740000000035', () => {
+  const migration = new RemoveDirectorManagementAccess1740000000035();
 
   it('removes the unused director role while retaining the management permission', async () => {
     const query = jest

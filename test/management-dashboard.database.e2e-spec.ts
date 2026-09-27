@@ -78,7 +78,7 @@ describe('Management dashboard API with PostgreSQL (e2e)', () => {
     return response.body as SummaryResponse;
   }
 
-  it('counts the monthly PO cohort and current active employees without duplicate overdue POs', async () => {
+  it('counts overdue POs by the PO deadline, including orders without products', async () => {
     const baseline = await getSummary();
     const [{ id: customerId }] = (await dataSource.query(
       `
@@ -111,18 +111,20 @@ describe('Management dashboard API with PostgreSQL (e2e)', () => {
           customer_id,
           customer_name_snapshot,
           received_date,
+          deadline,
           status,
           cancellation_reason,
           closed_at,
           archived_at
         )
         VALUES
-          ($1, $7, $8, '2026-09-01', 'closed', NULL, now(), NULL),
-          ($2, $7, $8, '2026-09-08', 'cancelled', 'Test cancellation', NULL, NULL),
-          ($3, $7, $8, '2026-09-15', 'in_progress', NULL, NULL, NULL),
-          ($4, $7, $8, '2026-09-20', 'pending_rd', NULL, NULL, NULL),
-          ($5, $7, $8, '2026-10-01', 'in_progress', NULL, NULL, NULL),
-          ($6, $7, $8, '2026-09-10', 'in_progress', NULL, NULL, now())
+          ($1, $8, $9, '2026-09-01', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - 2, 'closed', NULL, now(), NULL),
+          ($2, $8, $9, '2026-09-08', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - 2, 'cancelled', 'Test cancellation', NULL, NULL),
+          ($3, $8, $9, '2026-09-15', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - 1, 'in_progress', NULL, NULL, NULL),
+          ($4, $8, $9, '2026-09-20', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Ho_Chi_Minh')::date, 'pending_rd', NULL, NULL, NULL),
+          ($5, $8, $9, '2026-10-01', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - 1, 'in_progress', NULL, NULL, NULL),
+          ($6, $8, $9, '2026-09-10', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - 1, 'in_progress', NULL, NULL, now()),
+          ($7, $8, $9, '2026-09-22', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - 1, 'draft', NULL, NULL, NULL)
         RETURNING id, po_code
       `,
       [
@@ -132,6 +134,7 @@ describe('Management dashboard API with PostgreSQL (e2e)', () => {
         `${runKey}-TODAY`,
         `${runKey}-NEXT-MONTH`,
         `${runKey}-ARCHIVED`,
+        `${runKey}-EMPTY-OVERDUE`,
         customerId,
         `${runKey} Customer`,
       ],
@@ -162,9 +165,9 @@ describe('Management dashboard API with PostgreSQL (e2e)', () => {
 
     await expect(getSummary()).resolves.toEqual({
       month,
-      totalPurchaseOrders: baseline.totalPurchaseOrders + 4,
+      totalPurchaseOrders: baseline.totalPurchaseOrders + 5,
       completedPurchaseOrders: baseline.completedPurchaseOrders + 1,
-      overduePurchaseOrders: baseline.overduePurchaseOrders + 1,
+      overduePurchaseOrders: baseline.overduePurchaseOrders + 2,
       activeEmployees: baseline.activeEmployees + 1,
     });
   });

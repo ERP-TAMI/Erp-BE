@@ -41,9 +41,8 @@ describe('ManagementDashboardService', () => {
     expect(sql).toContain('purchase_order.archived_at IS NULL');
     expect(sql).toContain("selected_purchase_order.status = 'closed'");
     expect(sql).toContain("status NOT IN ('closed', 'cancelled')");
-    expect(sql).toContain(
-      'product.purchase_order_id = selected_purchase_order.id',
-    );
+    expect(sql).toContain('selected_purchase_order.deadline <');
+    expect(sql).not.toContain('purchase_order_products');
     expect(sql).toContain("AT TIME ZONE 'Asia/Ho_Chi_Minh'");
     expect(sql).toContain("WHERE status = 'active'");
   });

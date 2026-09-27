@@ -4,8 +4,8 @@ type DirectorAssignmentCount = {
   assigned_count: string;
 };
 
-export class RemoveDirectorManagementAccess1740000000017 implements MigrationInterface {
-  name = 'RemoveDirectorManagementAccess1740000000017';
+export class RemoveDirectorManagementAccess1740000000035 implements MigrationInterface {
+  name = 'RemoveDirectorManagementAccess1740000000035';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
     const assignments = (await queryRunner.query(`
