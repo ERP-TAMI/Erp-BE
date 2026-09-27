@@ -73,6 +73,7 @@ describe('StyleDocumentsService', () => {
       headObject: jest.fn().mockResolvedValue({ exists: true }),
       getObjectHead: jest.fn().mockResolvedValue(Buffer.from('%PDF-1.5')),
       getObjectBuffer: jest.fn().mockResolvedValue(Buffer.from('')),
+      isTrustedObjectHost: jest.fn().mockReturnValue(true),
     };
 
     const dataSourceMock = {
@@ -188,6 +189,25 @@ describe('StyleDocumentsService', () => {
           sizeBytes: 2048,
         }),
       ).rejects.toThrow(BadRequestException);
+      expect(docRepoMock.save).not.toHaveBeenCalled();
+    });
+
+    it('rejects and deletes the object when the real uploaded size exceeds the limit', async () => {
+      storageMock.headObject.mockResolvedValue({
+        exists: true,
+        sizeBytes: 21 * 1024 * 1024,
+      });
+      const objectKey = `styles/${STYLE_ID}/documents/fit_attachment/huge.pdf`;
+
+      await expect(
+        service.confirm(STYLE_ID, 'user-1', {
+          objectKey,
+          fileName: 'huge.pdf',
+          mimeType: 'application/pdf',
+          sizeBytes: 2048, // client under-reported this at presign time
+        }),
+      ).rejects.toThrow(BadRequestException);
+      expect(storageMock.deleteObject).toHaveBeenCalledWith(objectKey);
       expect(docRepoMock.save).not.toHaveBeenCalled();
     });
   });

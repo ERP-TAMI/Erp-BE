@@ -20,6 +20,8 @@ export const DEFAULT_UPLOAD_MIME_ALLOWLIST: Record<string, string[]> = {
   '.png': ['image/png'],
   '.jpg': ['image/jpeg'],
   '.jpeg': ['image/jpeg'],
+  '.webp': ['image/webp'],
+  '.gif': ['image/gif'],
 };
 
 export const DEFAULT_MAX_UPLOAD_SIZE_BYTES = 20 * 1024 * 1024;

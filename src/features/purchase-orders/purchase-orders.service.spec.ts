@@ -306,6 +306,7 @@ describe('PurchaseOrdersService', () => {
         .fn()
         .mockResolvedValue(Buffer.from('%PDF-1.5 test')),
       getObjectHead: jest.fn().mockResolvedValue(Buffer.from('%PDF-1.5 test')),
+      isTrustedObjectHost: jest.fn().mockReturnValue(true),
     };
 
     txDocRepoMock = {
