@@ -22,12 +22,14 @@ import { ProductionModule } from './features/production/production.module';
 import { NotificationsModule } from './features/notifications/notifications.module';
 import { AuditModule } from './features/audit/audit.module';
 import { PlatformModule } from './features/platform/platform.module';
-import { UploadsModule } from './features/uploads/uploads.module';
+import { StorageModule } from './features/storage/storage.module';
 import { AppLoggerModule } from './common/logger/logger.module';
 import { ManagementDashboardModule } from './features/management-dashboard/management-dashboard.module';
+import { UserManagementModule } from './features/user-management/user-management.module';
+import { validateEnvironment } from './config/environment.validation';
 
 const imports = [
-  ConfigModule.forRoot({ isGlobal: true }),
+  ConfigModule.forRoot({ isGlobal: true, validate: validateEnvironment }),
   AppLoggerModule,
   TypeOrmModule.forRootAsync({ useFactory: typeOrmConfig }),
   AuthModule,
@@ -41,7 +43,7 @@ const imports = [
   SizeChartsModule,
   DocumentsModule,
   StylesModule,
-  UploadsModule,
+  StorageModule,
   DraftBomsModule,
   PurchaseOrdersModule,
   BomsModule,
@@ -50,6 +52,7 @@ const imports = [
   AuditModule,
   PlatformModule,
   ManagementDashboardModule,
+  UserManagementModule,
 ];
 
 @Module({

@@ -8,6 +8,7 @@ import {
 import { StylesService } from './styles.service';
 import { Style } from './entities/Style.entity';
 import { StyleStatus } from '../../common/enums/database.enums';
+import { STORAGE_SERVICE } from '../storage/storage.interface';
 
 describe('StylesService', () => {
   let service: StylesService;
@@ -52,6 +53,18 @@ describe('StylesService', () => {
         {
           provide: getRepositoryToken(Style),
           useValue: repositoryMock,
+        },
+        {
+          provide: STORAGE_SERVICE,
+          useValue: {
+            getPresignedPutUrl: jest.fn(),
+            getPresignedGetUrl: jest
+              .fn()
+              .mockResolvedValue('https://s3.example/get'),
+            deleteObject: jest.fn(),
+            headObject: jest.fn(),
+            getObjectBuffer: jest.fn(),
+          },
         },
       ],
     }).compile();

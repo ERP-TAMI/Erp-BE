@@ -12,12 +12,20 @@ import {
   HttpStatus,
   Req,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiBearerAuth,
+} from '@nestjs/swagger';
+import { Auth } from '../../common/decorators/auth.decorator';
 import { StylesService, PaginatedResult } from './styles.service';
 import { CreateStyleDto, UpdateStyleDto, StyleQueryDto } from './dto';
 import { Style } from './entities/Style.entity';
 
 @ApiTags('styles')
+@ApiBearerAuth()
+@Auth()
 @Controller(['styles', 'api/styles', 'api/v1/styles'])
 export class StylesController {
   constructor(private readonly stylesService: StylesService) {}
@@ -30,7 +38,8 @@ export class StylesController {
   @ApiResponse({ status: 409, description: 'Mã mẫu Fit đã tồn tại' })
   async create(@Body() dto: CreateStyleDto, @Req() req?: any): Promise<Style> {
     const userId = req?.user?.id || req?.user?.sub;
-    return this.stylesService.create(dto, userId);
+    const style = await this.stylesService.create(dto, userId);
+    return this.stylesService.withResolvedBaseImage(style);
   }
 
   @Get()
@@ -41,7 +50,13 @@ export class StylesController {
   async findAll(
     @Query() query: StyleQueryDto,
   ): Promise<PaginatedResult<Style>> {
-    return this.stylesService.findAll(query);
+    const result = await this.stylesService.findAll(query);
+    return {
+      ...result,
+      data: await Promise.all(
+        result.data.map((s) => this.stylesService.withResolvedBaseImage(s)),
+      ),
+    };
   }
 
   @Get('code/:styleCode')
@@ -49,7 +64,8 @@ export class StylesController {
   @ApiResponse({ status: 200, description: 'Chi tiết mẫu Fit' })
   @ApiResponse({ status: 404, description: 'Không tìm thấy mẫu Fit' })
   async findByCode(@Param('styleCode') styleCode: string): Promise<Style> {
-    return this.stylesService.findByCode(styleCode);
+    const style = await this.stylesService.findByCode(styleCode);
+    return this.stylesService.withResolvedBaseImage(style);
   }
 
   @Get(':id')
@@ -57,7 +73,8 @@ export class StylesController {
   @ApiResponse({ status: 200, description: 'Chi tiết mẫu Fit' })
   @ApiResponse({ status: 404, description: 'Không tìm thấy mẫu Fit' })
   async findOne(@Param('id', ParseUUIDPipe) id: string): Promise<Style> {
-    return this.stylesService.findOne(id);
+    const style = await this.stylesService.findOne(id);
+    return this.stylesService.withResolvedBaseImage(style);
   }
 
   @Patch(':id')
@@ -71,7 +88,8 @@ export class StylesController {
     @Req() req?: any,
   ): Promise<Style> {
     const userId = req?.user?.id || req?.user?.sub;
-    return this.stylesService.update(id, dto, userId);
+    const style = await this.stylesService.update(id, dto, userId);
+    return this.stylesService.withResolvedBaseImage(style);
   }
 
   @Delete(':id')

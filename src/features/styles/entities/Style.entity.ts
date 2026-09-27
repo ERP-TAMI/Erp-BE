@@ -35,8 +35,11 @@ export class Style {
   })
   status: StyleStatus;
 
+  // Column name kept for backward compatibility (no migration needed) — the
+  // value itself is an S3 object key, never a URL. A presigned URL expires
+  // (PRESIGN_GET_EXPIRY_SECONDS), so it must be resolved fresh on every read.
   @Column({ type: 'text', nullable: true, name: 'base_image_version_id' })
-  baseImageVersionId: string | null;
+  baseImageKey: string | null;
 
   @Column({ type: 'int', default: 30, name: 'as3b_cm_base_days' })
   as3bCmBaseDays: number;

@@ -27,6 +27,7 @@ mkdirSync(logsDirectory, { recursive: true });
           'req.headers.authorization',
           'req.headers.cookie',
           'req.body.password',
+          'req.body.token',
           'res.headers["set-cookie"]',
         ],
       },

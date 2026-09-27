@@ -33,6 +33,15 @@ export class User {
   @Column({ type: 'timestamptz', nullable: true, name: 'lockout_until' })
   lockoutUntil: Date | null;
 
+  @Column({ type: 'timestamptz', nullable: true, name: 'manually_locked_at' })
+  manuallyLockedAt: Date | null;
+
+  @Column({ type: 'uuid', nullable: true, name: 'manually_locked_by' })
+  manuallyLockedBy: string | null;
+
+  @Column({ type: 'int', default: 1, name: 'auth_version' })
+  authVersion: number;
+
   @Column({ type: 'timestamptz', nullable: true, name: 'last_login_at' })
   lastLoginAt: Date | null;
 

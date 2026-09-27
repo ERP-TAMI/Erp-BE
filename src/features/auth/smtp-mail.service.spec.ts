@@ -1,0 +1,176 @@
+import { ConfigService } from '@nestjs/config';
+import * as nodemailer from 'nodemailer';
+import { SmtpMailService } from './smtp-mail.service';
+
+const sendMail = jest.fn();
+const close = jest.fn();
+jest.mock('nodemailer', () => ({
+  createTransport: jest.fn(() => ({ sendMail, close })),
+}));
+
+describe('SmtpMailService', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    sendMail.mockResolvedValue({ messageId: 'test' });
+  });
+
+  it('uses STARTTLS and sends HTML plus text without a temporary password', async () => {
+    const values: Record<string, string> = {
+      MAIL_HOST: 'smtp.gmail.com',
+      MAIL_PORT: '587',
+      MAIL_USERNAME: 'sender@example.test',
+      MAIL_PASSWORD: 'secret-from-env',
+      MAIL_FROM: 'TAMI ERP <sender@example.test>',
+      FRONTEND_URL: 'https://erp.example.test',
+    };
+    const config = {
+      getOrThrow: jest.fn((key: string) => values[key]),
+      get: jest.fn((key: string) => values[key]),
+    } as unknown as ConfigService;
+    const service = new SmtpMailService(config);
+
+    await service.sendPasswordSetupEmail({
+      email: 'new.user@example.test',
+      fullName: '<Người dùng>',
+      token: 'opaque-token',
+      accountAvailable: true,
+    });
+
+    expect(nodemailer.createTransport).toHaveBeenCalledWith(
+      expect.objectContaining({
+        port: 587,
+        secure: false,
+        requireTLS: true,
+        pool: true,
+        maxConnections: 2,
+        connectionTimeout: 10000,
+        greetingTimeout: 10000,
+        socketTimeout: 10000,
+      }),
+    );
+    const message = sendMail.mock.calls[0][0];
+    expect(message.text).toContain('token=opaque-token');
+    expect(message.text).not.toContain('đã được tạo');
+    expect(message.html).not.toContain('đã được tạo');
+    expect(message.html).toContain('&lt;Người dùng&gt;');
+    expect(JSON.stringify(message)).not.toContain('secret-from-env');
+    expect(message.text.toLowerCase()).not.toContain('mật khẩu tạm');
+  });
+
+  it('reuses the SMTP pool and closes it during shutdown', async () => {
+    const values: Record<string, string> = {
+      MAIL_HOST: 'smtp.gmail.com',
+      MAIL_PORT: '587',
+      MAIL_USERNAME: 'sender@example.test',
+      MAIL_PASSWORD: 'secret-from-env',
+      FRONTEND_URL: 'https://erp.example.test',
+    };
+    const config = {
+      getOrThrow: jest.fn((key: string) => values[key]),
+      get: jest.fn((key: string) => values[key]),
+    } as unknown as ConfigService;
+    const service = new SmtpMailService(config);
+    const input = {
+      email: 'new.user@example.test',
+      fullName: 'Người dùng',
+      token: 'opaque-token',
+      accountAvailable: true,
+    };
+
+    await service.sendPasswordSetupEmail(input);
+    await service.sendPasswordSetupEmail(input);
+    service.onModuleDestroy();
+
+    expect(nodemailer.createTransport).toHaveBeenCalledTimes(1);
+    expect(sendMail).toHaveBeenCalledTimes(2);
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it('emails a manually locked user with an escaped user-facing reason', async () => {
+    const values: Record<string, string> = {
+      MAIL_HOST: 'smtp.gmail.com',
+      MAIL_PORT: '587',
+      MAIL_USERNAME: 'sender@example.test',
+      MAIL_PASSWORD: 'secret-from-env',
+    };
+    const config = {
+      getOrThrow: jest.fn((key: string) => values[key]),
+      get: jest.fn((key: string) => values[key]),
+    } as unknown as ConfigService;
+    const service = new SmtpMailService(config);
+
+    await service.sendAccountLockedEmail({
+      email: 'locked.user@example.test',
+      fullName: '<Người dùng>',
+      reason: '<Nghi ngờ truy cập trái phép>',
+    });
+
+    expect(sendMail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: 'locked.user@example.test',
+        subject: 'Tài khoản TAMI ERP đã bị khóa',
+        text: expect.stringContaining('Nghi ngờ truy cập trái phép'),
+        html: expect.stringContaining('&lt;Nghi ngờ truy cập trái phép&gt;'),
+      }),
+    );
+    expect(sendMail.mock.calls[0][0].html).not.toContain(
+      '<Nghi ngờ truy cập trái phép>',
+    );
+  });
+
+  it('sends a dedicated password-reset link', async () => {
+    const values: Record<string, string> = {
+      MAIL_HOST: 'smtp.gmail.com',
+      MAIL_PORT: '587',
+      MAIL_USERNAME: 'sender@example.test',
+      MAIL_PASSWORD: 'secret-from-env',
+      FRONTEND_URL: 'https://erp.example.test',
+    };
+    const config = {
+      getOrThrow: jest.fn((key: string) => values[key]),
+      get: jest.fn((key: string) => values[key]),
+    } as unknown as ConfigService;
+    const service = new SmtpMailService(config);
+
+    await service.sendPasswordResetEmail({
+      email: 'user@example.test',
+      fullName: '<Người dùng>',
+      token: 'reset-token',
+    });
+
+    expect(sendMail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        subject: 'Đặt lại mật khẩu TAMI ERP',
+        text: expect.stringContaining('/reset-password?token=reset-token'),
+        html: expect.stringContaining('&lt;Người dùng&gt;'),
+      }),
+    );
+  });
+
+  it('sends temporary-lock times without a password-reset link', async () => {
+    const values: Record<string, string> = {
+      MAIL_HOST: 'smtp.gmail.com',
+      MAIL_PORT: '587',
+      MAIL_USERNAME: 'sender@example.test',
+      MAIL_PASSWORD: 'secret-from-env',
+    };
+    const config = {
+      getOrThrow: jest.fn((key: string) => values[key]),
+      get: jest.fn((key: string) => values[key]),
+    } as unknown as ConfigService;
+    const service = new SmtpMailService(config);
+
+    await service.sendTemporaryAccountLockEmail({
+      email: 'user@example.test',
+      fullName: 'Người dùng',
+      lockedAt: new Date('2026-09-14T01:00:00.000Z'),
+      lockoutUntil: new Date('2026-09-14T01:15:00.000Z'),
+    });
+
+    const message = sendMail.mock.calls[0][0];
+    expect(message.text).toContain('15 phút');
+    expect(message.text).toContain('Tự động mở khóa lúc');
+    expect(JSON.stringify(message)).not.toContain('reset-password');
+    expect(JSON.stringify(message)).not.toContain('token=');
+  });
+});

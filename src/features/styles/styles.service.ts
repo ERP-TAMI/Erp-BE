@@ -1,4 +1,5 @@
 import {
+  Inject,
   Injectable,
   ConflictException,
   NotFoundException,
@@ -9,6 +10,8 @@ import { Repository } from 'typeorm';
 import { Style } from './entities/Style.entity';
 import { StyleStatus } from '../../common/enums/database.enums';
 import { CreateStyleDto, UpdateStyleDto, StyleQueryDto } from './dto';
+import { STORAGE_SERVICE, StorageService } from '../storage/storage.interface';
+import { isResolvableObjectKey } from '../storage/storage-key.util';
 
 export interface PaginatedResult<T> {
   data: T[];
@@ -25,7 +28,27 @@ export class StylesService {
   constructor(
     @InjectRepository(Style)
     private readonly styleRepository: Repository<Style>,
+    @Inject(STORAGE_SERVICE)
+    private readonly storage: StorageService,
   ) {}
+
+  // baseImageKey stores an S3 object key, never a URL — a presigned URL
+  // expires (PRESIGN_GET_EXPIRY_SECONDS). Service methods that read/write the
+  // entity (e.g. update()) always work with the raw key; callers building an
+  // API response must resolve it fresh via this method right before sending.
+  async withResolvedBaseImage(style: Style): Promise<Style> {
+    if (!style.baseImageKey) return style;
+    // Dữ liệu cũ còn giữ đường dẫn ổ đĩa ("/uploads/style-images/..."). Ký URL
+    // cho nó chỉ tạo ra link trỏ vào key không tồn tại trên S3 (và có cả dấu
+    // gạch đôi), nên trả null để client hiển thị ảnh mặc định.
+    if (!isResolvableObjectKey(style.baseImageKey)) {
+      return { ...style, baseImageKey: null };
+    }
+    const baseImageKey = await this.storage.getPresignedGetUrl(
+      style.baseImageKey,
+    );
+    return { ...style, baseImageKey };
+  }
 
   async create(dto: CreateStyleDto, userId?: string): Promise<Style> {
     const styleCodeClean = dto.styleCode?.trim();
@@ -53,7 +76,7 @@ export class StylesService {
       styleName: styleNameClean,
       description: dto.description?.trim() ?? null,
       category: dto.category?.trim() ?? null,
-      baseImageVersionId: dto.baseImageVersionId ?? null,
+      baseImageKey: dto.baseImageKey ?? null,
       status: dto.status ?? StyleStatus.DRAFT,
       createdBy: userId ?? null,
       updatedBy: userId ?? null,
@@ -163,8 +186,8 @@ export class StylesService {
     if (dto.category !== undefined) {
       style.category = dto.category?.trim() ?? null;
     }
-    if (dto.baseImageVersionId !== undefined) {
-      style.baseImageVersionId = dto.baseImageVersionId ?? null;
+    if (dto.baseImageKey !== undefined) {
+      style.baseImageKey = dto.baseImageKey ?? null;
     }
     if (dto.status !== undefined) {
       style.status = dto.status;
@@ -178,6 +201,24 @@ export class StylesService {
 
   async remove(id: string): Promise<void> {
     const style = await this.findOne(id);
-    await this.styleRepository.remove(style);
+    try {
+      await this.styleRepository.remove(style);
+    } catch (error) {
+      if (this.isForeignKeyViolation(error)) {
+        throw new ConflictException(
+          'Không thể xoá mẫu Fit vì đang được sử dụng bởi dữ liệu khác (BOM, tài liệu sản xuất...).',
+        );
+      }
+      throw error;
+    }
+  }
+
+  private isForeignKeyViolation(error: unknown): error is { code: string } {
+    return (
+      typeof error === 'object' &&
+      error !== null &&
+      'code' in error &&
+      (error as { code?: unknown }).code === '23503'
+    );
   }
 }

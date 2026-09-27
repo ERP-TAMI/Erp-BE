@@ -30,13 +30,13 @@ export class NotificationDeliverie {
   attemptCount: number;
 
   @Column({ type: 'text', nullable: true, name: 'last_error' })
-  lastError: string;
+  lastError: string | null;
 
   @Column({ type: 'timestamptz', nullable: true, name: 'next_attempt_at' })
-  nextAttemptAt: Date;
+  nextAttemptAt: Date | null;
 
   @Column({ type: 'timestamptz', nullable: true, name: 'sent_at' })
-  sentAt: Date;
+  sentAt: Date | null;
 
   @Column({ type: 'timestamptz', name: 'created_at' })
   createdAt: Date;

@@ -1,5 +1,5 @@
 import { ForbiddenException, UnauthorizedException } from '@nestjs/common';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, EntityManager, Repository } from 'typeorm';
 import { AuthService } from './auth.service';
 import { User } from './entities/User.entity';
 import { UserSession } from './entities/UserSession.entity';
@@ -7,6 +7,8 @@ import { RecordStatus } from '../../common/enums/database.enums';
 import { ErrorCode } from '../../common/enums/error-code.enum';
 import * as passwordUtil from '../../common/security/password.util';
 import { LOGIN_FAILED_THRESHOLD } from './auth.constants';
+import { NotificationsService } from '../notifications/notifications.service';
+import { SmtpMailService } from './smtp-mail.service';
 
 function buildUser(overrides: Partial<User> = {}): User {
   return {
@@ -20,6 +22,9 @@ function buildUser(overrides: Partial<User> = {}): User {
     mustChangePassword: false,
     loginFailedCount: 0,
     lockoutUntil: null,
+    manuallyLockedAt: null,
+    manuallyLockedBy: null,
+    authVersion: 1,
     lastLoginAt: null,
     rowVersion: 1,
     createdAt: new Date(),
@@ -48,6 +53,8 @@ describe('AuthService', () => {
   let sessionRepository: jest.Mocked<Repository<UserSession>>;
   let dataSource: jest.Mocked<DataSource>;
   let jwtService: { sign: jest.Mock };
+  let notifications: jest.Mocked<NotificationsService>;
+  let mail: jest.Mocked<SmtpMailService>;
   let service: AuthService;
 
   const roleInfoRow = [
@@ -58,6 +65,7 @@ describe('AuthService', () => {
     userRepository = {
       findOne: jest.fn(),
       update: jest.fn(),
+      save: jest.fn(async (value) => value),
     } as unknown as jest.Mocked<Repository<User>>;
     sessionRepository = {
       findOne: jest.fn(),
@@ -65,16 +73,32 @@ describe('AuthService', () => {
       save: jest.fn(),
       update: jest.fn(),
     } as unknown as jest.Mocked<Repository<UserSession>>;
+    const manager = {
+      getRepository: jest.fn(() => userRepository),
+    } as unknown as EntityManager;
     dataSource = {
       query: jest.fn().mockResolvedValue(roleInfoRow),
+      transaction: jest.fn((run) => run(manager)),
     } as unknown as jest.Mocked<DataSource>;
     jwtService = { sign: jest.fn().mockReturnValue('signed.access.token') };
+    notifications = {
+      createTemporaryAccountLockEmailDelivery: jest
+        .fn()
+        .mockResolvedValue({ deliveryId: 'delivery-id' }),
+      recordEmailDeliverySent: jest.fn().mockResolvedValue(undefined),
+      recordEmailDeliveryFailed: jest.fn().mockResolvedValue(undefined),
+    } as unknown as jest.Mocked<NotificationsService>;
+    mail = {
+      sendTemporaryAccountLockEmail: jest.fn().mockResolvedValue(undefined),
+    } as unknown as jest.Mocked<SmtpMailService>;
 
     service = new AuthService(
       userRepository,
       sessionRepository,
       dataSource,
       jwtService as never,
+      notifications,
+      mail,
     );
 
     jest.spyOn(passwordUtil, 'verifyPassword');
@@ -106,9 +130,9 @@ describe('AuthService', () => {
         response: { code: ErrorCode.INVALID_CREDENTIALS },
       });
 
-      expect(userRepository.update).toHaveBeenCalledWith(user.id, {
-        loginFailedCount: 2,
-      });
+      expect(userRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({ loginFailedCount: 2 }),
+      );
     });
 
     it('locks the account once the failed-login threshold is reached', async () => {
@@ -116,17 +140,41 @@ describe('AuthService', () => {
       userRepository.findOne.mockResolvedValue(user);
       jest.spyOn(passwordUtil, 'verifyPassword').mockResolvedValue(false);
 
-      await expect(service.login(user.email, 'wrong', {})).rejects.toThrow();
+      await expect(
+        service.login(user.email, 'wrong', {}),
+      ).rejects.toMatchObject({
+        response: { code: ErrorCode.ACCOUNT_TEMPORARILY_LOCKED },
+      });
 
-      const patch = userRepository.update.mock.calls[0][1] as {
-        loginFailedCount: number;
-        lockoutUntil: Date;
-      };
-      expect(patch.loginFailedCount).toBe(LOGIN_FAILED_THRESHOLD);
-      expect(patch.lockoutUntil.getTime()).toBeGreaterThan(Date.now());
+      expect(user.loginFailedCount).toBe(LOGIN_FAILED_THRESHOLD);
+      expect(user.lockoutUntil!.getTime()).toBeGreaterThan(Date.now());
+      expect(
+        notifications.createTemporaryAccountLockEmailDelivery,
+      ).toHaveBeenCalledTimes(1);
     });
 
-    it('rejects a locked account with ACCOUNT_LOCKED, even before checking the password', async () => {
+    it('starts a fresh failed-login cycle after a temporary lock expires', async () => {
+      const user = buildUser({
+        loginFailedCount: LOGIN_FAILED_THRESHOLD,
+        lockoutUntil: new Date(Date.now() - 1),
+      });
+      userRepository.findOne.mockResolvedValue(user);
+      jest.spyOn(passwordUtil, 'verifyPassword').mockResolvedValue(false);
+
+      await expect(
+        service.login(user.email, 'wrong', {}),
+      ).rejects.toMatchObject({
+        response: { code: ErrorCode.INVALID_CREDENTIALS },
+      });
+
+      expect(user.loginFailedCount).toBe(1);
+      expect(user.lockoutUntil).toBeNull();
+      expect(
+        notifications.createTemporaryAccountLockEmailDelivery,
+      ).not.toHaveBeenCalled();
+    });
+
+    it('rejects a temporary lockout with ACCOUNT_TEMPORARILY_LOCKED before checking the password', async () => {
       const user = buildUser({
         lockoutUntil: new Date(Date.now() + 60_000),
       });
@@ -135,8 +183,24 @@ describe('AuthService', () => {
 
       await expect(
         service.login(user.email, 'whatever', {}),
-      ).rejects.toMatchObject({ response: { code: ErrorCode.ACCOUNT_LOCKED } });
+      ).rejects.toMatchObject({
+        response: { code: ErrorCode.ACCOUNT_TEMPORARILY_LOCKED },
+      });
       expect(verifySpy).not.toHaveBeenCalled();
+    });
+
+    it('rejects an administrator lock with ACCOUNT_MANUALLY_LOCKED', async () => {
+      const user = buildUser({ manuallyLockedAt: new Date() });
+      userRepository.findOne.mockResolvedValue(user);
+
+      await expect(
+        service.login(user.email, 'whatever', {}),
+      ).rejects.toMatchObject({
+        response: {
+          code: ErrorCode.ACCOUNT_MANUALLY_LOCKED,
+          message: 'Tài khoản đã bị quản trị viên khóa.',
+        },
+      });
     });
 
     it('rejects an inactive account with ACCOUNT_INACTIVE', async () => {
@@ -223,7 +287,7 @@ describe('AuthService', () => {
       );
 
       await expect(service.refresh('raw-token', {})).rejects.toMatchObject({
-        response: { code: ErrorCode.ACCOUNT_LOCKED },
+        response: { code: ErrorCode.ACCOUNT_TEMPORARILY_LOCKED },
       });
     });
   });

@@ -18,14 +18,14 @@ export class Notification {
   body: string;
 
   @Column({ type: 'varchar', length: 80, nullable: true, name: 'entity_type' })
-  entityType: string;
+  entityType: string | null;
 
   @Column({ type: 'uuid', nullable: true, name: 'entity_id' })
-  entityId: string;
+  entityId: string | null;
 
   @Column({ type: 'timestamptz', name: 'created_at' })
   createdAt: Date;
 
   @Column({ type: 'timestamptz', nullable: true, name: 'read_at' })
-  readAt: Date;
+  readAt: Date | null;
 }

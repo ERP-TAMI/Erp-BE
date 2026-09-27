@@ -27,8 +27,13 @@ export class PurchaseOrderProduct {
   @Column({ type: 'date', nullable: true })
   deadline: Date;
 
-  @Column({ type: 'uuid', nullable: true, name: 'structure_image_version_id' })
-  structureImageVersionId: string;
+  @Column({
+    type: 'varchar',
+    length: 500,
+    nullable: true,
+    name: 'structure_image_version_id',
+  })
+  structureImageVersionId: string | null;
 
   @Column({ type: 'enum', enum: ProductStatus, enumName: 'product_status' })
   status: ProductStatus;

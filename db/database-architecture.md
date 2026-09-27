@@ -492,6 +492,7 @@ Schema được chuẩn hoá theo aggregate Style, PurchaseOrder, PurchaseOrderP
 | `customer_id` | `uuid` | not null | Thuộc tính nghiệp vụ/kiểm soát của bảng. |
 | `customer_name_snapshot` | `varchar(255)` | not null | Thuộc tính nghiệp vụ/kiểm soát của bảng. |
 | `received_date` | `date` | not null | Thuộc tính nghiệp vụ/kiểm soát của bảng. |
+| `deadline` | `date` | Nullable theo nghiệp vụ | Thời hạn hoàn thành đơn hàng. |
 | `note` | `text` | Nullable theo nghiệp vụ | Thuộc tính nghiệp vụ/kiểm soát của bảng. |
 | `status` | `po_status` | not null, default: `'draft'` | Thuộc tính nghiệp vụ/kiểm soát của bảng. |
 | `cancellation_reason` | `text` | Nullable theo nghiệp vụ | Thuộc tính nghiệp vụ/kiểm soát của bảng. |
@@ -603,7 +604,6 @@ Schema được chuẩn hoá theo aggregate Style, PurchaseOrder, PurchaseOrderP
 | `id` | `uuid` | pk, default: `gen_random_uuid()` | Khoá định danh. |
 | `product_id` | `uuid` | not null | Thuộc tính nghiệp vụ/kiểm soát của bảng. |
 | `color_name` | `varchar(100)` | not null | Thuộc tính nghiệp vụ/kiểm soát của bảng. |
-| `color_code` | `varchar(50)` | Nullable theo nghiệp vụ | Thuộc tính nghiệp vụ/kiểm soát của bảng. |
 | `order_index` | `integer` | not null, default: `0` | Thuộc tính nghiệp vụ/kiểm soát của bảng. |
 
 ### `purchase_order_product_color_sizes`

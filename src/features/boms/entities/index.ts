@@ -1,10 +1,22 @@
-import { BillOfMaterials } from './BillOfMaterials.entity';
-import { BillOfMaterialLine } from './BillOfMaterialLine.entity';
-import { BillOfMaterialStatusHistory } from './BillOfMaterialStatusHistory.entity';
+import { Bom } from './Bom.entity';
+import { BomRevision } from './BomRevision.entity';
+import { BomLine } from './BomLine.entity';
+import { BomRevisionStatusHistory } from './BomRevisionStatusHistory.entity';
 
-export { BillOfMaterials, BillOfMaterialLine, BillOfMaterialStatusHistory };
+export {
+  Bom,
+  BomRevision,
+  BomLine,
+  BomRevisionStatusHistory,
+  // Backward compatibility aliases
+  Bom as BillOfMaterials,
+  BomLine as BillOfMaterialLine,
+  BomRevisionStatusHistory as BillOfMaterialStatusHistory,
+};
+
 export const BOMS_ENTITIES = [
-  BillOfMaterials,
-  BillOfMaterialLine,
-  BillOfMaterialStatusHistory,
+  Bom,
+  BomRevision,
+  BomLine,
+  BomRevisionStatusHistory,
 ];

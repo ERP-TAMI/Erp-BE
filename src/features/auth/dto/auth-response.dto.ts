@@ -1,4 +1,4 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class AuthUserDto {
   @ApiProperty({ format: 'uuid' })
@@ -10,10 +10,13 @@ export class AuthUserDto {
   @ApiProperty()
   fullName: string;
 
+  @ApiPropertyOptional({ nullable: true })
+  phone: string | null;
+
   @ApiProperty({ example: 'SA' })
   roleCode: string;
 
-  @ApiProperty({ example: 'Quản trị hệ thống' })
+  @ApiProperty({ example: 'SA / Giám đốc' })
   roleName: string;
 
   @ApiProperty({ type: [String] })

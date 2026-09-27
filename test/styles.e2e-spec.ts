@@ -1,9 +1,14 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { INestApplication, ValidationPipe } from '@nestjs/common';
+import {
+  ExecutionContext,
+  INestApplication,
+  ValidationPipe,
+} from '@nestjs/common';
 import * as request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { StylesService } from '../src/features/styles/styles.service';
 import { StyleStatus } from '../src/common/enums/database.enums';
+import { JwtAuthGuard } from '../src/common/guards/jwt-auth.guard';
 
 describe('Styles API (e2e)', () => {
   let app: INestApplication;
@@ -42,6 +47,7 @@ describe('Styles API (e2e)', () => {
         Promise.resolve({ ...mockStyle, ...dto }),
       ),
     remove: jest.fn().mockResolvedValue(undefined),
+    withResolvedBaseImage: jest.fn().mockImplementation((s) => s),
   };
 
   beforeAll(async () => {
@@ -50,6 +56,19 @@ describe('Styles API (e2e)', () => {
     })
       .overrideProvider(StylesService)
       .useValue(mockStylesService)
+      .overrideGuard(JwtAuthGuard)
+      .useValue({
+        canActivate: (context: ExecutionContext) => {
+          context.switchToHttp().getRequest().user = {
+            id: 'e2e-test-user',
+            permissions: [
+              'master_data.styles.view',
+              'master_data.styles.manage',
+            ],
+          };
+          return true;
+        },
+      })
       .compile();
 
     app = moduleFixture.createNestApplication();

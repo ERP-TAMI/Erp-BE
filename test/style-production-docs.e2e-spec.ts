@@ -1,9 +1,14 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { INestApplication, ValidationPipe } from '@nestjs/common';
+import {
+  ExecutionContext,
+  INestApplication,
+  ValidationPipe,
+} from '@nestjs/common';
 import * as request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { StyleProductionDocsService } from '../src/features/production/style-production-docs.service';
 import { ProductionDocStatus } from '../src/common/enums/database.enums';
+import { JwtAuthGuard } from '../src/common/guards/jwt-auth.guard';
 
 describe('Style Production Docs API (e2e)', () => {
   let app: INestApplication;
@@ -56,6 +61,16 @@ describe('Style Production Docs API (e2e)', () => {
     })
       .overrideProvider(StyleProductionDocsService)
       .useValue(mockService)
+      .overrideGuard(JwtAuthGuard)
+      .useValue({
+        canActivate: (context: ExecutionContext) => {
+          context.switchToHttp().getRequest().user = {
+            id: 'e2e-test-user',
+            permissions: [],
+          };
+          return true;
+        },
+      })
       .compile();
 
     app = moduleFixture.createNestApplication();

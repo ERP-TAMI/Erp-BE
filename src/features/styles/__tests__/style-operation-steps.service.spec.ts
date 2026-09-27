@@ -1,5 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
+import { DataSource } from 'typeorm';
 import { NotFoundException } from '@nestjs/common';
 import { StyleOperationStepsService } from '../style-operation-steps.service';
 import { StyleOperationStep } from '../entities/StyleOperationStep.entity';
@@ -9,6 +10,7 @@ describe('StyleOperationStepsService', () => {
   let service: StyleOperationStepsService;
   let stepRepoMock: any;
   let styleRepoMock: any;
+  let dataSourceMock: any;
 
   const mockStyleId = '123e4567-e89b-12d3-a456-426614174000';
   const mockStepId = '987e6543-e89b-12d3-a456-426614174999';
@@ -59,6 +61,21 @@ describe('StyleOperationStepsService', () => {
       update: jest.fn().mockResolvedValue({ affected: 1 }),
     };
 
+    // createMany() now runs inside dataSource.transaction(); the mock just
+    // invokes the callback with a manager whose getRepository()/query()
+    // delegate to the same repo mocks, so existing assertions on
+    // stepRepoMock/styleRepoMock keep working unchanged.
+    dataSourceMock = {
+      transaction: jest.fn().mockImplementation(async (cb: any) => {
+        const manager = {
+          getRepository: (entity: any) =>
+            entity === Style ? styleRepoMock : stepRepoMock,
+          query: (...args: any[]) => stepRepoMock.query(...args),
+        };
+        return cb(manager);
+      }),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         StyleOperationStepsService,
@@ -69,6 +86,10 @@ describe('StyleOperationStepsService', () => {
         {
           provide: getRepositoryToken(Style),
           useValue: styleRepoMock,
+        },
+        {
+          provide: DataSource,
+          useValue: dataSourceMock,
         },
       ],
     }).compile();

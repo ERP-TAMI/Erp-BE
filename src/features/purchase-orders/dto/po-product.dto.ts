@@ -4,11 +4,53 @@ import {
   IsOptional,
   IsUUID,
   IsDateString,
+  IsEnum,
   MaxLength,
   IsInt,
   Min,
+  IsArray,
+  ValidateNested,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { SampleStatus } from '../../../common/enums/database.enums';
+
+export class ProductColorSizeItemDto {
+  @ApiProperty({ description: 'Tên size (S, M, L, XL...)', example: 'M' })
+  @IsString()
+  @IsNotEmpty()
+  sizeLabel: string;
+
+  @ApiProperty({ description: 'Số lượng chiếc (pcs)', example: 100 })
+  @IsInt()
+  @Min(0)
+  quantity: number;
+}
+
+export class ProductColorItemDto {
+  @ApiPropertyOptional({ description: 'ID màu (nếu có khi update)' })
+  @IsOptional()
+  @IsString()
+  id?: string;
+
+  @ApiProperty({
+    description: 'Tên màu sắc (Trắng, Đen, Xanh...)',
+    example: 'Trắng',
+  })
+  @IsString()
+  @IsNotEmpty()
+  colorName: string;
+
+  @ApiPropertyOptional({
+    description: 'Bảng size breakdown của màu',
+    type: [ProductColorSizeItemDto],
+  })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ProductColorSizeItemDto)
+  sizes?: ProductColorSizeItemDto[];
+}
 
 export class CreatePoProductDto {
   @ApiPropertyOptional({
@@ -97,7 +139,7 @@ export class CreatePoProductDto {
   deadline?: string;
 
   @ApiPropertyOptional({
-    description: 'Số ngày chu kỳ CM cơ bản (AS3B)',
+    description: 'Số ngày chu kỳ CM cơ bản',
     example: 30,
     default: 30,
   })
@@ -105,6 +147,48 @@ export class CreatePoProductDto {
   @IsInt()
   @Min(1)
   as3bCmBaseDays?: number;
+
+  @ApiPropertyOptional({
+    description: 'Tùy chọn sao chép dữ liệu khi import từ Fit',
+  })
+  @IsOptional()
+  importOptions?: {
+    copySteps?: boolean;
+    copySamples?: boolean;
+    copyProductionDoc?: boolean;
+    copyDocuments?: boolean;
+    selectedStepIds?: string[];
+    selectedSampleRoundIds?: string[];
+    selectedDocumentIds?: string[];
+  };
+
+  @ApiPropertyOptional({
+    description:
+      'Danh sách ID tài liệu từ kho PO muốn gán kèm khi tạo sản phẩm',
+    type: [String],
+  })
+  @IsOptional()
+  @IsArray()
+  poDocumentIds?: string[];
+
+  @ApiPropertyOptional({
+    description: 'URL hoặc ID ảnh cấu trúc / đại diện của sản phẩm',
+    maxLength: 500,
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  structureImageVersionId?: string;
+
+  @ApiPropertyOptional({
+    description: 'Danh sách màu sắc và thông số size breakdown',
+    type: [ProductColorItemDto],
+  })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ProductColorItemDto)
+  colors?: ProductColorItemDto[];
 }
 
 export class UpdatePoProductDto {
@@ -193,11 +277,166 @@ export class UpdatePoProductDto {
   deadline?: string;
 
   @ApiPropertyOptional({
-    description: 'Số ngày chu kỳ CM cơ bản (AS3B)',
+    description: 'Số ngày chu kỳ CM cơ bản',
     example: 30,
   })
   @IsOptional()
   @IsInt()
   @Min(1)
   as3bCmBaseDays?: number;
+
+  @ApiPropertyOptional({
+    description: 'Lý do cập nhật thông tin sản phẩm',
+  })
+  @IsOptional()
+  @IsString()
+  reason?: string;
+
+  @ApiPropertyOptional({
+    description: 'URL hoặc ID ảnh cấu trúc / đại diện của sản phẩm',
+    maxLength: 500,
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  structureImageVersionId?: string;
+
+  @ApiPropertyOptional({
+    description: 'Danh sách màu sắc và thông số size breakdown',
+    type: [ProductColorItemDto],
+  })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ProductColorItemDto)
+  colors?: ProductColorItemDto[];
+}
+
+export class ProductStepItemDto {
+  @IsOptional()
+  @IsUUID('4')
+  id?: string;
+
+  @IsOptional()
+  @IsUUID('4')
+  parentStepId?: string | null;
+
+  @IsOptional()
+  @IsUUID('4')
+  stageId?: string | null;
+
+  @IsString()
+  @IsNotEmpty()
+  stepName: string;
+
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @IsOptional()
+  timePerPiece?: number;
+
+  @IsOptional()
+  ssv?: number;
+
+  @IsOptional()
+  @IsInt()
+  targetTotal?: number;
+
+  @IsOptional()
+  @IsString()
+  note?: string;
+
+  @IsOptional()
+  @IsInt()
+  orderIndex?: number;
+
+  @IsOptional()
+  isGroup?: boolean;
+}
+
+export class SaveProductOperationStepsDto {
+  @ApiProperty({
+    description: 'Danh sách các bước công đoạn',
+    type: [ProductStepItemDto],
+  })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ProductStepItemDto)
+  steps: ProductStepItemDto[];
+
+  @IsOptional()
+  @IsInt()
+  @Min(1, { message: 'cmBaseDays phải lớn hơn 0' })
+  cmBaseDays?: number;
+
+  @IsOptional()
+  @IsString()
+  reason?: string;
+}
+
+export class SampleRoundImageItemDto {
+  @IsOptional()
+  @IsString()
+  imageUrl?: string;
+
+  @IsOptional()
+  @IsUUID('4', { message: 'documentVersionId phải là UUID hợp lệ' })
+  documentVersionId?: string;
+
+  @IsOptional()
+  @IsString()
+  colorName?: string;
+}
+
+export class CreateProductSampleRoundDto {
+  @IsOptional()
+  @IsInt()
+  roundNo?: number;
+
+  @IsOptional()
+  @IsDateString()
+  sampleDate?: string;
+
+  @IsOptional()
+  @IsString()
+  feedback?: string;
+
+  @IsOptional()
+  @IsEnum(SampleStatus, { message: 'status không hợp lệ' })
+  status?: SampleStatus;
+
+  @ApiPropertyOptional({
+    description: 'Danh sách ảnh mẫu đính kèm theo thứ tự',
+    type: [SampleRoundImageItemDto],
+  })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => SampleRoundImageItemDto)
+  images?: SampleRoundImageItemDto[];
+}
+
+export class UpdateProductSampleRoundDto {
+  @IsOptional()
+  @IsDateString()
+  sampleDate?: string;
+
+  @IsOptional()
+  @IsString()
+  feedback?: string;
+
+  @IsOptional()
+  @IsEnum(SampleStatus, { message: 'status không hợp lệ' })
+  status?: SampleStatus;
+}
+
+export class LinkProductDocumentDto {
+  @ApiProperty({ description: 'ID tài liệu PO cần gán vào Product' })
+  @IsUUID('4')
+  documentId: string;
+
+  @IsOptional()
+  @IsString()
+  purpose?: string;
 }
