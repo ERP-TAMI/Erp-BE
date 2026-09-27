@@ -78,6 +78,35 @@ describe('Management dashboard API with PostgreSQL (e2e)', () => {
     return response.body as SummaryResponse;
   }
 
+  it.each([
+    ['pending setup', true, false, null, 0],
+    ['manually locked', false, true, null, 0],
+    ['temporarily locked', false, false, '1 hour', 0],
+    ['expired lockout', false, false, '-1 hour', 1],
+    ['active', false, false, null, 1],
+  ])(
+    'counts %s accounts consistently with Active user management',
+    async (label, pending, locked, lockout, expected) => {
+      const baseline = await getSummary();
+      await dataSource.query(
+        `INSERT INTO users (email, password_hash, full_name, status, must_change_password, manually_locked_at, lockout_until)
+       VALUES ($1, 'test-only', $2, 'active', $3, CASE WHEN $4 THEN CURRENT_TIMESTAMP ELSE NULL END,
+         CASE WHEN $5::text IS NULL THEN NULL ELSE CURRENT_TIMESTAMP + $5::interval END)`,
+        [
+          `${runKey.toLowerCase()}-state-${String(label).replace(/ /g, '-')}@tami.test`,
+          label,
+          pending,
+          locked,
+          lockout,
+        ],
+      );
+      const summary = await getSummary();
+      expect(summary.activeEmployees).toBe(
+        baseline.activeEmployees + Number(expected),
+      );
+    },
+  );
+
   it('counts overdue POs by the PO deadline, including orders without products', async () => {
     const baseline = await getSummary();
     const [{ id: customerId }] = (await dataSource.query(

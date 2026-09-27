@@ -45,6 +45,11 @@ describe('ManagementDashboardService', () => {
     expect(sql).not.toContain('purchase_order_products');
     expect(sql).toContain("AT TIME ZONE 'Asia/Ho_Chi_Minh'");
     expect(sql).toContain("WHERE status = 'active'");
+    expect(sql).toContain('must_change_password = false');
+    expect(sql).toContain('manually_locked_at IS NULL');
+    expect(sql).toContain(
+      'lockout_until IS NULL OR lockout_until <= CURRENT_TIMESTAMP',
+    );
   });
 
   it('calculates the next month correctly across a year boundary', async () => {

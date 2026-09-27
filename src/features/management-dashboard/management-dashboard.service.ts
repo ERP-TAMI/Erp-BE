@@ -42,6 +42,9 @@ export class ManagementDashboardService {
           SELECT COUNT(*) AS active_employees
           FROM users
           WHERE status = 'active'
+            AND must_change_password = false
+            AND manually_locked_at IS NULL
+            AND (lockout_until IS NULL OR lockout_until <= CURRENT_TIMESTAMP)
         )
         SELECT
           purchase_order_metrics.total_purchase_orders,
