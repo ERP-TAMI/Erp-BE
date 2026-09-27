@@ -24,6 +24,7 @@ import { AuditModule } from './features/audit/audit.module';
 import { PlatformModule } from './features/platform/platform.module';
 import { StorageModule } from './features/storage/storage.module';
 import { AppLoggerModule } from './common/logger/logger.module';
+import { ManagementDashboardModule } from './features/management-dashboard/management-dashboard.module';
 import { UserManagementModule } from './features/user-management/user-management.module';
 import { validateEnvironment } from './config/environment.validation';
 
@@ -50,6 +51,7 @@ const imports = [
   NotificationsModule,
   AuditModule,
   PlatformModule,
+  ManagementDashboardModule,
   UserManagementModule,
 ];
 
