@@ -151,4 +151,43 @@ describe('S3StorageService', () => {
 
     await expect(service.headObject('k')).rejects.toThrow('boom');
   });
+
+  describe('isTrustedObjectHost', () => {
+    it("trusts this bucket's own virtual-hosted-style URL", () => {
+      expect(
+        service.isTrustedObjectHost(
+          'https://erp-tami-storage-dev.s3.us-east-1.amazonaws.com/styles/1/base.png?X-Amz-Signature=abc',
+        ),
+      ).toBe(true);
+    });
+
+    it('trusts the us-east-1 no-region-segment form', () => {
+      expect(
+        service.isTrustedObjectHost(
+          'https://erp-tami-storage-dev.s3.amazonaws.com/styles/1/base.png',
+        ),
+      ).toBe(true);
+    });
+
+    it('rejects an arbitrary external host (SSRF)', () => {
+      expect(
+        service.isTrustedObjectHost('http://169.254.169.254/latest/meta-data/'),
+      ).toBe(false);
+      expect(
+        service.isTrustedObjectHost('https://attacker.example/steal'),
+      ).toBe(false);
+    });
+
+    it('rejects a different bucket on the same S3 domain', () => {
+      expect(
+        service.isTrustedObjectHost(
+          'https://some-other-bucket.s3.us-east-1.amazonaws.com/x.png',
+        ),
+      ).toBe(false);
+    });
+
+    it('rejects a malformed URL instead of throwing', () => {
+      expect(service.isTrustedObjectHost('not-a-url')).toBe(false);
+    });
+  });
 });

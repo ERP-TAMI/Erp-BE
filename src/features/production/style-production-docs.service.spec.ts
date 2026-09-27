@@ -150,6 +150,7 @@ describe('StyleProductionDocsService', () => {
             headObject: jest.fn(),
             getObjectBuffer: jest.fn(),
             getObjectHead: jest.fn(),
+            isTrustedObjectHost: jest.fn().mockReturnValue(false),
           },
         },
       ],

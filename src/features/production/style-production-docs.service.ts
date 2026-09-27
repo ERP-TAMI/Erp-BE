@@ -1426,10 +1426,22 @@ export class StyleProductionDocsService {
       const extension: 'png' | 'jpeg' = ext === 'png' ? 'png' : 'jpeg';
 
       if (imageRef.startsWith('http://') || imageRef.startsWith('https://')) {
+        // Never fetch a client-supplied URL that isn't our own S3 bucket —
+        // that's an SSRF hole (internal network, cloud metadata endpoint).
+        // section1ImageUrl/imageUrls only ever legitimately hold a presigned
+        // GET URL this app generated for its own bucket (see
+        // resolveMaybeKey/withResolvedBaseImage) — never a third-party link.
+        if (!this.storage.isTrustedObjectHost(imageRef)) {
+          return null;
+        }
         const resp = await axios.get<ArrayBuffer>(imageRef, {
           responseType: 'arraybuffer',
           timeout: 8000,
         });
+        const contentType = String(resp.headers?.['content-type'] ?? '');
+        if (!contentType.startsWith('image/')) {
+          return null;
+        }
         return { buffer: Buffer.from(resp.data), extension };
       }
 

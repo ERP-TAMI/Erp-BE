@@ -13,6 +13,8 @@ import { STORAGE_SERVICE } from '../storage/storage.interface';
 describe('StylesService', () => {
   let service: StylesService;
   let repositoryMock: any;
+  let storageMock: any;
+  const STYLE_ID = '123e4567-e89b-12d3-a456-426614174000';
 
   const mockStyle: Partial<Style> = {
     id: '123e4567-e89b-12d3-a456-426614174000',
@@ -47,6 +49,17 @@ describe('StylesService', () => {
       }),
     };
 
+    storageMock = {
+      getPresignedPutUrl: jest.fn(),
+      getPresignedGetUrl: jest.fn().mockResolvedValue('https://s3.example/get'),
+      deleteObject: jest.fn().mockResolvedValue(undefined),
+      headObject: jest
+        .fn()
+        .mockResolvedValue({ exists: true, sizeBytes: 1024 }),
+      getObjectBuffer: jest.fn(),
+      isTrustedObjectHost: jest.fn().mockReturnValue(true),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         StylesService,
@@ -56,15 +69,7 @@ describe('StylesService', () => {
         },
         {
           provide: STORAGE_SERVICE,
-          useValue: {
-            getPresignedPutUrl: jest.fn(),
-            getPresignedGetUrl: jest
-              .fn()
-              .mockResolvedValue('https://s3.example/get'),
-            deleteObject: jest.fn(),
-            headObject: jest.fn(),
-            getObjectBuffer: jest.fn(),
-          },
+          useValue: storageMock,
         },
       ],
     }).compile();
@@ -118,6 +123,19 @@ describe('StylesService', () => {
           styleName: '   ',
         }),
       ).rejects.toThrow(BadRequestException);
+    });
+
+    it('should ignore a client-supplied baseImageKey at creation (no id yet to scope it to)', async () => {
+      repositoryMock.findOne.mockResolvedValue(null);
+
+      const result = await service.create({
+        styleCode: 'FIT-2026-001',
+        styleName: 'Áo Polo Nam',
+        baseImageKey: 'purchase-orders/some-other-po/documents/x/f.png',
+      } as any);
+
+      expect(result.baseImageKey).toBeNull();
+      expect(storageMock.headObject).not.toHaveBeenCalled();
     });
   });
 
@@ -176,6 +194,84 @@ describe('StylesService', () => {
           styleName: '   ',
         }),
       ).rejects.toThrow(BadRequestException);
+    });
+
+    describe('baseImageKey', () => {
+      it('accepts a key scoped to this style and resolved from an existing object', async () => {
+        repositoryMock.findOne.mockResolvedValue({ ...mockStyle });
+        const objectKey = `styles/${STYLE_ID}/documents/sample_image/abc.png`;
+
+        const updated = await service.update(STYLE_ID, {
+          baseImageKey: objectKey,
+        } as any);
+
+        expect(storageMock.headObject).toHaveBeenCalledWith(objectKey);
+        expect(updated.baseImageKey).toBe(objectKey);
+        expect(repositoryMock.save).toHaveBeenCalled();
+      });
+
+      it('clears the image without touching storage when set to null', async () => {
+        repositoryMock.findOne.mockResolvedValue({
+          ...mockStyle,
+          baseImageKey: `styles/${STYLE_ID}/documents/sample_image/old.png`,
+        });
+
+        const updated = await service.update(STYLE_ID, {
+          baseImageKey: null,
+        } as any);
+
+        expect(updated.baseImageKey).toBeNull();
+        expect(storageMock.headObject).not.toHaveBeenCalled();
+      });
+
+      it('rejects an objectKey belonging to another resource (cross-resource hijack)', async () => {
+        repositoryMock.findOne.mockResolvedValue({ ...mockStyle });
+
+        await expect(
+          service.update(STYLE_ID, {
+            baseImageKey: 'purchase-orders/other-po-id/documents/x/f.png',
+          } as any),
+        ).rejects.toThrow(BadRequestException);
+        expect(repositoryMock.save).not.toHaveBeenCalled();
+      });
+
+      it('rejects an objectKey scoped to a different style id', async () => {
+        repositoryMock.findOne.mockResolvedValue({ ...mockStyle });
+
+        await expect(
+          service.update(STYLE_ID, {
+            baseImageKey: 'styles/some-other-style-id/documents/x/f.png',
+          } as any),
+        ).rejects.toThrow(BadRequestException);
+        expect(repositoryMock.save).not.toHaveBeenCalled();
+      });
+
+      it('rejects when the object was never actually uploaded', async () => {
+        repositoryMock.findOne.mockResolvedValue({ ...mockStyle });
+        storageMock.headObject.mockResolvedValueOnce({ exists: false });
+
+        await expect(
+          service.update(STYLE_ID, {
+            baseImageKey: `styles/${STYLE_ID}/documents/sample_image/abc.png`,
+          } as any),
+        ).rejects.toThrow(BadRequestException);
+        expect(repositoryMock.save).not.toHaveBeenCalled();
+      });
+
+      it('rejects and deletes an oversized object', async () => {
+        repositoryMock.findOne.mockResolvedValue({ ...mockStyle });
+        const objectKey = `styles/${STYLE_ID}/documents/sample_image/huge.png`;
+        storageMock.headObject.mockResolvedValueOnce({
+          exists: true,
+          sizeBytes: 21 * 1024 * 1024,
+        });
+
+        await expect(
+          service.update(STYLE_ID, { baseImageKey: objectKey } as any),
+        ).rejects.toThrow(BadRequestException);
+        expect(storageMock.deleteObject).toHaveBeenCalledWith(objectKey);
+        expect(repositoryMock.save).not.toHaveBeenCalled();
+      });
     });
   });
 });

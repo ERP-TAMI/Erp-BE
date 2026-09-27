@@ -33,6 +33,14 @@ export interface StorageService {
 
   headObject(objectKey: string): Promise<HeadObjectResult>;
 
+  /**
+   * True if `urlString` points at this app's own S3 bucket (the same host a
+   * presigned GET URL from this service would use). Use this to gate any
+   * server-side fetch of a client-supplied "image URL" — never call
+   * axios/fetch on an arbitrary URL, that's an SSRF hole.
+   */
+  isTrustedObjectHost(urlString: string): boolean;
+
   /** Downloads the full object into memory. Only for server-side processing
    * (embedding images into a generated file) — never for serving a file to a
    * client, use getPresignedGetUrl for that. */

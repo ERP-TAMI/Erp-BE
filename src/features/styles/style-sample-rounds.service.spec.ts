@@ -102,6 +102,7 @@ describe('StyleSampleRoundsService', () => {
       headObject: jest.fn().mockResolvedValue({ exists: true }),
       getObjectHead: jest.fn().mockResolvedValue(Buffer.from('')),
       getObjectBuffer: jest.fn().mockResolvedValue(Buffer.from('')),
+      isTrustedObjectHost: jest.fn().mockReturnValue(true),
     };
 
     const dataSourceMock = {
@@ -330,6 +331,25 @@ describe('StyleSampleRoundsService', () => {
           sizeBytes: 1024,
         }),
       ).rejects.toThrow(BadRequestException);
+      expect(docRepoMock.save).not.toHaveBeenCalled();
+    });
+
+    it('rejects and deletes the object when the real uploaded size exceeds the 5MB sample-image limit', async () => {
+      storageMock.headObject.mockResolvedValue({
+        exists: true,
+        sizeBytes: 6 * 1024 * 1024,
+      });
+      const objectKey = `styles/${STYLE_ID}/sample-rounds/${ROUND_ID}/images/huge.png`;
+
+      await expect(
+        service.confirmImage(STYLE_ID, ROUND_ID, 'user-1', {
+          objectKey,
+          fileName: 'huge.png',
+          mimeType: 'image/png',
+          sizeBytes: 1024, // client under-reported this at presign time
+        }),
+      ).rejects.toThrow(BadRequestException);
+      expect(storageMock.deleteObject).toHaveBeenCalledWith(objectKey);
       expect(docRepoMock.save).not.toHaveBeenCalled();
     });
   });
