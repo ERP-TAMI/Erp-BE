@@ -218,7 +218,7 @@ export class BomAggregateService {
       .groupBy('line.material_id')
       .addGroupBy('material.material_code')
       .addGroupBy('line.unit_snapshot')
-      .orderBy('line.material_name_snapshot', 'ASC')
+      .orderBy('MIN(line.material_name_snapshot)', 'ASC')
       .addOrderBy('line.material_id', 'ASC')
       .addOrderBy('line.unit_snapshot', 'ASC')
       .offset(skip)
