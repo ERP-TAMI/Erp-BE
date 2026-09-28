@@ -69,4 +69,103 @@ describe('ManagementDashboardService', () => {
       '2027-01-01',
     ]);
   });
+
+  it('returns management statuses and deadline days using the Vietnam business date', async () => {
+    const items = [
+      {
+        id: 'po-overdue',
+        poCode: 'PO-OVERDUE',
+        customerNameSnapshot: 'Khách hàng A',
+        receivedDate: '2026-09-01',
+        deadline: '2026-09-25',
+        status: 'in_progress',
+        managementStatus: 'overdue',
+        daysToDeadline: -2,
+      },
+      {
+        id: 'po-completed',
+        poCode: 'PO-COMPLETED',
+        customerNameSnapshot: 'Khách hàng B',
+        receivedDate: '2026-09-02',
+        deadline: '2026-09-20',
+        status: 'closed',
+        managementStatus: 'completed',
+        daysToDeadline: -7,
+      },
+      {
+        id: 'po-cancelled',
+        poCode: 'PO-CANCELLED',
+        customerNameSnapshot: 'Khách hàng C',
+        receivedDate: '2026-09-03',
+        deadline: '2026-09-18',
+        status: 'cancelled',
+        managementStatus: 'cancelled',
+        daysToDeadline: -9,
+      },
+      {
+        id: 'po-not-completed',
+        poCode: 'PO-NOT-COMPLETED',
+        customerNameSnapshot: 'Khách hàng D',
+        receivedDate: '2026-09-04',
+        deadline: '2026-09-27',
+        status: 'draft',
+        managementStatus: 'not_completed',
+        daysToDeadline: 0,
+      },
+    ];
+    dataSource.query.mockResolvedValue([
+      {
+        total_purchase_orders: '4',
+        overdue_purchase_orders: '1',
+        upcoming_purchase_orders: '0',
+        items,
+      },
+    ]);
+
+    await expect(
+      service.getPurchaseOrdersOverview({
+        month: '2026-09',
+        page: 2,
+        limit: 10,
+      }),
+    ).resolves.toMatchObject({
+      totalPurchaseOrders: 4,
+      overduePurchaseOrders: 1,
+      upcomingPurchaseOrders: 0,
+      items,
+      meta: { page: 2, limit: 10, totalPages: 1 },
+    });
+
+    const [sql, parameters] = dataSource.query.mock.calls[0] as [
+      string,
+      unknown[],
+    ];
+    const cancelledIndex = sql.indexOf(
+      "WHEN purchase_order.status = 'cancelled' THEN 'cancelled'",
+    );
+    const completedIndex = sql.indexOf(
+      "WHEN purchase_order.status = 'closed' THEN 'completed'",
+    );
+    const overdueIndex = sql.indexOf(
+      "WHEN purchase_order.deadline < date_context.today THEN 'overdue'",
+    );
+
+    expect(cancelledIndex).toBeGreaterThanOrEqual(0);
+    expect(cancelledIndex).toBeLessThan(completedIndex);
+    expect(completedIndex).toBeLessThan(overdueIndex);
+    expect(sql).toContain(
+      'purchase_order.deadline - date_context.today AS days_to_deadline',
+    );
+    expect(sql).toContain("'managementStatus', page_item.management_status");
+    expect(sql).toContain("'daysToDeadline', page_item.days_to_deadline");
+    expect(sql).toContain("AT TIME ZONE 'Asia/Ho_Chi_Minh'");
+    expect(sql).toContain(
+      "selected_purchase_order.management_status = 'overdue'",
+    );
+    expect(sql).toContain(
+      "selected_purchase_order.management_status = 'not_completed'",
+    );
+    expect(sql).toContain('selected_purchase_order.days_to_deadline < 7');
+    expect(parameters).toEqual(['2026-10-01', '2026-09-01', 10, 10]);
+  });
 });

@@ -101,7 +101,14 @@ export class ManagementDashboardService {
             purchase_order.customer_name_snapshot,
             purchase_order.received_date,
             purchase_order.deadline,
-            purchase_order.status
+            purchase_order.status,
+            CASE
+              WHEN purchase_order.status = 'cancelled' THEN 'cancelled'
+              WHEN purchase_order.status = 'closed' THEN 'completed'
+              WHEN purchase_order.deadline < date_context.today THEN 'overdue'
+              ELSE 'not_completed'
+            END AS management_status,
+            purchase_order.deadline - date_context.today AS days_to_deadline
           FROM purchase_orders AS purchase_order
           CROSS JOIN date_context
           WHERE purchase_order.received_date < date_context.next_month_start
@@ -112,16 +119,14 @@ export class ManagementDashboardService {
           SELECT
             COUNT(*) AS total_purchase_orders,
             COUNT(*) FILTER (
-              WHERE selected_purchase_order.status NOT IN ('closed', 'cancelled')
-                AND selected_purchase_order.deadline < date_context.today
+              WHERE selected_purchase_order.management_status = 'overdue'
             ) AS overdue_purchase_orders,
             COUNT(*) FILTER (
-              WHERE selected_purchase_order.status NOT IN ('closed', 'cancelled')
-                AND selected_purchase_order.deadline >= date_context.today
-                AND selected_purchase_order.deadline < date_context.today + 7
+              WHERE selected_purchase_order.management_status = 'not_completed'
+                AND selected_purchase_order.days_to_deadline >= 0
+                AND selected_purchase_order.days_to_deadline < 7
             ) AS upcoming_purchase_orders
           FROM selected_purchase_orders AS selected_purchase_order
-          CROSS JOIN date_context
         ),
         page_items AS (
           SELECT selected_purchase_order.*
@@ -140,7 +145,9 @@ export class ManagementDashboardService {
                 'customerNameSnapshot', page_item.customer_name_snapshot,
                 'receivedDate', to_char(page_item.received_date, 'YYYY-MM-DD'),
                 'deadline', to_char(page_item.deadline, 'YYYY-MM-DD'),
-                'status', page_item.status
+                'status', page_item.status,
+                'managementStatus', page_item.management_status,
+                'daysToDeadline', page_item.days_to_deadline
               ) ORDER BY page_item.deadline ASC,
                 page_item.received_date ASC,
                 page_item.id ASC
