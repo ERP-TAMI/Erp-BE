@@ -1,6 +1,13 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { PoStatus } from '../../../common/enums/database.enums';
 
+export enum ManagementPurchaseOrderSummaryStatus {
+  NOT_COMPLETED = 'not_completed',
+  COMPLETED = 'completed',
+  OVERDUE = 'overdue',
+  CANCELLED = 'cancelled',
+}
+
 export class ManagementPurchaseOrderItemDto {
   @ApiProperty()
   id: string;
@@ -19,6 +26,21 @@ export class ManagementPurchaseOrderItemDto {
 
   @ApiProperty({ enum: PoStatus, enumName: 'PoStatus' })
   status: PoStatus;
+
+  @ApiProperty({
+    enum: ManagementPurchaseOrderSummaryStatus,
+    enumName: 'ManagementPurchaseOrderSummaryStatus',
+    description:
+      'Management-level status. Cancellation and completion take precedence over deadline overdue.',
+  })
+  managementStatus: ManagementPurchaseOrderSummaryStatus;
+
+  @ApiProperty({
+    example: -2,
+    description:
+      'Signed number of days from the Vietnam business date to the PO deadline; negative means overdue.',
+  })
+  daysToDeadline: number;
 }
 
 export class ManagementPurchaseOrdersMetaDto {
