@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { ManagementDashboardSummaryDto } from './dto/management-dashboard-summary.dto';
 import { ManagementPurchaseOrdersQueryDto } from './dto/management-purchase-orders-query.dto';
@@ -86,6 +86,9 @@ export class ManagementDashboardService {
     const page = query.page ?? 1;
     const limit = query.limit ?? 10;
     const offset = (page - 1) * limit;
+    if (!Number.isSafeInteger(offset) || offset < 0) {
+      throw new BadRequestException('page and limit produce an unsafe offset');
+    }
     const [row] = await this.dataSource.query<PurchaseOrdersOverviewRow[]>(
       `
         WITH date_context AS (

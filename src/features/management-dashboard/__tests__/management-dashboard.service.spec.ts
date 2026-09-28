@@ -1,3 +1,4 @@
+import { BadRequestException } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { ManagementDashboardService } from '../management-dashboard.service';
 
@@ -115,7 +116,7 @@ describe('ManagementDashboardService', () => {
     ];
     dataSource.query.mockResolvedValue([
       {
-        total_purchase_orders: '4',
+        total_purchase_orders: '14',
         overdue_purchase_orders: '1',
         upcoming_purchase_orders: '0',
         items,
@@ -129,11 +130,11 @@ describe('ManagementDashboardService', () => {
         limit: 10,
       }),
     ).resolves.toMatchObject({
-      totalPurchaseOrders: 4,
+      totalPurchaseOrders: 14,
       overduePurchaseOrders: 1,
       upcomingPurchaseOrders: 0,
       items,
-      meta: { page: 2, limit: 10, totalPages: 1 },
+      meta: { total: 14, page: 2, limit: 10, totalPages: 2 },
     });
 
     const [sql, parameters] = dataSource.query.mock.calls[0] as [
@@ -167,5 +168,17 @@ describe('ManagementDashboardService', () => {
     );
     expect(sql).toContain('selected_purchase_order.days_to_deadline < 7');
     expect(parameters).toEqual(['2026-10-01', '2026-09-01', 10, 10]);
+  });
+
+  it('rejects an unsafe computed offset before issuing SQL', async () => {
+    await expect(
+      service.getPurchaseOrdersOverview({
+        month: '2026-09',
+        page: Number.MAX_SAFE_INTEGER,
+        limit: 100,
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(dataSource.query).not.toHaveBeenCalled();
   });
 });

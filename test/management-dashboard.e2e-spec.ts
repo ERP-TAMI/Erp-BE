@@ -21,6 +21,7 @@ describe('Management dashboard API (e2e)', () => {
   };
   const managementDashboardService = {
     getSummary: jest.fn(),
+    getPurchaseOrdersOverview: jest.fn(),
   };
   let currentPermissions: string[];
   let currentRoleCode: string;
@@ -95,6 +96,18 @@ describe('Management dashboard API (e2e)', () => {
       expect(managementDashboardService.getSummary).not.toHaveBeenCalled();
     },
   );
+
+  it('rejects an unsafe purchase-order page before invoking the service', async () => {
+    await request(app.getHttpServer())
+      .get(
+        '/management/dashboard/purchase-orders?month=2026-09&page=1000000000000000000&limit=10',
+      )
+      .expect(400);
+
+    expect(
+      managementDashboardService.getPurchaseOrdersOverview,
+    ).not.toHaveBeenCalled();
+  });
 
   it('rejects unknown query fields', async () => {
     await request(app.getHttpServer())
