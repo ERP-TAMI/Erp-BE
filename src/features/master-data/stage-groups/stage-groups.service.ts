@@ -5,14 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import {
-  DataSource,
-  EntityManager,
-  FindOptionsWhere,
-  ILike,
-  In,
-  Repository,
-} from 'typeorm';
+import { DataSource, EntityManager, In, Repository } from 'typeorm';
 import { RecordStatus } from '../../../common/enums/database.enums';
 import { StageGroup } from '../entities/StageGroup.entity';
 import { StageGroupItem } from '../entities/StageGroupItem.entity';
@@ -36,6 +29,16 @@ type StageGroupRepositories = {
   items: Repository<StageGroupItem>;
 };
 
+export interface PaginatedResult<T> {
+  data: T[];
+  meta: {
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+  };
+}
+
 @Injectable()
 export class StageGroupsService {
   constructor(
@@ -48,23 +51,33 @@ export class StageGroupsService {
 
   async findAll(
     query?: QueryStageGroupsDto,
-  ): Promise<StageGroupSummaryResponseDto[]> {
-    const baseWhere: FindOptionsWhere<StageGroup> = query?.status
-      ? { status: query.status }
-      : {};
+  ): Promise<PaginatedResult<StageGroupSummaryResponseDto>> {
+    const page = Math.max(1, query?.page ?? 1);
+    const limit = Math.max(1, Math.min(100, query?.limit ?? 10));
+    const skip = (page - 1) * limit;
+
+    const qb = this.groups.createQueryBuilder('stageGroup');
+    if (query?.status) {
+      qb.andWhere('stageGroup.status = :status', { status: query.status });
+    }
     const search = query?.search?.trim();
-    const where: FindOptionsWhere<StageGroup> | FindOptionsWhere<StageGroup>[] =
-      search
-        ? [
-            { ...baseWhere, groupCode: ILike(`%${search}%`) },
-            { ...baseWhere, groupName: ILike(`%${search}%`) },
-          ]
-        : baseWhere;
-    const groups = await this.groups.find({
-      where,
-      order: { groupCode: 'ASC', id: 'ASC' },
-    });
-    if (groups.length === 0) return [];
+    if (search) {
+      qb.andWhere(
+        '(stageGroup.groupCode ILIKE :search OR stageGroup.groupName ILIKE :search)',
+        { search: `%${search}%` },
+      );
+    }
+    qb.orderBy('stageGroup.groupCode', 'ASC').addOrderBy(
+      'stageGroup.id',
+      'ASC',
+    );
+    qb.skip(skip).take(limit);
+
+    const [groups, total] = await qb.getManyAndCount();
+    const totalPages = Math.ceil(total / limit) || 1;
+    if (groups.length === 0) {
+      return { data: [], meta: { total, page, limit, totalPages } };
+    }
 
     const groupIds = groups.map((group) => group.id);
     const itemCounts = await this.items
@@ -81,12 +94,15 @@ export class StageGroupsService {
       ]),
     );
 
-    return groups.map((group) =>
-      StageGroupSummaryResponseDto.fromEntity(
-        group,
-        itemCountByGroupId.get(group.id) ?? 0,
+    return {
+      data: groups.map((group) =>
+        StageGroupSummaryResponseDto.fromEntity(
+          group,
+          itemCountByGroupId.get(group.id) ?? 0,
+        ),
       ),
-    );
+      meta: { total, page, limit, totalPages },
+    };
   }
 
   async findOne(id: string): Promise<StageGroupResponseDto> {

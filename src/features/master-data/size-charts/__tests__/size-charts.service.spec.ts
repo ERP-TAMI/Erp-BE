@@ -42,20 +42,42 @@ describe('SizeChartsService', () => {
   let charts: jest.Mocked<Repository<SizeChart>>;
   let items: jest.Mocked<Repository<SizeChartItem>>;
   let normalizedNameResult: jest.Mock<Promise<SizeChart | null>, []>;
+  let getManyAndCount: jest.Mock;
+  let queryBuilder: {
+    where: jest.Mock;
+    andWhere: jest.Mock;
+    orderBy: jest.Mock;
+    addOrderBy: jest.Mock;
+    skip: jest.Mock;
+    take: jest.Mock;
+    getOne: jest.Mock;
+    getManyAndCount: jest.Mock;
+  };
   let dataSource: jest.Mocked<DataSource>;
   let service: SizeChartsService;
 
   beforeEach(() => {
     normalizedNameResult = jest.fn().mockResolvedValue(null);
-    const queryBuilder = {
+    getManyAndCount = jest.fn();
+    queryBuilder = {
       where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      addOrderBy: jest.fn().mockReturnThis(),
+      skip: jest.fn().mockReturnThis(),
+      take: jest.fn().mockReturnThis(),
       getOne: normalizedNameResult,
-    } as unknown as SelectQueryBuilder<SizeChart>;
+      getManyAndCount,
+    };
 
     charts = {
       find: jest.fn(),
       findOneBy: jest.fn(),
-      createQueryBuilder: jest.fn().mockReturnValue(queryBuilder),
+      createQueryBuilder: jest
+        .fn()
+        .mockReturnValue(
+          queryBuilder as unknown as SelectQueryBuilder<SizeChart>,
+        ),
       create: jest.fn(),
       save: jest.fn(),
       remove: jest.fn(),
@@ -82,23 +104,26 @@ describe('SizeChartsService', () => {
   });
 
   it('lists charts with ordered sizes without querying items per chart', async () => {
-    charts.find.mockResolvedValue([{ ...chart }]);
+    getManyAndCount.mockResolvedValue([[{ ...chart }], 1]);
 
     await expect(
       service.findAll({ search: ' áo ', status: RecordStatus.ACTIVE }),
-    ).resolves.toEqual([
-      expect.objectContaining({
-        id: chart.id,
-        name: 'Size áo nam',
-        sizes: ['XS', 'M'],
-        status: RecordStatus.ACTIVE,
-      }),
-    ]);
-
-    expect(charts.find).toHaveBeenCalledWith({
-      where: { name: expect.anything(), status: RecordStatus.ACTIVE },
-      order: { name: 'ASC', id: 'ASC' },
+    ).resolves.toEqual({
+      data: [
+        expect.objectContaining({
+          id: chart.id,
+          name: 'Size áo nam',
+          sizes: ['XS', 'M'],
+          status: RecordStatus.ACTIVE,
+        }),
+      ],
+      meta: { total: 1, page: 1, limit: 10, totalPages: 1 },
     });
+
+    expect(queryBuilder.andWhere).toHaveBeenCalledWith(
+      'sizeChart.name ILIKE :search',
+      { search: '%áo%' },
+    );
     expect(items.find).toHaveBeenCalledTimes(1);
   });
 

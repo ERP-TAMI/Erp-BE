@@ -1,6 +1,14 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { Transform } from 'class-transformer';
-import { IsEnum, IsOptional, IsString, MaxLength } from 'class-validator';
+import { Transform, Type } from 'class-transformer';
+import {
+  IsEnum,
+  IsInt,
+  IsOptional,
+  IsString,
+  Max,
+  MaxLength,
+  Min,
+} from 'class-validator';
 import { RecordStatus } from '../../../../common/enums/database.enums';
 import { trimWorkshopText } from './workshop-dto.transforms';
 
@@ -18,4 +26,19 @@ export class QueryWorkshopsDto {
   @IsOptional()
   @IsEnum(RecordStatus)
   status?: RecordStatus;
+
+  @ApiPropertyOptional({ default: 1 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page?: number = 1;
+
+  @ApiPropertyOptional({ default: 10 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  limit?: number = 10;
 }

@@ -26,7 +26,7 @@ import { QueryWorkshopsDto } from './dto/query-workshops.dto';
 import { UpdateWorkshopStatusDto } from './dto/update-workshop-status.dto';
 import { UpdateWorkshopDto } from './dto/update-workshop.dto';
 import { WorkshopResponseDto } from './dto/workshop-response.dto';
-import { WorkshopsService } from './workshops.service';
+import { PaginatedResult, WorkshopsService } from './workshops.service';
 
 @ApiTags('Workshops')
 @ApiBearerAuth()
@@ -37,7 +37,9 @@ export class WorkshopsController {
 
   @Get()
   @ApiOkResponse({ type: WorkshopResponseDto, isArray: true })
-  findAll(@Query() query: QueryWorkshopsDto): Promise<WorkshopResponseDto[]> {
+  findAll(
+    @Query() query: QueryWorkshopsDto,
+  ): Promise<PaginatedResult<WorkshopResponseDto>> {
     return this.workshopsService.findAll(query);
   }
 

@@ -117,6 +117,8 @@ describe('Size Charts API (e2e)', () => {
     expect(sizeChartsService.findAll).toHaveBeenCalledWith({
       search: 'size áo',
       status: RecordStatus.ACTIVE,
+      page: 1,
+      limit: 10,
     });
   });
 
@@ -130,6 +132,8 @@ describe('Size Charts API (e2e)', () => {
 
     expect(sizeChartsService.findAll).toHaveBeenCalledWith({
       status: RecordStatus.ACTIVE,
+      page: 1,
+      limit: 10,
     });
   });
 

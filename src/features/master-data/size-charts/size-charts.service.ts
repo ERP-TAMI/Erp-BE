@@ -5,14 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import {
-  DataSource,
-  EntityManager,
-  FindOptionsWhere,
-  ILike,
-  In,
-  Repository,
-} from 'typeorm';
+import { DataSource, EntityManager, In, Repository } from 'typeorm';
 import { RecordStatus } from '../../../common/enums/database.enums';
 import { SizeChart } from '../entities/SizeChart.entity';
 import { SizeChartItem } from '../entities/SizeChartItem.entity';
@@ -33,6 +26,16 @@ const SIZE_CHART_NAME_CONSTRAINTS = new Set([
   'uq_size_charts_name_normalized',
 ]);
 
+export interface PaginatedResult<T> {
+  data: T[];
+  meta: {
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+  };
+}
+
 @Injectable()
 export class SizeChartsService {
   constructor(
@@ -43,18 +46,29 @@ export class SizeChartsService {
     private readonly dataSource: DataSource,
   ) {}
 
-  async findAll(query: QuerySizeChartsDto): Promise<SizeChartResponseDto[]> {
-    const where: FindOptionsWhere<SizeChart> = {
-      ...(query.status ? { status: query.status } : {}),
-      ...(query.search?.trim()
-        ? { name: ILike(`%${query.search.trim()}%`) }
-        : {}),
-    };
-    const charts = await this.charts.find({
-      where,
-      order: { name: 'ASC', id: 'ASC' },
-    });
-    if (charts.length === 0) return [];
+  async findAll(
+    query: QuerySizeChartsDto,
+  ): Promise<PaginatedResult<SizeChartResponseDto>> {
+    const page = Math.max(1, query.page ?? 1);
+    const limit = Math.max(1, Math.min(100, query.limit ?? 10));
+    const skip = (page - 1) * limit;
+
+    const qb = this.charts.createQueryBuilder('sizeChart');
+    if (query.status) {
+      qb.andWhere('sizeChart.status = :status', { status: query.status });
+    }
+    const search = query.search?.trim();
+    if (search) {
+      qb.andWhere('sizeChart.name ILIKE :search', { search: `%${search}%` });
+    }
+    qb.orderBy('sizeChart.name', 'ASC').addOrderBy('sizeChart.id', 'ASC');
+    qb.skip(skip).take(limit);
+
+    const [charts, total] = await qb.getManyAndCount();
+    const totalPages = Math.ceil(total / limit) || 1;
+    if (charts.length === 0) {
+      return { data: [], meta: { total, page, limit, totalPages } };
+    }
 
     const items = await this.items.find({
       where: { sizeChartId: In(charts.map((chart) => chart.id)) },
@@ -67,12 +81,15 @@ export class SizeChartsService {
       itemsByChartId.set(item.sizeChartId, ownedItems);
     }
 
-    return charts.map((chart) =>
-      SizeChartResponseDto.fromEntities(
-        chart,
-        itemsByChartId.get(chart.id) ?? [],
+    return {
+      data: charts.map((chart) =>
+        SizeChartResponseDto.fromEntities(
+          chart,
+          itemsByChartId.get(chart.id) ?? [],
+        ),
       ),
-    );
+      meta: { total, page, limit, totalPages },
+    };
   }
 
   async findOne(id: string): Promise<SizeChartResponseDto> {

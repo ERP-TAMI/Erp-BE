@@ -125,6 +125,8 @@ describe('Workshops API (e2e)', () => {
     expect(workshopsService.findAll).toHaveBeenCalledWith({
       search: 'may',
       status: RecordStatus.ACTIVE,
+      page: 1,
+      limit: 10,
     });
   });
 
@@ -138,6 +140,8 @@ describe('Workshops API (e2e)', () => {
 
     expect(workshopsService.findAll).toHaveBeenCalledWith({
       status: RecordStatus.ACTIVE,
+      page: 1,
+      limit: 10,
     });
   });
 

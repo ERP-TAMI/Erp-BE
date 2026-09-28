@@ -16,20 +16,40 @@ describe('StagesService', () => {
 
   let stages: jest.Mocked<Repository<Stage>>;
   let normalizedCodeResult: jest.Mock<Promise<Stage | null>, []>;
+  let getManyAndCount: jest.Mock;
+  let queryBuilder: {
+    where: jest.Mock;
+    andWhere: jest.Mock;
+    orderBy: jest.Mock;
+    addOrderBy: jest.Mock;
+    skip: jest.Mock;
+    take: jest.Mock;
+    getOne: jest.Mock;
+    getManyAndCount: jest.Mock;
+  };
   let service: StagesService;
 
   beforeEach(() => {
     normalizedCodeResult = jest.fn().mockResolvedValue(null);
-    const queryBuilder = {
+    getManyAndCount = jest.fn();
+    queryBuilder = {
       where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      addOrderBy: jest.fn().mockReturnThis(),
+      skip: jest.fn().mockReturnThis(),
+      take: jest.fn().mockReturnThis(),
       getOne: normalizedCodeResult,
-    } as unknown as SelectQueryBuilder<Stage>;
+      getManyAndCount,
+    };
 
     stages = {
       find: jest.fn(),
       findBy: jest.fn(),
       findOneBy: jest.fn(),
-      createQueryBuilder: jest.fn().mockReturnValue(queryBuilder),
+      createQueryBuilder: jest
+        .fn()
+        .mockReturnValue(queryBuilder as unknown as SelectQueryBuilder<Stage>),
       create: jest.fn(),
       save: jest.fn(),
       remove: jest.fn(),
@@ -143,23 +163,28 @@ describe('StagesService', () => {
   });
 
   it('lists stages using server-side search and status filters', async () => {
-    stages.find.mockResolvedValue([stage]);
+    getManyAndCount.mockResolvedValue([[stage], 1]);
 
     await expect(
       service.findAll({ search: ' cắt ', status: RecordStatus.ACTIVE }),
-    ).resolves.toEqual([
-      {
-        id: stage.id,
-        stageCode: 'GD-CAT',
-        stageName: 'Cắt vải',
-        description: stage.description,
-        ssv: '12.500',
-        status: RecordStatus.ACTIVE,
-      },
-    ]);
+    ).resolves.toEqual({
+      data: [
+        {
+          id: stage.id,
+          stageCode: 'GD-CAT',
+          stageName: 'Cắt vải',
+          description: stage.description,
+          ssv: '12.500',
+          status: RecordStatus.ACTIVE,
+        },
+      ],
+      meta: { total: 1, page: 1, limit: 10, totalPages: 1 },
+    });
 
-    expect(stages.find).toHaveBeenCalledWith(
-      expect.objectContaining({ order: { stageCode: 'ASC', id: 'ASC' } }),
+    expect(queryBuilder.orderBy).toHaveBeenCalledWith('stage.stageCode', 'ASC');
+    expect(queryBuilder.andWhere).toHaveBeenCalledWith(
+      '(stage.stageCode ILIKE :search OR stage.stageName ILIKE :search)',
+      { search: '%cắt%' },
     );
   });
 

@@ -30,7 +30,7 @@ import {
 } from './dto/stage-group-response.dto';
 import { UpdateStageGroupStatusDto } from './dto/update-stage-group-status.dto';
 import { UpdateStageGroupDto } from './dto/update-stage-group.dto';
-import { StageGroupsService } from './stage-groups.service';
+import { PaginatedResult, StageGroupsService } from './stage-groups.service';
 
 @ApiTags('Stage Groups')
 @ApiBearerAuth()
@@ -43,7 +43,7 @@ export class StageGroupsController {
   @ApiOkResponse({ type: StageGroupSummaryResponseDto, isArray: true })
   findAll(
     @Query() query: QueryStageGroupsDto,
-  ): Promise<StageGroupSummaryResponseDto[]> {
+  ): Promise<PaginatedResult<StageGroupSummaryResponseDto>> {
     return this.stageGroupsService.findAll(query);
   }
 

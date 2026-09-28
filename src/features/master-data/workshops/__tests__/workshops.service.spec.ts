@@ -19,19 +19,41 @@ describe('WorkshopsService', () => {
 
   let workshops: jest.Mocked<Repository<Workshop>>;
   let normalizedCodeResult: jest.Mock<Promise<Workshop | null>, []>;
+  let getManyAndCount: jest.Mock;
+  let queryBuilder: {
+    where: jest.Mock;
+    andWhere: jest.Mock;
+    orderBy: jest.Mock;
+    addOrderBy: jest.Mock;
+    skip: jest.Mock;
+    take: jest.Mock;
+    getOne: jest.Mock;
+    getManyAndCount: jest.Mock;
+  };
   let service: WorkshopsService;
 
   beforeEach(() => {
     normalizedCodeResult = jest.fn();
-    const queryBuilder = {
+    getManyAndCount = jest.fn();
+    queryBuilder = {
       where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      addOrderBy: jest.fn().mockReturnThis(),
+      skip: jest.fn().mockReturnThis(),
+      take: jest.fn().mockReturnThis(),
       getOne: normalizedCodeResult,
-    } as unknown as SelectQueryBuilder<Workshop>;
+      getManyAndCount,
+    };
 
     workshops = {
       find: jest.fn(),
       findOneBy: jest.fn(),
-      createQueryBuilder: jest.fn().mockReturnValue(queryBuilder),
+      createQueryBuilder: jest
+        .fn()
+        .mockReturnValue(
+          queryBuilder as unknown as SelectQueryBuilder<Workshop>,
+        ),
       create: jest.fn(),
       save: jest.fn(),
       remove: jest.fn(),
@@ -134,33 +156,38 @@ describe('WorkshopsService', () => {
   });
 
   it('searches code, name and manager while filtering active workshops', async () => {
-    workshops.find.mockResolvedValue([workshop]);
+    getManyAndCount.mockResolvedValue([[workshop], 1]);
 
     await expect(
       service.findAll({ search: 'may', status: RecordStatus.ACTIVE }),
-    ).resolves.toEqual([
-      expect.objectContaining({ workshopCode: 'X-01', capacity: 500 }),
-    ]);
-
-    expect(workshops.find).toHaveBeenCalledWith({
-      where: [
-        { status: RecordStatus.ACTIVE, workshopCode: expect.anything() },
-        { status: RecordStatus.ACTIVE, name: expect.anything() },
-        { status: RecordStatus.ACTIVE, manager: expect.anything() },
-      ],
-      order: { workshopCode: 'ASC', id: 'ASC' },
+    ).resolves.toEqual({
+      data: [expect.objectContaining({ workshopCode: 'X-01', capacity: 500 })],
+      meta: { total: 1, page: 1, limit: 10, totalPages: 1 },
     });
+
+    expect(queryBuilder.andWhere).toHaveBeenCalledWith(
+      'workshop.status = :status',
+      { status: RecordStatus.ACTIVE },
+    );
+    expect(queryBuilder.andWhere).toHaveBeenCalledWith(
+      '(workshop.workshopCode ILIKE :search OR workshop.name ILIKE :search OR workshop.manager ILIKE :search)',
+      { search: '%may%' },
+    );
   });
 
   it('returns only active workshops for the production-plan selector contract', async () => {
-    workshops.find.mockResolvedValue([workshop]);
+    getManyAndCount.mockResolvedValue([[workshop], 1]);
 
     await service.findAll({ status: RecordStatus.ACTIVE });
 
-    expect(workshops.find).toHaveBeenCalledWith({
-      where: { status: RecordStatus.ACTIVE },
-      order: { workshopCode: 'ASC', id: 'ASC' },
-    });
+    expect(queryBuilder.andWhere).toHaveBeenCalledWith(
+      'workshop.status = :status',
+      { status: RecordStatus.ACTIVE },
+    );
+    expect(queryBuilder.orderBy).toHaveBeenCalledWith(
+      'workshop.workshopCode',
+      'ASC',
+    );
   });
 
   it('normalizes and updates the workshop code with other mutable fields', async () => {

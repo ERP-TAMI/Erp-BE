@@ -27,7 +27,7 @@ import { StageResponseDto } from './dto/stage-response.dto';
 import { UpdateStageSsvBulkDto } from './dto/update-stage-ssv-bulk.dto';
 import { UpdateStageStatusDto } from './dto/update-stage-status.dto';
 import { UpdateStageDto } from './dto/update-stage.dto';
-import { StagesService } from './stages.service';
+import { PaginatedResult, StagesService } from './stages.service';
 
 @ApiTags('Stages')
 @ApiBearerAuth()
@@ -38,7 +38,9 @@ export class StagesController {
 
   @Get()
   @ApiOkResponse({ type: StageResponseDto, isArray: true })
-  findAll(@Query() query: QueryStagesDto): Promise<StageResponseDto[]> {
+  findAll(
+    @Query() query: QueryStagesDto,
+  ): Promise<PaginatedResult<StageResponseDto>> {
     return this.stagesService.findAll(query);
   }
 

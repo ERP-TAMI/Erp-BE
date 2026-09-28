@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { FindOptionsWhere, ILike, In, Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { RecordStatus } from '../../../common/enums/database.enums';
 import { Stage } from '../entities/Stage.entity';
 import { CreateStageDto } from './dto/create-stage.dto';
@@ -16,6 +16,16 @@ import { UpdateStageDto } from './dto/update-stage.dto';
 
 const GENERATED_CODE_SAVE_ATTEMPTS = 5;
 
+export interface PaginatedResult<T> {
+  data: T[];
+  meta: {
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+  };
+}
+
 @Injectable()
 export class StagesService {
   constructor(
@@ -23,22 +33,34 @@ export class StagesService {
     private readonly stages: Repository<Stage>,
   ) {}
 
-  async findAll(query: QueryStagesDto): Promise<StageResponseDto[]> {
-    const baseWhere: FindOptionsWhere<Stage> = query.status
-      ? { status: query.status }
-      : {};
+  async findAll(
+    query: QueryStagesDto,
+  ): Promise<PaginatedResult<StageResponseDto>> {
+    const page = Math.max(1, query.page ?? 1);
+    const limit = Math.max(1, Math.min(100, query.limit ?? 10));
+    const skip = (page - 1) * limit;
+
+    const qb = this.stages.createQueryBuilder('stage');
+    if (query.status) {
+      qb.andWhere('stage.status = :status', { status: query.status });
+    }
     const search = query.search?.trim();
-    const where: FindOptionsWhere<Stage> | FindOptionsWhere<Stage>[] = search
-      ? [
-          { ...baseWhere, stageCode: ILike(`%${search}%`) },
-          { ...baseWhere, stageName: ILike(`%${search}%`) },
-        ]
-      : baseWhere;
-    const stages = await this.stages.find({
-      where,
-      order: { stageCode: 'ASC', id: 'ASC' },
-    });
-    return stages.map(StageResponseDto.fromEntity);
+    if (search) {
+      qb.andWhere(
+        '(stage.stageCode ILIKE :search OR stage.stageName ILIKE :search)',
+        { search: `%${search}%` },
+      );
+    }
+    qb.orderBy('stage.stageCode', 'ASC').addOrderBy('stage.id', 'ASC');
+    qb.skip(skip).take(limit);
+
+    const [stages, total] = await qb.getManyAndCount();
+    const totalPages = Math.ceil(total / limit) || 1;
+
+    return {
+      data: stages.map(StageResponseDto.fromEntity),
+      meta: { total, page, limit, totalPages },
+    };
   }
 
   async findOne(id: string): Promise<StageResponseDto> {

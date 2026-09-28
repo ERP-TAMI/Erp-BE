@@ -133,6 +133,8 @@ describe('Materials API (e2e)', () => {
       search: 'fab',
       materialGroupId,
       status: RecordStatus.ACTIVE,
+      page: 1,
+      limit: 10,
     });
   });
 

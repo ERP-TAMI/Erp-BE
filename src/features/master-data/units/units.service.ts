@@ -13,6 +13,16 @@ import { UnitResponseDto } from './dto/unit-response.dto';
 import { UpdateUnitDto } from './dto/update-unit.dto';
 import { UpdateUnitStatusDto } from './dto/update-unit-status.dto';
 
+export interface PaginatedResult<T> {
+  data: T[];
+  meta: {
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+  };
+}
+
 @Injectable()
 export class UnitsService {
   constructor(
@@ -20,12 +30,31 @@ export class UnitsService {
     private readonly units: Repository<Unit>,
   ) {}
 
-  async findAll(query: QueryUnitsDto): Promise<UnitResponseDto[]> {
-    const units = await this.units.find({
-      where: query.status ? { status: query.status } : {},
-      order: { name: 'ASC', id: 'ASC' },
-    });
-    return units.map(UnitResponseDto.fromEntity);
+  async findAll(
+    query: QueryUnitsDto,
+  ): Promise<PaginatedResult<UnitResponseDto>> {
+    const page = Math.max(1, query.page ?? 1);
+    const limit = Math.max(1, Math.min(100, query.limit ?? 10));
+    const skip = (page - 1) * limit;
+
+    const qb = this.units.createQueryBuilder('unit');
+    if (query.status) {
+      qb.andWhere('unit.status = :status', { status: query.status });
+    }
+    const search = query.search?.trim();
+    if (search) {
+      qb.andWhere('unit.name ILIKE :search', { search: `%${search}%` });
+    }
+    qb.orderBy('unit.name', 'ASC').addOrderBy('unit.id', 'ASC');
+    qb.skip(skip).take(limit);
+
+    const [units, total] = await qb.getManyAndCount();
+    const totalPages = Math.ceil(total / limit) || 1;
+
+    return {
+      data: units.map(UnitResponseDto.fromEntity),
+      meta: { total, page, limit, totalPages },
+    };
   }
 
   async create(dto: CreateUnitDto): Promise<UnitResponseDto> {

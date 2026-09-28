@@ -108,7 +108,7 @@ databaseE2e('Materials database API (e2e)', () => {
         `/masters/materials?search=${testSuffix}&materialGroupId=${materialGroup.id}&status=active`,
       )
       .expect(200);
-    expect(filteredMaterials.body).toEqual(
+    expect(filteredMaterials.body.data).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ id: createResponse.body.id }),
       ]),
@@ -125,9 +125,9 @@ databaseE2e('Materials database API (e2e)', () => {
       });
 
     const activeMaterials = await request(app.getHttpServer())
-      .get('/masters/materials?status=active')
+      .get('/masters/materials?status=active&limit=100')
       .expect(200);
-    expect(activeMaterials.body).not.toEqual(
+    expect(activeMaterials.body.data).not.toEqual(
       expect.arrayContaining([
         expect.objectContaining({ id: createResponse.body.id }),
       ]),

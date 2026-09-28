@@ -27,7 +27,7 @@ import { QuerySizeChartsDto } from './dto/query-size-charts.dto';
 import { SizeChartResponseDto } from './dto/size-chart-response.dto';
 import { UpdateSizeChartStatusDto } from './dto/update-size-chart-status.dto';
 import { UpdateSizeChartDto } from './dto/update-size-chart.dto';
-import { SizeChartsService } from './size-charts.service';
+import { PaginatedResult, SizeChartsService } from './size-charts.service';
 
 @ApiTags('Size Charts')
 @ApiBearerAuth()
@@ -38,7 +38,9 @@ export class SizeChartsController {
 
   @Get()
   @ApiOkResponse({ type: SizeChartResponseDto, isArray: true })
-  findAll(@Query() query: QuerySizeChartsDto): Promise<SizeChartResponseDto[]> {
+  findAll(
+    @Query() query: QuerySizeChartsDto,
+  ): Promise<PaginatedResult<SizeChartResponseDto>> {
     return this.sizeChartsService.findAll(query);
   }
 

@@ -5,7 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { FindOptionsWhere, ILike, In, Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { RecordStatus } from '../../../common/enums/database.enums';
 import { BillOfMaterialLine } from '../../boms/entities/BillOfMaterialLine.entity';
 import { DraftBomLine } from '../../draft-boms/entities/DraftBomLine.entity';
@@ -18,6 +18,16 @@ import { MaterialResponseDto } from './dto/material-response.dto';
 import { QueryMaterialsDto } from './dto/query-materials.dto';
 import { UpdateMaterialStatusDto } from './dto/update-material-status.dto';
 import { UpdateMaterialDto } from './dto/update-material.dto';
+
+export interface PaginatedResult<T> {
+  data: T[];
+  meta: {
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+  };
+}
 
 @Injectable()
 export class MaterialsService {
@@ -36,29 +46,39 @@ export class MaterialsService {
     private readonly billOfMaterialLines: Repository<BillOfMaterialLine>,
   ) {}
 
-  async findAll(query: QueryMaterialsDto): Promise<MaterialResponseDto[]> {
-    const baseWhere: FindOptionsWhere<Material> = {};
+  async findAll(
+    query: QueryMaterialsDto,
+  ): Promise<PaginatedResult<MaterialResponseDto>> {
+    const page = Math.max(1, query.page ?? 1);
+    const limit = Math.max(1, Math.min(100, query.limit ?? 10));
+    const skip = (page - 1) * limit;
+
+    const qb = this.materials.createQueryBuilder('material');
     if (query.materialGroupId) {
-      baseWhere.materialGroupId = query.materialGroupId;
+      qb.andWhere('material.materialGroupId = :materialGroupId', {
+        materialGroupId: query.materialGroupId,
+      });
     }
     if (query.status) {
-      baseWhere.status = query.status;
+      qb.andWhere('material.status = :status', { status: query.status });
     }
-
     const search = query.search?.trim();
-    const where: FindOptionsWhere<Material> | FindOptionsWhere<Material>[] =
-      search
-        ? [
-            { ...baseWhere, materialCode: ILike(`%${search}%`) },
-            { ...baseWhere, materialName: ILike(`%${search}%`) },
-          ]
-        : baseWhere;
+    if (search) {
+      qb.andWhere(
+        '(material.materialCode ILIKE :search OR material.materialName ILIKE :search)',
+        { search: `%${search}%` },
+      );
+    }
+    qb.orderBy('material.materialCode', 'ASC').addOrderBy('material.id', 'ASC');
+    qb.skip(skip).take(limit);
 
-    const materials = await this.materials.find({
-      where,
-      order: { materialCode: 'ASC', id: 'ASC' },
-    });
-    return this.mapMaterials(materials);
+    const [materials, total] = await qb.getManyAndCount();
+    const totalPages = Math.ceil(total / limit) || 1;
+
+    return {
+      data: await this.mapMaterials(materials),
+      meta: { total, page, limit, totalPages },
+    };
   }
 
   async findOne(id: string): Promise<MaterialResponseDto> {

@@ -15,13 +15,20 @@ describe('MaterialGroupsService', () => {
   let materialGroups: jest.Mocked<Repository<MaterialGroup>>;
   let materials: jest.Mocked<Repository<Material>>;
   let normalizedNameResult: jest.Mock<Promise<MaterialGroup | null>, []>;
+  let getManyAndCount: jest.Mock;
   let service: MaterialGroupsService;
 
   beforeEach(() => {
     normalizedNameResult = jest.fn();
+    getManyAndCount = jest.fn();
     const queryBuilder = {
       where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      skip: jest.fn().mockReturnThis(),
+      take: jest.fn().mockReturnThis(),
       getOne: normalizedNameResult,
+      getManyAndCount,
     } as unknown as SelectQueryBuilder<MaterialGroup>;
 
     materialGroups = {
@@ -76,14 +83,13 @@ describe('MaterialGroupsService', () => {
   });
 
   it('queries active groups for material creation lookups', async () => {
-    materialGroups.find.mockResolvedValue([group]);
+    getManyAndCount.mockResolvedValue([[group], 1]);
 
     await expect(
       service.findAll({ status: RecordStatus.ACTIVE }),
-    ).resolves.toEqual([group]);
-    expect(materialGroups.find).toHaveBeenCalledWith({
-      where: { status: RecordStatus.ACTIVE },
-      order: { name: 'ASC' },
+    ).resolves.toEqual({
+      data: [group],
+      meta: { total: 1, page: 1, limit: 10, totalPages: 1 },
     });
   });
 
