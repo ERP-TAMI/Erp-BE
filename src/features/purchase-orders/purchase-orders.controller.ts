@@ -44,6 +44,9 @@ import {
   UpdatePoProductDto,
   SaveProductOperationStepsDto,
   CreateProductSampleRoundDto,
+  UpdateProductSampleRoundDto,
+  PresignProductSampleImageDto,
+  ConfirmProductSampleImageDto,
   PresignPoDocumentDto,
   ConfirmPoDocumentDto,
 } from './dto';
@@ -292,6 +295,98 @@ export class PurchaseOrdersController {
   ) {
     const userId = req?.user?.id || req?.user?.sub;
     return this.service.createProductSampleRound(productId, dto, userId);
+  }
+
+  @Patch(':id/products/:productId/sample-rounds/:roundId')
+  @ApiOperation({ summary: 'Sửa thông tin đợt may mẫu' })
+  async updateProductSampleRound(
+    @Param('id', ParseUUIDPipe) poId: string,
+    @Param('productId', ParseUUIDPipe) productId: string,
+    @Param('roundId', ParseUUIDPipe) roundId: string,
+    @Body() dto: UpdateProductSampleRoundDto,
+    @Req() req?: any,
+  ) {
+    const userId = req?.user?.id || req?.user?.sub;
+    return this.service.updateProductSampleRound(
+      poId,
+      productId,
+      roundId,
+      dto,
+      userId,
+    );
+  }
+
+  @Post(':id/products/:productId/sample-rounds/:roundId/images/presign')
+  @ApiOperation({ summary: 'Xin presigned URL để upload ảnh đợt may mẫu' })
+  async presignProductSampleImage(
+    @Param('id', ParseUUIDPipe) poId: string,
+    @Param('productId', ParseUUIDPipe) productId: string,
+    @Param('roundId', ParseUUIDPipe) roundId: string,
+    @Body() dto: PresignProductSampleImageDto,
+  ) {
+    return this.service.presignProductSampleImage(
+      poId,
+      productId,
+      roundId,
+      dto,
+    );
+  }
+
+  @Post(':id/products/:productId/sample-rounds/:roundId/images/confirm')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary: 'Xác nhận đã upload xong, ghi ảnh vào đợt may mẫu',
+  })
+  async confirmProductSampleImage(
+    @Param('id', ParseUUIDPipe) poId: string,
+    @Param('productId', ParseUUIDPipe) productId: string,
+    @Param('roundId', ParseUUIDPipe) roundId: string,
+    @Body() dto: ConfirmProductSampleImageDto,
+    @Req() req?: any,
+  ) {
+    const userId = req?.user?.id || req?.user?.sub;
+    return this.service.confirmProductSampleImage(
+      poId,
+      productId,
+      roundId,
+      userId,
+      dto,
+    );
+  }
+
+  @Get(
+    ':id/products/:productId/sample-rounds/:roundId/images/:imageId/download-url',
+  )
+  @ApiOperation({ summary: 'Lấy URL tải ảnh đợt may mẫu về máy' })
+  async getProductSampleImageDownloadUrl(
+    @Param('id', ParseUUIDPipe) poId: string,
+    @Param('productId', ParseUUIDPipe) productId: string,
+    @Param('roundId', ParseUUIDPipe) roundId: string,
+    @Param('imageId', ParseUUIDPipe) imageId: string,
+  ) {
+    return this.service.getProductSampleImageDownloadUrl(
+      poId,
+      productId,
+      roundId,
+      imageId,
+    );
+  }
+
+  @Delete(':id/products/:productId/sample-rounds/:roundId/images/:imageId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Xoá ảnh khỏi đợt may mẫu' })
+  async removeProductSampleImage(
+    @Param('id', ParseUUIDPipe) poId: string,
+    @Param('productId', ParseUUIDPipe) productId: string,
+    @Param('roundId', ParseUUIDPipe) roundId: string,
+    @Param('imageId', ParseUUIDPipe) imageId: string,
+  ) {
+    return this.service.removeProductSampleImage(
+      poId,
+      productId,
+      roundId,
+      imageId,
+    );
   }
 
   @Get(':id/products/:productId/production-doc')
