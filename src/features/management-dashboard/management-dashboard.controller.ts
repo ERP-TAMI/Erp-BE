@@ -4,6 +4,8 @@ import { Auth } from '../../common/decorators/auth.decorator';
 import { ManagementDashboardQueryDto } from './dto/management-dashboard-query.dto';
 import { ManagementDashboardSummaryDto } from './dto/management-dashboard-summary.dto';
 import { ManagementDashboardService } from './management-dashboard.service';
+import { ManagementPurchaseOrdersQueryDto } from './dto/management-purchase-orders-query.dto';
+import { ManagementPurchaseOrdersOverviewDto } from './dto/management-purchase-orders-overview.dto';
 
 const MANAGEMENT_ACCESS_PERMISSION = 'management.area.access';
 
@@ -22,5 +24,13 @@ export class ManagementDashboardController {
     @Query() query: ManagementDashboardQueryDto,
   ): Promise<ManagementDashboardSummaryDto> {
     return this.managementDashboardService.getSummary(query.month);
+  }
+
+  @Get('purchase-orders')
+  @ApiOkResponse({ type: ManagementPurchaseOrdersOverviewDto })
+  getPurchaseOrdersOverview(
+    @Query() query: ManagementPurchaseOrdersQueryDto,
+  ): Promise<ManagementPurchaseOrdersOverviewDto> {
+    return this.managementDashboardService.getPurchaseOrdersOverview(query);
   }
 }

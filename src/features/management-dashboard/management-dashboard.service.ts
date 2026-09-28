@@ -1,12 +1,24 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { ManagementDashboardSummaryDto } from './dto/management-dashboard-summary.dto';
+import { ManagementPurchaseOrdersQueryDto } from './dto/management-purchase-orders-query.dto';
+import {
+  ManagementPurchaseOrderItemDto,
+  ManagementPurchaseOrdersOverviewDto,
+} from './dto/management-purchase-orders-overview.dto';
 
 type DashboardSummaryRow = {
   total_purchase_orders: string | number;
   completed_purchase_orders: string | number;
   overdue_purchase_orders: string | number;
   active_employees: string | number;
+};
+
+type PurchaseOrdersOverviewRow = {
+  total_purchase_orders: string | number;
+  overdue_purchase_orders: string | number;
+  upcoming_purchase_orders: string | number;
+  items: ManagementPurchaseOrderItemDto[];
 };
 
 @Injectable()
@@ -64,6 +76,113 @@ export class ManagementDashboardService {
       completedPurchaseOrders: Number(summary.completed_purchase_orders),
       overduePurchaseOrders: Number(summary.overdue_purchase_orders),
       activeEmployees: Number(summary.active_employees),
+    };
+  }
+
+  async getPurchaseOrdersOverview(
+    query: ManagementPurchaseOrdersQueryDto,
+  ): Promise<ManagementPurchaseOrdersOverviewDto> {
+    const [monthStart, nextMonthStart] = this.getMonthBounds(query.month);
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 10;
+    const offset = (page - 1) * limit;
+    if (!Number.isSafeInteger(offset) || offset < 0) {
+      throw new BadRequestException('page and limit produce an unsafe offset');
+    }
+    const [row] = await this.dataSource.query<PurchaseOrdersOverviewRow[]>(
+      `
+        WITH date_context AS (
+          SELECT
+            $1::date AS next_month_start,
+            $2::date AS month_start,
+            (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Ho_Chi_Minh')::date AS today
+        ),
+        selected_purchase_orders AS (
+          SELECT
+            purchase_order.id,
+            purchase_order.po_code,
+            purchase_order.customer_name_snapshot,
+            purchase_order.received_date,
+            purchase_order.deadline,
+            purchase_order.status,
+            CASE
+              WHEN purchase_order.status = 'cancelled' THEN 'cancelled'
+              WHEN purchase_order.status = 'closed' THEN 'completed'
+              WHEN purchase_order.deadline < date_context.today THEN 'overdue'
+              ELSE 'not_completed'
+            END AS management_status,
+            purchase_order.deadline - date_context.today AS days_to_deadline
+          FROM purchase_orders AS purchase_order
+          CROSS JOIN date_context
+          WHERE purchase_order.received_date < date_context.next_month_start
+            AND purchase_order.deadline >= date_context.month_start
+            AND purchase_order.archived_at IS NULL
+        ),
+        metrics AS (
+          SELECT
+            COUNT(*) AS total_purchase_orders,
+            COUNT(*) FILTER (
+              WHERE selected_purchase_order.management_status = 'overdue'
+            ) AS overdue_purchase_orders,
+            COUNT(*) FILTER (
+              WHERE selected_purchase_order.management_status = 'not_completed'
+                AND selected_purchase_order.days_to_deadline >= 0
+                AND selected_purchase_order.days_to_deadline < 7
+            ) AS upcoming_purchase_orders
+          FROM selected_purchase_orders AS selected_purchase_order
+        ),
+        page_items AS (
+          SELECT selected_purchase_order.*
+          FROM selected_purchase_orders AS selected_purchase_order
+          ORDER BY selected_purchase_order.deadline ASC,
+            selected_purchase_order.received_date ASC,
+            selected_purchase_order.id ASC
+          OFFSET $3 LIMIT $4
+        ),
+        items AS (
+          SELECT COALESCE(
+            json_agg(
+              json_build_object(
+                'id', page_item.id,
+                'poCode', page_item.po_code,
+                'customerNameSnapshot', page_item.customer_name_snapshot,
+                'receivedDate', to_char(page_item.received_date, 'YYYY-MM-DD'),
+                'deadline', to_char(page_item.deadline, 'YYYY-MM-DD'),
+                'status', page_item.status,
+                'managementStatus', page_item.management_status,
+                'daysToDeadline', page_item.days_to_deadline
+              ) ORDER BY page_item.deadline ASC,
+                page_item.received_date ASC,
+                page_item.id ASC
+            ),
+            '[]'::json
+          ) AS data
+          FROM page_items AS page_item
+        )
+        SELECT
+          metrics.total_purchase_orders,
+          metrics.overdue_purchase_orders,
+          metrics.upcoming_purchase_orders,
+          items.data AS items
+        FROM metrics
+        CROSS JOIN items
+      `,
+      [nextMonthStart, monthStart, offset, limit],
+    );
+    const total = Number(row.total_purchase_orders);
+
+    return {
+      month: query.month,
+      totalPurchaseOrders: total,
+      overduePurchaseOrders: Number(row.overdue_purchase_orders),
+      upcomingPurchaseOrders: Number(row.upcoming_purchase_orders),
+      items: row.items,
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages: Math.max(1, Math.ceil(total / limit)),
+      },
     };
   }
 
