@@ -171,7 +171,7 @@ describe('Size Charts API with PostgreSQL (e2e)', () => {
       .get('/masters/size-charts?status=active')
       .expect(200);
     expect(
-      activeOnly.body.some(
+      activeOnly.body.data.some(
         (sizeChart: { id: string }) => sizeChart.id === created.body.id,
       ),
     ).toBe(false);

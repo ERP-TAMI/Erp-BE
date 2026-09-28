@@ -14,6 +14,16 @@ import { QueryMaterialGroupsDto } from './dto/query-material-groups.dto';
 import { UpdateMaterialGroupStatusDto } from './dto/update-material-group-status.dto';
 import { UpdateMaterialGroupDto } from './dto/update-material-group.dto';
 
+export interface PaginatedResult<T> {
+  data: T[];
+  meta: {
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+  };
+}
+
 @Injectable()
 export class MaterialGroupsService {
   constructor(
@@ -25,12 +35,31 @@ export class MaterialGroupsService {
 
   async findAll(
     query: QueryMaterialGroupsDto,
-  ): Promise<MaterialGroupResponseDto[]> {
-    const materialGroups = await this.materialGroups.find({
-      where: query.status ? { status: query.status } : {},
-      order: { name: 'ASC' },
-    });
-    return materialGroups.map(MaterialGroupResponseDto.fromEntity);
+  ): Promise<PaginatedResult<MaterialGroupResponseDto>> {
+    const page = Math.max(1, query.page ?? 1);
+    const limit = Math.max(1, Math.min(100, query.limit ?? 10));
+    const skip = (page - 1) * limit;
+
+    const qb = this.materialGroups.createQueryBuilder('materialGroup');
+    if (query.status) {
+      qb.andWhere('materialGroup.status = :status', { status: query.status });
+    }
+    const search = query.search?.trim();
+    if (search) {
+      qb.andWhere('materialGroup.name ILIKE :search', {
+        search: `%${search}%`,
+      });
+    }
+    qb.orderBy('materialGroup.name', 'ASC');
+    qb.skip(skip).take(limit);
+
+    const [materialGroups, total] = await qb.getManyAndCount();
+    const totalPages = Math.ceil(total / limit) || 1;
+
+    return {
+      data: materialGroups.map(MaterialGroupResponseDto.fromEntity),
+      meta: { total, page, limit, totalPages },
+    };
   }
 
   async findOne(id: string): Promise<MaterialGroupResponseDto> {

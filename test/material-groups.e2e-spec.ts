@@ -93,6 +93,8 @@ describe('Material groups API (e2e)', () => {
 
     expect(materialGroupsService.findAll).toHaveBeenCalledWith({
       status: RecordStatus.ACTIVE,
+      page: 1,
+      limit: 10,
     });
   });
 

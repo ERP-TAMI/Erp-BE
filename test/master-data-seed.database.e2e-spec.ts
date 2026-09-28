@@ -84,9 +84,9 @@ databaseE2e('Sample Master Data contract with PostgreSQL (e2e)', () => {
 
   it('exposes stable IDs and resolved material references for Fit selectors', async () => {
     const groups = await request(authenticatedApp.getHttpServer())
-      .get('/masters/material-groups?status=active')
+      .get('/masters/material-groups?status=active&limit=100')
       .expect(200);
-    expect(groups.body).toEqual(
+    expect(groups.body.data).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           id: STABLE_SAMPLE_IDS.materialGroups.FUSIBLE,
@@ -96,9 +96,9 @@ databaseE2e('Sample Master Data contract with PostgreSQL (e2e)', () => {
     );
 
     const materials = await request(authenticatedApp.getHttpServer())
-      .get('/masters/materials?status=active')
+      .get('/masters/materials?status=active&limit=100')
       .expect(200);
-    expect(materials.body).toEqual(
+    expect(materials.body.data).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           id: STABLE_SAMPLE_IDS.materials['FUS-BLK'],
@@ -110,9 +110,9 @@ databaseE2e('Sample Master Data contract with PostgreSQL (e2e)', () => {
     );
 
     const charts = await request(authenticatedApp.getHttpServer())
-      .get('/masters/size-charts?status=active')
+      .get('/masters/size-charts?status=active&limit=100')
       .expect(200);
-    expect(charts.body).toEqual(
+    expect(charts.body.data).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           id: STABLE_SAMPLE_IDS.sizeCharts['Size chữ tiêu chuẩn'],

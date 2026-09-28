@@ -228,6 +228,8 @@ describe('Stage groups controller boundary (e2e)', () => {
     expect(stageGroupsService.findAll).toHaveBeenCalledWith({
       search: 'may',
       status: RecordStatus.ACTIVE,
+      page: 1,
+      limit: 10,
     });
   });
 

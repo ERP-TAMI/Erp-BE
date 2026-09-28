@@ -64,9 +64,9 @@ databaseE2e('Material groups database API (e2e)', () => {
     });
 
     const listedGroups = await request(app.getHttpServer())
-      .get('/masters/material-groups?status=active')
+      .get('/masters/material-groups?status=active&limit=100')
       .expect(200);
-    expect(listedGroups.body).toEqual(
+    expect(listedGroups.body.data).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ id: createResponse.body.id }),
       ]),
@@ -91,9 +91,9 @@ databaseE2e('Material groups database API (e2e)', () => {
     );
 
     const activeGroups = await request(app.getHttpServer())
-      .get('/masters/material-groups?status=active')
+      .get('/masters/material-groups?status=active&limit=100')
       .expect(200);
-    expect(activeGroups.body).not.toEqual(
+    expect(activeGroups.body.data).not.toEqual(
       expect.arrayContaining([
         expect.objectContaining({ id: createResponse.body.id }),
       ]),

@@ -64,6 +64,8 @@ describe('Units API (e2e)', () => {
 
     expect(unitsService.findAll).toHaveBeenCalledWith({
       status: RecordStatus.ACTIVE,
+      page: 1,
+      limit: 10,
     });
   });
 

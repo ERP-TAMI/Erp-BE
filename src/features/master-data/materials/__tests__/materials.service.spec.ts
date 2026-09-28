@@ -3,7 +3,7 @@ import {
   ConflictException,
   NotFoundException,
 } from '@nestjs/common';
-import { Repository } from 'typeorm';
+import { Repository, SelectQueryBuilder } from 'typeorm';
 import { RecordStatus } from '../../../../common/enums/database.enums';
 import { BillOfMaterialLine } from '../../../boms/entities/BillOfMaterialLine.entity';
 import { DraftBomLine } from '../../../draft-boms/entities/DraftBomLine.entity';
@@ -42,15 +42,36 @@ describe('MaterialsService', () => {
   let materialSizes: jest.Mocked<Repository<MaterialSize>>;
   let draftBomLines: jest.Mocked<Repository<DraftBomLine>>;
   let billOfMaterialLines: jest.Mocked<Repository<BillOfMaterialLine>>;
+  let queryBuilder: {
+    andWhere: jest.Mock;
+    orderBy: jest.Mock;
+    addOrderBy: jest.Mock;
+    skip: jest.Mock;
+    take: jest.Mock;
+    getManyAndCount: jest.Mock;
+  };
   let service: MaterialsService;
 
   beforeEach(() => {
+    queryBuilder = {
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      addOrderBy: jest.fn().mockReturnThis(),
+      skip: jest.fn().mockReturnThis(),
+      take: jest.fn().mockReturnThis(),
+      getManyAndCount: jest.fn(),
+    };
     materials = {
       find: jest.fn(),
       findOneBy: jest.fn(),
       create: jest.fn(),
       save: jest.fn(),
       remove: jest.fn(),
+      createQueryBuilder: jest
+        .fn()
+        .mockReturnValue(
+          queryBuilder as unknown as SelectQueryBuilder<Material>,
+        ),
     } as unknown as jest.Mocked<Repository<Material>>;
     materialGroups = {
       findBy: jest.fn().mockResolvedValue([materialGroup]),
@@ -157,11 +178,14 @@ describe('MaterialsService', () => {
   });
 
   it('lists material responses with server-side search and filters', async () => {
-    materials.find.mockResolvedValue([
-      {
-        ...material,
-        defaultYieldPct: '2.5000' as unknown as number,
-      },
+    queryBuilder.getManyAndCount.mockResolvedValue([
+      [
+        {
+          ...material,
+          defaultYieldPct: '2.5000' as unknown as number,
+        },
+      ],
+      1,
     ]);
 
     const result = await service.findAll({
@@ -170,18 +194,24 @@ describe('MaterialsService', () => {
       status: RecordStatus.ACTIVE,
     });
 
-    expect(result).toEqual([
-      expect.objectContaining({
-        materialCode: 'FAB-001',
-        materialGroupName: 'Fabric',
-        defaultUnitName: 'Meter',
-        defaultYieldPct: '2.5000',
-      }),
-    ]);
-    expect(materials.find).toHaveBeenCalledWith(
-      expect.objectContaining({
-        order: { materialCode: 'ASC', id: 'ASC' },
-      }),
+    expect(result).toEqual({
+      data: [
+        expect.objectContaining({
+          materialCode: 'FAB-001',
+          materialGroupName: 'Fabric',
+          defaultUnitName: 'Meter',
+          defaultYieldPct: '2.5000',
+        }),
+      ],
+      meta: { total: 1, page: 1, limit: 10, totalPages: 1 },
+    });
+    expect(queryBuilder.orderBy).toHaveBeenCalledWith(
+      'material.materialCode',
+      'ASC',
+    );
+    expect(queryBuilder.andWhere).toHaveBeenCalledWith(
+      '(material.materialCode ILIKE :search OR material.materialName ILIKE :search)',
+      { search: '%fabric%' },
     );
   });
 

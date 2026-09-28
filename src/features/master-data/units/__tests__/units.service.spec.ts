@@ -1,17 +1,36 @@
 import { ConflictException, NotFoundException } from '@nestjs/common';
-import { Repository } from 'typeorm';
+import { Repository, SelectQueryBuilder } from 'typeorm';
 import { RecordStatus } from '../../../../common/enums/database.enums';
 import { Unit } from '../../entities/Unit.entity';
 import { UnitsService } from '../units.service';
 
 describe('UnitsService', () => {
   let units: jest.Mocked<Repository<Unit>>;
+  let queryBuilder: {
+    andWhere: jest.Mock;
+    orderBy: jest.Mock;
+    addOrderBy: jest.Mock;
+    skip: jest.Mock;
+    take: jest.Mock;
+    getManyAndCount: jest.Mock;
+  };
   let service: UnitsService;
 
   beforeEach(() => {
+    queryBuilder = {
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      addOrderBy: jest.fn().mockReturnThis(),
+      skip: jest.fn().mockReturnThis(),
+      take: jest.fn().mockReturnThis(),
+      getManyAndCount: jest.fn(),
+    };
     units = {
       find: jest.fn(),
       findOneBy: jest.fn(),
+      createQueryBuilder: jest
+        .fn()
+        .mockReturnValue(queryBuilder as unknown as SelectQueryBuilder<Unit>),
       create: jest.fn(),
       save: jest.fn(),
       remove: jest.fn(),
@@ -20,27 +39,33 @@ describe('UnitsService', () => {
   });
 
   it('returns active units in stable name order for selectors', async () => {
-    units.find.mockResolvedValue([
-      {
-        id: '41fc8e1b-0441-463b-af3f-edf74592084d',
-        name: 'Mét',
-        status: RecordStatus.ACTIVE,
-      },
+    queryBuilder.getManyAndCount.mockResolvedValue([
+      [
+        {
+          id: '41fc8e1b-0441-463b-af3f-edf74592084d',
+          name: 'Mét',
+          status: RecordStatus.ACTIVE,
+        },
+      ],
+      1,
     ]);
 
     await expect(
       service.findAll({ status: RecordStatus.ACTIVE }),
-    ).resolves.toEqual([
-      {
-        id: '41fc8e1b-0441-463b-af3f-edf74592084d',
-        name: 'Mét',
-        status: RecordStatus.ACTIVE,
-      },
-    ]);
-    expect(units.find).toHaveBeenCalledWith({
-      where: { status: RecordStatus.ACTIVE },
-      order: { name: 'ASC', id: 'ASC' },
+    ).resolves.toEqual({
+      data: [
+        {
+          id: '41fc8e1b-0441-463b-af3f-edf74592084d',
+          name: 'Mét',
+          status: RecordStatus.ACTIVE,
+        },
+      ],
+      meta: { total: 1, page: 1, limit: 10, totalPages: 1 },
     });
+    expect(queryBuilder.andWhere).toHaveBeenCalledWith(
+      'unit.status = :status',
+      { status: RecordStatus.ACTIVE },
+    );
   });
 
   it('creates an active unit', async () => {

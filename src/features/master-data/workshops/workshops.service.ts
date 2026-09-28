@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { FindOptionsWhere, ILike, Repository } from 'typeorm';
+import { Repository } from 'typeorm';
 import { RecordStatus } from '../../../common/enums/database.enums';
 import { Workshop } from '../entities/Workshop.entity';
 import { CreateWorkshopDto } from './dto/create-workshop.dto';
@@ -13,6 +13,16 @@ import { UpdateWorkshopStatusDto } from './dto/update-workshop-status.dto';
 import { UpdateWorkshopDto } from './dto/update-workshop.dto';
 import { WorkshopResponseDto } from './dto/workshop-response.dto';
 
+export interface PaginatedResult<T> {
+  data: T[];
+  meta: {
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+  };
+}
+
 @Injectable()
 export class WorkshopsService {
   constructor(
@@ -20,24 +30,34 @@ export class WorkshopsService {
     private readonly workshops: Repository<Workshop>,
   ) {}
 
-  async findAll(query: QueryWorkshopsDto): Promise<WorkshopResponseDto[]> {
-    const baseWhere: FindOptionsWhere<Workshop> = query.status
-      ? { status: query.status }
-      : {};
+  async findAll(
+    query: QueryWorkshopsDto,
+  ): Promise<PaginatedResult<WorkshopResponseDto>> {
+    const page = Math.max(1, query.page ?? 1);
+    const limit = Math.max(1, Math.min(100, query.limit ?? 10));
+    const skip = (page - 1) * limit;
+
+    const qb = this.workshops.createQueryBuilder('workshop');
+    if (query.status) {
+      qb.andWhere('workshop.status = :status', { status: query.status });
+    }
     const search = query.search?.trim();
-    const where: FindOptionsWhere<Workshop> | FindOptionsWhere<Workshop>[] =
-      search
-        ? [
-            { ...baseWhere, workshopCode: ILike(`%${search}%`) },
-            { ...baseWhere, name: ILike(`%${search}%`) },
-            { ...baseWhere, manager: ILike(`%${search}%`) },
-          ]
-        : baseWhere;
-    const workshops = await this.workshops.find({
-      where,
-      order: { workshopCode: 'ASC', id: 'ASC' },
-    });
-    return workshops.map(WorkshopResponseDto.fromEntity);
+    if (search) {
+      qb.andWhere(
+        '(workshop.workshopCode ILIKE :search OR workshop.name ILIKE :search OR workshop.manager ILIKE :search)',
+        { search: `%${search}%` },
+      );
+    }
+    qb.orderBy('workshop.workshopCode', 'ASC').addOrderBy('workshop.id', 'ASC');
+    qb.skip(skip).take(limit);
+
+    const [workshops, total] = await qb.getManyAndCount();
+    const totalPages = Math.ceil(total / limit) || 1;
+
+    return {
+      data: workshops.map(WorkshopResponseDto.fromEntity),
+      meta: { total, page, limit, totalPages },
+    };
   }
 
   async findOne(id: string): Promise<WorkshopResponseDto> {

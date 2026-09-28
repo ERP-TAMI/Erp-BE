@@ -26,7 +26,7 @@ import { QueryUnitsDto } from './dto/query-units.dto';
 import { UnitResponseDto } from './dto/unit-response.dto';
 import { UpdateUnitDto } from './dto/update-unit.dto';
 import { UpdateUnitStatusDto } from './dto/update-unit-status.dto';
-import { UnitsService } from './units.service';
+import { PaginatedResult, UnitsService } from './units.service';
 
 @ApiTags('Units')
 @ApiBearerAuth()
@@ -37,7 +37,9 @@ export class UnitsController {
 
   @Get()
   @ApiOkResponse({ type: UnitResponseDto, isArray: true })
-  findAll(@Query() query: QueryUnitsDto): Promise<UnitResponseDto[]> {
+  findAll(
+    @Query() query: QueryUnitsDto,
+  ): Promise<PaginatedResult<UnitResponseDto>> {
     return this.unitsService.findAll(query);
   }
 

@@ -40,15 +40,30 @@ describe('StageGroupsService', () => {
   let groups: jest.Mocked<Repository<StageGroup>>;
   let items: jest.Mocked<Repository<StageGroupItem>>;
   let dataSource: jest.Mocked<DataSource>;
-  let groupQueryBuilder: SelectQueryBuilder<StageGroup>;
+  let groupQueryBuilder: {
+    where: jest.Mock;
+    andWhere: jest.Mock;
+    orderBy: jest.Mock;
+    addOrderBy: jest.Mock;
+    skip: jest.Mock;
+    take: jest.Mock;
+    getOne: jest.Mock;
+    getManyAndCount: jest.Mock;
+  };
   let itemQueryBuilder: SelectQueryBuilder<StageGroupItem>;
   let service: StageGroupsService;
 
   beforeEach(() => {
     groupQueryBuilder = {
       where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      addOrderBy: jest.fn().mockReturnThis(),
+      skip: jest.fn().mockReturnThis(),
+      take: jest.fn().mockReturnThis(),
       getOne: jest.fn().mockResolvedValue(null),
-    } as unknown as SelectQueryBuilder<StageGroup>;
+      getManyAndCount: jest.fn(),
+    };
     itemQueryBuilder = {
       select: jest.fn().mockReturnThis(),
       addSelect: jest.fn().mockReturnThis(),
@@ -63,7 +78,11 @@ describe('StageGroupsService', () => {
       create: jest.fn((value) => ({ ...group, ...value }) as StageGroup),
       save: jest.fn(async (value) => value as StageGroup),
       remove: jest.fn(),
-      createQueryBuilder: jest.fn().mockReturnValue(groupQueryBuilder),
+      createQueryBuilder: jest
+        .fn()
+        .mockReturnValue(
+          groupQueryBuilder as unknown as SelectQueryBuilder<StageGroup>,
+        ),
     } as unknown as jest.Mocked<Repository<StageGroup>>;
     items = {
       find: jest.fn().mockResolvedValue([]),
@@ -91,14 +110,15 @@ describe('StageGroupsService', () => {
   });
 
   it('lists groups using database-side child counts', async () => {
-    groups.find.mockResolvedValue([group]);
+    groupQueryBuilder.getManyAndCount.mockResolvedValue([[group], 1]);
     (itemQueryBuilder.getRawMany as jest.Mock).mockResolvedValue([
       { stageGroupId: groupId, itemCount: '2' },
     ]);
 
-    await expect(service.findAll({})).resolves.toEqual([
-      expect.objectContaining({ id: groupId, itemCount: 2 }),
-    ]);
+    await expect(service.findAll({})).resolves.toEqual({
+      data: [expect.objectContaining({ id: groupId, itemCount: 2 })],
+      meta: { total: 1, page: 1, limit: 10, totalPages: 1 },
+    });
     expect(itemQueryBuilder.addSelect).toHaveBeenCalledWith(
       'COUNT(item.id)',
       'itemCount',

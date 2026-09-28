@@ -137,6 +137,8 @@ describe('Stages API (e2e)', () => {
     expect(stagesService.findAll).toHaveBeenCalledWith({
       search: 'cắt',
       status: RecordStatus.ACTIVE,
+      page: 1,
+      limit: 10,
     });
   });
 

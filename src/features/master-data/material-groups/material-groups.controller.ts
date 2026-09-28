@@ -27,7 +27,10 @@ import { MaterialGroupResponseDto } from './dto/material-group-response.dto';
 import { QueryMaterialGroupsDto } from './dto/query-material-groups.dto';
 import { UpdateMaterialGroupStatusDto } from './dto/update-material-group-status.dto';
 import { UpdateMaterialGroupDto } from './dto/update-material-group.dto';
-import { MaterialGroupsService } from './material-groups.service';
+import {
+  MaterialGroupsService,
+  PaginatedResult,
+} from './material-groups.service';
 
 const VIEW_PERMISSION = 'master_data.material_groups.view';
 const MANAGE_PERMISSION = 'master_data.material_groups.manage';
@@ -43,7 +46,7 @@ export class MaterialGroupsController {
   @ApiOkResponse({ type: MaterialGroupResponseDto, isArray: true })
   findAll(
     @Query() query: QueryMaterialGroupsDto,
-  ): Promise<MaterialGroupResponseDto[]> {
+  ): Promise<PaginatedResult<MaterialGroupResponseDto>> {
     return this.materialGroupsService.findAll(query);
   }
 

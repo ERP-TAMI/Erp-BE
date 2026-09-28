@@ -27,7 +27,7 @@ import { MaterialResponseDto } from './dto/material-response.dto';
 import { QueryMaterialsDto } from './dto/query-materials.dto';
 import { UpdateMaterialStatusDto } from './dto/update-material-status.dto';
 import { UpdateMaterialDto } from './dto/update-material.dto';
-import { MaterialsService } from './materials.service';
+import { MaterialsService, PaginatedResult } from './materials.service';
 
 @ApiTags('Materials')
 @ApiBearerAuth()
@@ -38,7 +38,9 @@ export class MaterialsController {
 
   @Get()
   @ApiOkResponse({ type: MaterialResponseDto, isArray: true })
-  findAll(@Query() query: QueryMaterialsDto): Promise<MaterialResponseDto[]> {
+  findAll(
+    @Query() query: QueryMaterialsDto,
+  ): Promise<PaginatedResult<MaterialResponseDto>> {
     return this.materialsService.findAll(query);
   }
 
