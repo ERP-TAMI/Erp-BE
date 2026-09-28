@@ -356,15 +356,15 @@ export class PurchaseOrdersService {
     return this.findOne(savedPo.id);
   }
 
-  async findAll(
+  /**
+   * Áp các bộ lọc dùng chung cho danh sách PO — trừ status, để dùng lại được
+   * cho cả truy vấn phân trang chính lẫn truy vấn đếm theo trạng thái (đếm
+   * theo status thì không thể tự lọc theo chính status đang đếm).
+   */
+  private applyPoListFilters(
+    qb: ReturnType<Repository<PurchaseOrder>['createQueryBuilder']>,
     query: QueryPurchaseOrderDto,
-  ): Promise<PaginatedPoResult<PurchaseOrder & { productsCount: number }>> {
-    const page = Math.max(1, Number(query.page) || 1);
-    const limit = Math.max(1, Math.min(100, Number(query.limit) || 10));
-    const skip = (page - 1) * limit;
-
-    const qb = this.poRepo.createQueryBuilder('po');
-
+  ): void {
     if (query.search?.trim()) {
       const search = `%${query.search.trim().toLowerCase()}%`;
       qb.andWhere(
@@ -385,10 +385,6 @@ export class PurchaseOrdersService {
       });
     }
 
-    if (query.status) {
-      qb.andWhere('po.status = :status', { status: query.status });
-    }
-
     if (query.dateFrom?.trim()) {
       qb.andWhere('po.receivedDate >= :dateFrom', {
         dateFrom: query.dateFrom.trim(),
@@ -399,6 +395,23 @@ export class PurchaseOrdersService {
       qb.andWhere('po.receivedDate <= :dateTo', {
         dateTo: query.dateTo.trim(),
       });
+    }
+  }
+
+  async findAll(query: QueryPurchaseOrderDto): Promise<
+    PaginatedPoResult<PurchaseOrder & { productsCount: number }> & {
+      statusCounts: Record<string, number>;
+    }
+  > {
+    const page = Math.max(1, Number(query.page) || 1);
+    const limit = Math.max(1, Math.min(100, Number(query.limit) || 10));
+    const skip = (page - 1) * limit;
+
+    const qb = this.poRepo.createQueryBuilder('po');
+    this.applyPoListFilters(qb, query);
+
+    if (query.status) {
+      qb.andWhere('po.status = :status', { status: query.status });
     }
 
     const sortColumn = query.sortBy || 'createdAt';
@@ -446,12 +459,32 @@ export class PurchaseOrdersService {
       productsCount: countsMap[po.id] || 0,
     }));
 
+    // Đếm theo trạng thái trên cùng bộ lọc search/ngày (không lọc theo status
+    // vì đây chính là chiều đang đếm) — để 4 thẻ tổng quan ở PO List phản
+    // ánh đúng số liệu trên toàn bộ kết quả tìm kiếm, không chỉ 10 dòng của
+    // trang hiện tại.
+    const statusCountsQb = this.poRepo.createQueryBuilder('po');
+    this.applyPoListFilters(statusCountsQb, query);
+    const statusCountsRaw = await statusCountsQb
+      .select('po.status', 'status')
+      .addSelect('COUNT(po.id)', 'count')
+      .groupBy('po.status')
+      .getRawMany<{ status: string; count: string }>();
+    const statusCounts = statusCountsRaw.reduce(
+      (acc, row) => {
+        acc[row.status] = Number(row.count) || 0;
+        return acc;
+      },
+      {} as Record<string, number>,
+    );
+
     return {
       items: itemsWithCounts,
       total,
       page,
       limit,
       totalPages,
+      statusCounts,
     };
   }
 
@@ -3342,6 +3375,25 @@ export class PurchaseOrdersService {
     return product;
   }
 
+  /**
+   * Như assertPoProductExists, nhưng còn chặn khi sản phẩm đã Khóa — dùng cho
+   * các thao tác ghi (sửa/upload/xoá đợt may mẫu). Endpoint chỉ-đọc (vd. lấy
+   * link tải ảnh) vẫn dùng assertPoProductExists thẳng, không qua hàm này,
+   * vì sản phẩm khóa vẫn được phép xem/tải về theo đúng banner cảnh báo bên FE.
+   */
+  private async assertPoProductEditable(
+    poId: string,
+    productId: string,
+  ): Promise<PurchaseOrderProduct> {
+    const product = await this.assertPoProductExists(poId, productId);
+    if (product.status === ProductStatus.CLOSED) {
+      throw new BadRequestException(
+        'Sản phẩm đã bị khóa, không thể chỉnh sửa đợt may mẫu.',
+      );
+    }
+    return product;
+  }
+
   private async findProductSampleRoundOrThrow(
     productId: string,
     roundId: string,
@@ -3455,6 +3507,11 @@ export class PurchaseOrdersService {
     if (!product) {
       throw new NotFoundException(`Không tìm thấy sản phẩm #${productId}`);
     }
+    if (product.status === ProductStatus.CLOSED) {
+      throw new BadRequestException(
+        'Sản phẩm đã bị khóa, không thể chỉnh sửa đợt may mẫu.',
+      );
+    }
 
     const savedRound = await this.dataSource.transaction(async (manager) => {
       const roundRepo = manager.getRepository(PurchaseOrderProductSampleRound);
@@ -3509,7 +3566,7 @@ export class PurchaseOrdersService {
     dto: UpdateProductSampleRoundDto,
     userId?: string,
   ) {
-    await this.assertPoProductExists(poId, productId);
+    await this.assertPoProductEditable(poId, productId);
     const round = await this.findProductSampleRoundOrThrow(productId, roundId);
 
     if (dto.sampleDate !== undefined) {
@@ -3540,7 +3597,7 @@ export class PurchaseOrdersService {
     roundId: string,
     dto: PresignProductSampleImageDto,
   ): Promise<{ objectKey: string; uploadUrl: string; expiresIn: number }> {
-    await this.assertPoProductExists(poId, productId);
+    await this.assertPoProductEditable(poId, productId);
     await this.findProductSampleRoundOrThrow(productId, roundId);
     assertAllowedFile(dto.fileName, dto.mimeType, dto.sizeBytes, {
       allowlist: SAMPLE_IMAGE_ALLOWLIST,
@@ -3566,7 +3623,7 @@ export class PurchaseOrdersService {
     userId: string | undefined,
     dto: ConfirmProductSampleImageDto,
   ) {
-    await this.assertPoProductExists(poId, productId);
+    await this.assertPoProductEditable(poId, productId);
     await this.findProductSampleRoundOrThrow(productId, roundId);
 
     if (
@@ -3701,7 +3758,7 @@ export class PurchaseOrdersService {
     roundId: string,
     imageId: string,
   ): Promise<void> {
-    await this.assertPoProductExists(poId, productId);
+    await this.assertPoProductEditable(poId, productId);
     await this.findProductSampleRoundOrThrow(productId, roundId);
 
     const image = await this.productSampleImageRepo.findOne({

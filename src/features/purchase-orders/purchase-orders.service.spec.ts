@@ -1814,5 +1814,117 @@ describe('PurchaseOrdersService', () => {
       expect(result.roundNo).toBe(3);
       expect(result.images).toEqual([]);
     });
+
+    it('rejects when the product is CLOSED', async () => {
+      mockProductRepo.findOne.mockResolvedValueOnce({
+        id: 'prod-1',
+        status: ProductStatus.CLOSED,
+      });
+
+      await expect(
+        service.createProductSampleRound('prod-1', {} as any, 'user-1'),
+      ).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  describe('Product sample round mutations — Khóa sản phẩm invariant', () => {
+    const closedProduct = {
+      id: 'prod-1',
+      purchaseOrderId: 'po-1',
+      status: ProductStatus.CLOSED,
+    };
+
+    const mockSampleImageQuery = (rows: any[]) => {
+      const builder: any = {};
+      [
+        'innerJoin',
+        'where',
+        'andWhere',
+        'select',
+        'addSelect',
+        'orderBy',
+      ].forEach((method) => {
+        builder[method] = jest.fn().mockReturnValue(builder);
+      });
+      builder.getRawMany = jest.fn().mockResolvedValue(rows);
+      builder.getRawOne = jest.fn().mockResolvedValue(rows[0] ?? null);
+      mockGenericRepo.createQueryBuilder.mockReturnValueOnce(builder);
+    };
+
+    it('updateProductSampleRound rejects when the product is CLOSED', async () => {
+      mockProductRepo.findOne.mockResolvedValueOnce(closedProduct);
+
+      await expect(
+        service.updateProductSampleRound(
+          'po-1',
+          'prod-1',
+          'round-1',
+          {} as any,
+        ),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('presignProductSampleImage rejects when the product is CLOSED', async () => {
+      mockProductRepo.findOne.mockResolvedValueOnce(closedProduct);
+
+      await expect(
+        service.presignProductSampleImage('po-1', 'prod-1', 'round-1', {
+          fileName: 'swatch.png',
+          mimeType: 'image/png',
+          sizeBytes: 100,
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('confirmProductSampleImage rejects when the product is CLOSED', async () => {
+      mockProductRepo.findOne.mockResolvedValueOnce(closedProduct);
+
+      await expect(
+        service.confirmProductSampleImage(
+          'po-1',
+          'prod-1',
+          'round-1',
+          'user-1',
+          {
+            objectKey:
+              'purchase-orders/po-1/products/prod-1/sample-rounds/round-1/images/x.png',
+            fileName: 'swatch.png',
+            mimeType: 'image/png',
+            sizeBytes: 100,
+          },
+        ),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('removeProductSampleImage rejects when the product is CLOSED', async () => {
+      mockProductRepo.findOne.mockResolvedValueOnce(closedProduct);
+
+      await expect(
+        service.removeProductSampleImage(
+          'po-1',
+          'prod-1',
+          'round-1',
+          'image-1',
+        ),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('getProductSampleImageDownloadUrl still works when the product is CLOSED (read-only)', async () => {
+      mockProductRepo.findOne.mockResolvedValueOnce(closedProduct);
+      mockGenericRepo.findOne.mockResolvedValueOnce({
+        id: 'round-1',
+        productId: 'prod-1',
+      });
+      mockSampleImageQuery([{ storageKey: 'key.png', fileName: 'swatch.png' }]);
+
+      const result = await service.getProductSampleImageDownloadUrl(
+        'po-1',
+        'prod-1',
+        'round-1',
+        'image-1',
+      );
+
+      expect(result.url).toBe('https://s3.example/get');
+    });
   });
 });
