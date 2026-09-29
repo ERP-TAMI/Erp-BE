@@ -10,8 +10,9 @@ import {
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsAbsent } from './create-bom.dto';
+import { OptionalExpectedRowVersionDto } from './expected-row-version.dto';
 
-export class CreateBomLineDto {
+export class CreateBomLineDto extends OptionalExpectedRowVersionDto {
   @ApiProperty({
     description: 'Material master UUID',
     example: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11',

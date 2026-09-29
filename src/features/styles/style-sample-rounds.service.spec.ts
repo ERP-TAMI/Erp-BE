@@ -61,6 +61,7 @@ describe('StyleSampleRoundsService', () => {
   let docRepoMock: { create: jest.Mock; save: jest.Mock };
   let versionRepoMock: { create: jest.Mock; save: jest.Mock };
   let txImageRepoMock: { create: jest.Mock; save: jest.Mock; count: jest.Mock };
+  let styleFindOneMock: jest.Mock;
 
   const STYLE_ID = '8f3a1c2e-4b6a-4e1a-9c2d-1a2b3c4d5e6f';
   const ROUND_ID = 'a1b2c3d4-4b6a-4e1a-9c2d-1a2b3c4d5e6f';
@@ -105,13 +106,17 @@ describe('StyleSampleRoundsService', () => {
       isTrustedObjectHost: jest.fn().mockReturnValue(true),
     };
 
+    styleFindOneMock = jest.fn().mockResolvedValue({ id: STYLE_ID });
+
     const dataSourceMock = {
       transaction: jest.fn().mockImplementation((cb: any) => {
         const manager = {
+          findOne: styleFindOneMock,
           getRepository: (entity: any) => {
             if (entity === Document) return docRepoMock;
             if (entity === DocumentVersion) return versionRepoMock;
             if (entity === StyleSampleImage) return txImageRepoMock;
+            if (entity === StyleSampleRound) return roundRepoMock;
             throw new Error(`No mock repository for entity ${entity?.name}`);
           },
         };
@@ -168,7 +173,7 @@ describe('StyleSampleRoundsService', () => {
     });
 
     it('throws NotFoundException when the style does not exist', async () => {
-      styleRepoMock.exist.mockResolvedValue(false);
+      styleFindOneMock.mockResolvedValue(null);
 
       await expect(service.create(STYLE_ID, {}, 'user-1')).rejects.toThrow(
         NotFoundException,

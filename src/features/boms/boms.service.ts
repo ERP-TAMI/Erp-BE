@@ -5,7 +5,7 @@ import {
   ConflictException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, In, Repository } from 'typeorm';
+import { DataSource, In, Repository, SelectQueryBuilder } from 'typeorm';
 import { Bom } from './entities/Bom.entity';
 import { BomRevision } from './entities/BomRevision.entity';
 import { BomLine } from './entities/BomLine.entity';
@@ -31,6 +31,7 @@ import {
   CreateBomLineDto,
   UpdateBomLineDto,
   ReorderBomLinesDto,
+  DeleteBomLineDto,
   BomLineResponseDto,
   ForwardBomDto,
   RejectBomDto,
@@ -59,6 +60,7 @@ import {
   assertRevisionDataReadyForApprove,
 } from './boms.policy';
 import { BomRevisionStatus, BomType } from '../../common/enums/database.enums';
+import { stripHtmlTags } from '../../common/utils/sanitize-text.util';
 
 export interface PaginatedResult<T> {
   data: T[];
@@ -113,6 +115,72 @@ export class BomsService {
         expectedRowVersion: Number(expectedRowVersion),
         currentRowVersion,
       });
+    }
+  }
+
+  /** Same as assertExpectedRowVersion, but a no-op when the client didn't send
+   * expectedRowVersion at all — used by write endpoints that batch multiple
+   * line mutations in quick succession (RD/Accounting bulk entry) where the
+   * caller cannot always predict the row version of an in-flight batch
+   * member. Still enforced whenever the field is actually provided. */
+  private assertExpectedRowVersionIfProvided(
+    currentRev: BomRevision,
+    expectedRowVersion: number | undefined,
+  ): void {
+    if (expectedRowVersion === undefined) return;
+    this.assertExpectedRowVersion(currentRev, expectedRowVersion);
+  }
+
+  /**
+   * Shared by findAll() and getStats(): narrows `qb` to BOMs created within
+   * the requested window. startDate/endDate win when present (arbitrary
+   * range); otherwise falls back to the whole month or year named by
+   * month/year. No-op when none of the four are set.
+   */
+  private applyCreatedAtRangeFilter(
+    qb: SelectQueryBuilder<Bom>,
+    query: {
+      month?: string;
+      year?: string;
+      startDate?: string;
+      endDate?: string;
+    },
+  ): void {
+    if (query.startDate && query.endDate) {
+      const rangeStart = new Date(query.startDate);
+      rangeStart.setUTCHours(0, 0, 0, 0);
+      const rangeEnd = new Date(query.endDate);
+      rangeEnd.setUTCHours(23, 59, 59, 999);
+      qb.andWhere(
+        'bom.created_at >= :rangeStart AND bom.created_at <= :rangeEnd',
+        { rangeStart, rangeEnd },
+      );
+    } else if (query.startDate) {
+      const rangeStart = new Date(query.startDate);
+      rangeStart.setUTCHours(0, 0, 0, 0);
+      qb.andWhere('bom.created_at >= :rangeStart', { rangeStart });
+    } else if (query.endDate) {
+      const rangeEnd = new Date(query.endDate);
+      rangeEnd.setUTCHours(23, 59, 59, 999);
+      qb.andWhere('bom.created_at <= :rangeEnd', { rangeEnd });
+    } else if (query.month) {
+      const [yearStr, monthStr] = query.month.split('-');
+      const year = parseInt(yearStr, 10);
+      const month = parseInt(monthStr, 10);
+      const rangeStart = new Date(Date.UTC(year, month - 1, 1));
+      const rangeEnd = new Date(Date.UTC(year, month, 1));
+      qb.andWhere(
+        'bom.created_at >= :rangeStart AND bom.created_at < :rangeEnd',
+        { rangeStart, rangeEnd },
+      );
+    } else if (query.year) {
+      const year = parseInt(String(query.year), 10);
+      const rangeStart = new Date(Date.UTC(year, 0, 1));
+      const rangeEnd = new Date(Date.UTC(year + 1, 0, 1));
+      qb.andWhere(
+        'bom.created_at >= :rangeStart AND bom.created_at < :rangeEnd',
+        { rangeStart, rangeEnd },
+      );
     }
   }
 
@@ -196,16 +264,38 @@ export class BomsService {
       );
     }
 
-    if (query.color?.trim()) {
+    const needsColorJoin =
+      Boolean(query.color?.trim()) || Boolean(query.search?.trim());
+    if (needsColorJoin) {
       qb.leftJoin(
         'purchase_order_product_colors',
         'popc',
         'pop.id = popc.product_id',
       );
+    }
+
+    if (query.color?.trim()) {
       qb.andWhere('popc.color_name ILIKE :colorFilter', {
         colorFilter: `%${query.color.trim()}%`,
       });
     }
+
+    if (query.search?.trim()) {
+      qb.andWhere(
+        `(
+          bom.bom_code ILIKE :search
+          OR style.style_code ILIKE :search
+          OR style.style_name ILIKE :search
+          OR po.po_code ILIKE :search
+          OR pop.product_code ILIKE :search
+          OR pop.product_name ILIKE :search
+          OR popc.color_name ILIKE :search
+        )`,
+        { search: `%${query.search.trim()}%` },
+      );
+    }
+
+    this.applyCreatedAtRangeFilter(qb, query);
 
     // ─── Sorting & Pagination ─────────────────────────────────────────────
     const sortFieldMap: Record<string, string> = {
@@ -682,48 +772,7 @@ export class BomsService {
       qb.andWhere('bom.bom_type = :type', { type: query.type });
     }
 
-    if (query.startDate && query.endDate) {
-      const start = new Date(query.startDate);
-      start.setUTCHours(0, 0, 0, 0);
-      const end = new Date(query.endDate);
-      end.setUTCHours(23, 59, 59, 999);
-      qb.andWhere('bom.created_at >= :start AND bom.created_at <= :end', {
-        start,
-        end,
-      });
-    } else if (query.startDate) {
-      const start = new Date(query.startDate);
-      start.setUTCHours(0, 0, 0, 0);
-      qb.andWhere('bom.created_at >= :start', { start });
-    } else if (query.endDate) {
-      const end = new Date(query.endDate);
-      end.setUTCHours(23, 59, 59, 999);
-      qb.andWhere('bom.created_at <= :end', { end });
-    } else if (query.month) {
-      const [yearStr, monthStr] = query.month.split('-');
-      const year = parseInt(yearStr, 10);
-      const month = parseInt(monthStr, 10);
-      const startDate = new Date(Date.UTC(year, month - 1, 1));
-      const endDate = new Date(Date.UTC(year, month, 1));
-      qb.andWhere(
-        'bom.created_at >= :startDate AND bom.created_at < :endDate',
-        {
-          startDate,
-          endDate,
-        },
-      );
-    } else if (query.year) {
-      const year = parseInt(String(query.year), 10);
-      const startDate = new Date(Date.UTC(year, 0, 1));
-      const endDate = new Date(Date.UTC(year + 1, 0, 1));
-      qb.andWhere(
-        'bom.created_at >= :startDate AND bom.created_at < :endDate',
-        {
-          startDate,
-          endDate,
-        },
-      );
-    }
+    this.applyCreatedAtRangeFilter(qb, query);
 
     const rows = await qb
       .select('bom.discontinued_at', 'discontinuedAt')
@@ -903,7 +952,7 @@ export class BomsService {
           currentRevisionId: null,
           colorNameSnapshot: null,
           deadline: dto.deadline ? new Date(dto.deadline) : null,
-          rdNote: dto.rdNote ? dto.rdNote.trim() : null,
+          rdNote: dto.rdNote ? stripHtmlTags(dto.rdNote.trim()) : null,
           discontinuedAt: null,
           discontinuedBy: null,
           discontinuedReason: null,
@@ -998,13 +1047,19 @@ export class BomsService {
       }
 
       assertCanUpdateBomHeader(roleCode, dto, bom, currentRev);
+      if (currentRev) {
+        this.assertExpectedRowVersionIfProvided(
+          currentRev,
+          dto.expectedRowVersion,
+        );
+      }
 
       if (dto.deadline !== undefined) {
         bom.deadline = dto.deadline ? new Date(dto.deadline) : null;
       }
 
       if (dto.rdNote !== undefined) {
-        bom.rdNote = dto.rdNote ? dto.rdNote.trim() : null;
+        bom.rdNote = dto.rdNote ? stripHtmlTags(dto.rdNote.trim()) : null;
       }
 
       if (currentRev) {
@@ -1143,6 +1198,10 @@ export class BomsService {
       }
 
       assertCanAddLine(userRole, bom, currentRev);
+      this.assertExpectedRowVersionIfProvided(
+        currentRev,
+        dto.expectedRowVersion,
+      );
 
       const material = await manager.findOne(Material, {
         where: { id: dto.materialId },
@@ -1288,6 +1347,10 @@ export class BomsService {
       }
 
       assertCanUpdateLine(userRole, bom, currentRev, dto);
+      this.assertExpectedRowVersionIfProvided(
+        currentRev,
+        dto.expectedRowVersion,
+      );
 
       const line = await manager.findOne(BomLine, { where: { id: lineId } });
       if (!line) {
@@ -1383,6 +1446,7 @@ export class BomsService {
   async deleteLine(
     bomId: string,
     lineId: string,
+    dto?: DeleteBomLineDto,
     _userId?: string,
     userRole?: string | null,
   ): Promise<{ success: boolean; message: string }> {
@@ -1410,6 +1474,10 @@ export class BomsService {
       }
 
       assertCanDeleteLine(userRole, bom, currentRev);
+      this.assertExpectedRowVersionIfProvided(
+        currentRev,
+        dto?.expectedRowVersion,
+      );
 
       const line = await manager.findOne(BomLine, { where: { id: lineId } });
       if (!line) {
@@ -1488,6 +1556,10 @@ export class BomsService {
       }
 
       assertCanReorderLines(userRole, bom, currentRev);
+      this.assertExpectedRowVersionIfProvided(
+        currentRev,
+        dto.expectedRowVersion,
+      );
 
       const lineIds = dto.items.map((it) => it.lineId);
       const orderIndices = dto.items.map((it) => it.orderIndex);
@@ -2347,6 +2419,11 @@ export class BomsService {
           `Chỉ có thể sao chép khi revision hiện tại của PO BOM đang ở trạng thái wait_nvkh. Trạng thái hiện tại: ${targetRev.status}`,
         );
       }
+
+      this.assertExpectedRowVersionIfProvided(
+        targetRev,
+        dto.expectedRowVersion,
+      );
 
       // 3. Prevent Accidental Overwrite: Target MUST have 0 lines
       const existingLineCount = await manager.count(BomLine, {

@@ -8,8 +8,8 @@ import { ProductionDocumentSizeRow } from './entities/ProductionDocumentSizeRow.
 import { Style } from '../styles/entities/Style.entity';
 import { StyleDocument } from '../styles/entities/StyleDocument.entity';
 import { Document } from '../documents/entities/Document.entity';
-import { BillOfMaterials } from '../boms/entities/BillOfMaterials.entity';
-import { BillOfMaterialLine } from '../boms/entities/BillOfMaterialLine.entity';
+import { Bom } from '../boms/entities/Bom.entity';
+import { BomLine } from '../boms/entities/BomLine.entity';
 import { ProductionDocStatus } from '../../common/enums/database.enums';
 import { STORAGE_SERVICE } from '../storage/storage.interface';
 
@@ -88,7 +88,7 @@ describe('StyleProductionDocsService', () => {
     };
 
     bomRepoMock = {
-      find: jest.fn().mockResolvedValue([]),
+      findOne: jest.fn().mockResolvedValue(null),
     };
 
     bomLineRepoMock = {
@@ -131,11 +131,11 @@ describe('StyleProductionDocsService', () => {
         },
         { provide: getRepositoryToken(Document), useValue: docRepoMock },
         {
-          provide: getRepositoryToken(BillOfMaterials),
+          provide: getRepositoryToken(Bom),
           useValue: bomRepoMock,
         },
         {
-          provide: getRepositoryToken(BillOfMaterialLine),
+          provide: getRepositoryToken(BomLine),
           useValue: bomLineRepoMock,
         },
         { provide: DataSource, useValue: dataSourceMock },

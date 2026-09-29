@@ -34,6 +34,7 @@ import {
   CreateBomLineDto,
   UpdateBomLineDto,
   ReorderBomLinesDto,
+  DeleteBomLineDto,
   BomLineResponseDto,
   ForwardBomDto,
   RejectBomDto,
@@ -308,11 +309,12 @@ export class BomsController {
   async deleteLine(
     @Param('id', ParseUUIDPipe) id: string,
     @Param('lineId', ParseUUIDPipe) lineId: string,
+    @Body() dto: DeleteBomLineDto,
     @Req() req?: any,
   ): Promise<{ success: boolean; message: string }> {
     const userId = req?.user?.id || req?.user?.sub;
     const roleCode = req?.user?.roleCode;
-    return this.bomsService.deleteLine(id, lineId, userId, roleCode);
+    return this.bomsService.deleteLine(id, lineId, dto, userId, roleCode);
   }
 
   @Post(':id/forward')

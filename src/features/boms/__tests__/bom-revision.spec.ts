@@ -741,7 +741,7 @@ describe('BOM V2 Revision Management + History + Detail + Diff (PR-05 Specificat
   // 6. REVISION DETAIL & COST MASKING (Section 17, 22)
   // ──────────────────────────────────────────────────────────────────────────
   describe('6. Revision Detail API & Cost Masking', () => {
-    it('masks unitCost and costPerUnit for NVKH and RD roles in revision detail', async () => {
+    it('masks unitCost and costPerUnit for NVKH, RD, and TPKH roles in revision detail', async () => {
       setupRevisionEnv();
 
       const detailNVKH = await service.getRevisionDetail(
@@ -760,16 +760,20 @@ describe('BOM V2 Revision Management + History + Detail + Diff (PR-05 Specificat
       );
       expect(detailRD.costPerUnit).toBeNull();
       expect(detailRD.lines[0].unitCost).toBeNull();
+
+      const detailTPKH = await service.getRevisionDetail(
+        mockBom.id,
+        'rev-uuid-1',
+        UserRoleCode.TPKH,
+      );
+      expect(detailTPKH.costPerUnit).toBeNull();
+      expect(detailTPKH.lines[0].unitCost).toBeNull();
     });
 
-    it('exposes full costs for TPKH, ACCOUNTING, and SA roles in revision detail', async () => {
+    it('exposes full costs for ACCOUNTING and SA roles in revision detail', async () => {
       setupRevisionEnv();
 
-      const roles = [
-        UserRoleCode.TPKH,
-        UserRoleCode.ACCOUNTING,
-        UserRoleCode.SA,
-      ];
+      const roles = [UserRoleCode.ACCOUNTING, UserRoleCode.SA];
       for (const role of roles) {
         const detail = await service.getRevisionDetail(
           mockBom.id,

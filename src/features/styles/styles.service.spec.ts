@@ -5,14 +5,23 @@ import {
   NotFoundException,
   BadRequestException,
 } from '@nestjs/common';
+import { DataSource } from 'typeorm';
 import { StylesService } from './styles.service';
 import { Style } from './entities/Style.entity';
+import { StyleDocument } from './entities/StyleDocument.entity';
+import { DraftBomFamilie } from '../draft-boms/entities/DraftBomFamilie.entity';
+import { PurchaseOrderProduct } from '../purchase-orders/entities/PurchaseOrderProduct.entity';
 import { StyleStatus } from '../../common/enums/database.enums';
 import { STORAGE_SERVICE } from '../storage/storage.interface';
 
 describe('StylesService', () => {
   let service: StylesService;
   let repositoryMock: any;
+  let draftBomFamilyRepositoryMock: any;
+  let poProductRepositoryMock: any;
+  let styleDocumentRepositoryMock: any;
+  let dataSourceMock: any;
+  let managerMock: any;
   let storageMock: any;
   const STYLE_ID = '123e4567-e89b-12d3-a456-426614174000';
 
@@ -49,6 +58,29 @@ describe('StylesService', () => {
       }),
     };
 
+    draftBomFamilyRepositoryMock = {
+      exists: jest.fn().mockResolvedValue(false),
+    };
+
+    poProductRepositoryMock = {
+      exists: jest.fn().mockResolvedValue(false),
+    };
+
+    styleDocumentRepositoryMock = {
+      find: jest.fn().mockResolvedValue([]),
+    };
+
+    managerMock = {
+      remove: jest.fn().mockResolvedValue(undefined),
+      query: jest.fn().mockResolvedValue([]),
+    };
+
+    dataSourceMock = {
+      transaction: jest
+        .fn()
+        .mockImplementation(async (cb: any) => cb(managerMock)),
+    };
+
     storageMock = {
       getPresignedPutUrl: jest.fn(),
       getPresignedGetUrl: jest.fn().mockResolvedValue('https://s3.example/get'),
@@ -68,8 +100,24 @@ describe('StylesService', () => {
           useValue: repositoryMock,
         },
         {
+          provide: getRepositoryToken(DraftBomFamilie),
+          useValue: draftBomFamilyRepositoryMock,
+        },
+        {
+          provide: getRepositoryToken(PurchaseOrderProduct),
+          useValue: poProductRepositoryMock,
+        },
+        {
+          provide: getRepositoryToken(StyleDocument),
+          useValue: styleDocumentRepositoryMock,
+        },
+        {
           provide: STORAGE_SERVICE,
           useValue: storageMock,
+        },
+        {
+          provide: DataSource,
+          useValue: dataSourceMock,
         },
       ],
     }).compile();
@@ -272,6 +320,159 @@ describe('StylesService', () => {
         expect(storageMock.deleteObject).toHaveBeenCalledWith(objectKey);
         expect(repositoryMock.save).not.toHaveBeenCalled();
       });
+    });
+  });
+
+  describe('remove', () => {
+    it('deletes the style when there is no draft BOM and no FK violation', async () => {
+      repositoryMock.findOne.mockResolvedValue({ ...mockStyle });
+
+      await service.remove(STYLE_ID);
+
+      expect(draftBomFamilyRepositoryMock.exists).toHaveBeenCalledWith({
+        where: { styleId: STYLE_ID },
+      });
+      expect(poProductRepositoryMock.exists).toHaveBeenCalledWith({
+        where: { sourceStyleId: STYLE_ID },
+      });
+      expect(managerMock.remove).toHaveBeenCalledWith(
+        Style,
+        expect.objectContaining({ id: STYLE_ID }),
+      );
+    });
+
+    it('throws ConflictException when the style has an unpromoted draft BOM', async () => {
+      repositoryMock.findOne.mockResolvedValue({ ...mockStyle });
+      draftBomFamilyRepositoryMock.exists.mockResolvedValue(true);
+
+      await expect(service.remove(STYLE_ID)).rejects.toThrow(ConflictException);
+      expect(dataSourceMock.transaction).not.toHaveBeenCalled();
+    });
+
+    it('throws ConflictException when a PO product still references this style as its copy source', async () => {
+      repositoryMock.findOne.mockResolvedValue({ ...mockStyle });
+      poProductRepositoryMock.exists.mockResolvedValue(true);
+
+      await expect(service.remove(STYLE_ID)).rejects.toThrow(ConflictException);
+      expect(dataSourceMock.transaction).not.toHaveBeenCalled();
+    });
+
+    it('throws ConflictException on a foreign-key violation (promoted BOM etc.)', async () => {
+      repositoryMock.findOne.mockResolvedValue({ ...mockStyle });
+      managerMock.remove.mockRejectedValue({ code: '23503' });
+
+      await expect(service.remove(STYLE_ID)).rejects.toThrow(ConflictException);
+    });
+
+    it('does nothing further when the style has no linked documents', async () => {
+      repositoryMock.findOne.mockResolvedValue({ ...mockStyle });
+      styleDocumentRepositoryMock.find.mockResolvedValue([]);
+
+      await service.remove(STYLE_ID);
+
+      expect(managerMock.query).not.toHaveBeenCalled();
+      expect(storageMock.deleteObject).not.toHaveBeenCalled();
+    });
+
+    it('hard-deletes a document/version and its S3 object once fully orphaned', async () => {
+      repositoryMock.findOne.mockResolvedValue({ ...mockStyle });
+      styleDocumentRepositoryMock.find.mockResolvedValue([
+        { styleId: STYLE_ID, documentId: 'doc-1' },
+      ]);
+      managerMock.query.mockImplementation((sql: string) => {
+        if (sql.includes('SELECT document_id FROM style_documents')) {
+          return Promise.resolve([]); // no other reference anywhere
+        }
+        if (sql.includes('SELECT id, document_id, storage_key')) {
+          return Promise.resolve([
+            {
+              id: 'ver-1',
+              document_id: 'doc-1',
+              storage_key: 'styles/x/documents/fit_attachment/a.pdf',
+            },
+          ]);
+        }
+        if (
+          sql.includes(
+            'SELECT document_version_id FROM product_color_card_versions',
+          )
+        ) {
+          return Promise.resolve([]); // version not referenced elsewhere either
+        }
+        return Promise.resolve([]);
+      });
+
+      await service.remove(STYLE_ID);
+
+      expect(managerMock.query).toHaveBeenCalledWith(
+        expect.stringContaining('DELETE FROM document_versions'),
+        [['doc-1']],
+      );
+      expect(managerMock.query).toHaveBeenCalledWith(
+        expect.stringContaining('DELETE FROM documents'),
+        [['doc-1']],
+      );
+      expect(storageMock.deleteObject).toHaveBeenCalledWith(
+        'styles/x/documents/fit_attachment/a.pdf',
+      );
+    });
+
+    it('does not delete a document still referenced by another style/PO/folder', async () => {
+      repositoryMock.findOne.mockResolvedValue({ ...mockStyle });
+      styleDocumentRepositoryMock.find.mockResolvedValue([
+        { styleId: STYLE_ID, documentId: 'doc-shared' },
+      ]);
+      managerMock.query.mockImplementation((sql: string) => {
+        if (sql.includes('SELECT document_id FROM style_documents')) {
+          return Promise.resolve([{ document_id: 'doc-shared' }]); // still linked elsewhere
+        }
+        return Promise.resolve([]);
+      });
+
+      await service.remove(STYLE_ID);
+
+      expect(managerMock.query).not.toHaveBeenCalledWith(
+        expect.stringContaining('DELETE FROM documents'),
+        expect.anything(),
+      );
+      expect(storageMock.deleteObject).not.toHaveBeenCalled();
+    });
+
+    it('does not delete a document whose version is still referenced (e.g. a sample image)', async () => {
+      repositoryMock.findOne.mockResolvedValue({ ...mockStyle });
+      styleDocumentRepositoryMock.find.mockResolvedValue([
+        { styleId: STYLE_ID, documentId: 'doc-2' },
+      ]);
+      managerMock.query.mockImplementation((sql: string) => {
+        if (sql.includes('SELECT document_id FROM style_documents')) {
+          return Promise.resolve([]);
+        }
+        if (sql.includes('SELECT id, document_id, storage_key')) {
+          return Promise.resolve([
+            {
+              id: 'ver-2',
+              document_id: 'doc-2',
+              storage_key: 'styles/x/documents/fit_attachment/b.pdf',
+            },
+          ]);
+        }
+        if (
+          sql.includes(
+            'SELECT document_version_id FROM product_color_card_versions',
+          )
+        ) {
+          return Promise.resolve([{ document_version_id: 'ver-2' }]); // still referenced
+        }
+        return Promise.resolve([]);
+      });
+
+      await service.remove(STYLE_ID);
+
+      expect(managerMock.query).not.toHaveBeenCalledWith(
+        expect.stringContaining('DELETE FROM documents'),
+        expect.anything(),
+      );
+      expect(storageMock.deleteObject).not.toHaveBeenCalled();
     });
   });
 });

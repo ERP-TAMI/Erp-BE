@@ -1,7 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
-import { NotFoundException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { StyleOperationStepsService } from '../style-operation-steps.service';
 import { StyleOperationStep } from '../entities/StyleOperationStep.entity';
 import { Style } from '../entities/Style.entity';
@@ -143,6 +143,16 @@ describe('StyleOperationStepsService', () => {
         service.create('invalid-id', { stepName: 'Test' }),
       ).rejects.toThrow(NotFoundException);
     });
+
+    it('should throw BadRequestException if stageId does not exist', async () => {
+      stepRepoMock.query.mockResolvedValue([]);
+      await expect(
+        service.create(mockStyleId, {
+          stepName: 'Test',
+          stageId: 'non-existing-stage',
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
   });
 
   describe('createMany (bulk save / replace)', () => {
@@ -193,13 +203,47 @@ describe('StyleOperationStepsService', () => {
       expect(result[1].id).not.toBe('child-1787700099');
       expect(result[1].parentStepId).toBe(result[0].id);
     });
+
+    it('should reject the whole batch (not silently null it out) when a step references a non-existing stageId', async () => {
+      const steps = [
+        {
+          stepName: 'Cắt',
+          timePerPiece: 10,
+          ssv: 10,
+          orderIndex: 0,
+          stageId: 'non-existing-stage-id',
+        },
+      ];
+
+      await expect(
+        service.createMany(mockStyleId, steps as any),
+      ).rejects.toThrow(BadRequestException);
+      // Must not have gone on to save a row with the reference silently dropped.
+      expect(stepRepoMock.save).not.toHaveBeenCalled();
+    });
+
+    it('should reject the whole batch when a step references a non-existing groupId', async () => {
+      const steps = [
+        {
+          stepName: 'Nhóm vắt sổ',
+          isGroup: true,
+          orderIndex: 0,
+          groupId: 'non-existing-group-id',
+        },
+      ];
+
+      await expect(
+        service.createMany(mockStyleId, steps as any),
+      ).rejects.toThrow(BadRequestException);
+      expect(stepRepoMock.save).not.toHaveBeenCalled();
+    });
   });
 
   describe('update', () => {
     it('should update step successfully', async () => {
       stepRepoMock.findOne.mockResolvedValue({ ...mockStep });
 
-      const updated = await service.update(mockStepId, {
+      const updated = await service.update(mockStyleId, mockStepId, {
         stepName: 'Cắt vải chuẩn',
         timePerPiece: 18,
       });
@@ -212,8 +256,39 @@ describe('StyleOperationStepsService', () => {
     it('should throw NotFoundException if step does not exist', async () => {
       stepRepoMock.findOne.mockResolvedValue(null);
       await expect(
-        service.update('non-existing-step', { stepName: 'Abc' }),
+        service.update(mockStyleId, 'non-existing-step', { stepName: 'Abc' }),
       ).rejects.toThrow(NotFoundException);
+    });
+
+    it('should throw NotFoundException if step belongs to a different style', async () => {
+      stepRepoMock.findOne.mockResolvedValue({
+        ...mockStep,
+        styleId: 'some-other-style-id',
+      });
+      await expect(
+        service.update(mockStyleId, mockStepId, { stepName: 'Abc' }),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('should throw BadRequestException if stageId does not exist', async () => {
+      stepRepoMock.findOne.mockResolvedValue({ ...mockStep });
+      stepRepoMock.query.mockResolvedValue([]);
+      await expect(
+        service.update(mockStyleId, mockStepId, {
+          stageId: 'non-existing-stage',
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('should throw BadRequestException if parentStepId does not exist', async () => {
+      stepRepoMock.findOne
+        .mockResolvedValueOnce({ ...mockStep }) // findOwnedStep
+        .mockResolvedValueOnce(null); // parent lookup
+      await expect(
+        service.update(mockStyleId, mockStepId, {
+          parentStepId: 'non-existing-parent',
+        }),
+      ).rejects.toThrow(BadRequestException);
     });
   });
 
@@ -221,7 +296,7 @@ describe('StyleOperationStepsService', () => {
     it('should remove a single step', async () => {
       stepRepoMock.findOne.mockResolvedValue({ ...mockStep, isGroup: false });
 
-      await service.remove(mockStepId);
+      await service.remove(mockStyleId, mockStepId);
 
       expect(stepRepoMock.remove).toHaveBeenCalled();
     });
@@ -229,7 +304,7 @@ describe('StyleOperationStepsService', () => {
     it('should cascade delete children when removing a group step', async () => {
       stepRepoMock.findOne.mockResolvedValue({ ...mockStep, isGroup: true });
 
-      await service.remove(mockStepId);
+      await service.remove(mockStyleId, mockStepId);
 
       expect(stepRepoMock.delete).toHaveBeenCalledWith({
         parentStepId: mockStepId,
@@ -239,33 +314,17 @@ describe('StyleOperationStepsService', () => {
 
     it('should throw NotFoundException if step to remove does not exist', async () => {
       stepRepoMock.findOne.mockResolvedValue(null);
-      await expect(service.remove('non-existing-step')).rejects.toThrow(
-        NotFoundException,
-      );
-    });
-  });
-
-  describe('reorder', () => {
-    it('should update orderIndex for ordered step IDs', async () => {
-      const orderedIds = ['id-1', 'id-2', 'id-3'];
-
-      await service.reorder(mockStyleId, orderedIds);
-
-      expect(stepRepoMock.update).toHaveBeenCalledTimes(3);
-      expect(stepRepoMock.update).toHaveBeenNthCalledWith(1, 'id-1', {
-        orderIndex: 0,
-      });
-      expect(stepRepoMock.update).toHaveBeenNthCalledWith(2, 'id-2', {
-        orderIndex: 1,
-      });
-      expect(stepRepoMock.update).toHaveBeenNthCalledWith(3, 'id-3', {
-        orderIndex: 2,
-      });
+      await expect(
+        service.remove(mockStyleId, 'non-existing-step'),
+      ).rejects.toThrow(NotFoundException);
     });
 
-    it('should throw NotFoundException if style does not exist during reorder', async () => {
-      styleRepoMock.findOne.mockResolvedValue(null);
-      await expect(service.reorder('invalid-id', ['id-1'])).rejects.toThrow(
+    it('should throw NotFoundException if step to remove belongs to a different style', async () => {
+      stepRepoMock.findOne.mockResolvedValue({
+        ...mockStep,
+        styleId: 'some-other-style-id',
+      });
+      await expect(service.remove(mockStyleId, mockStepId)).rejects.toThrow(
         NotFoundException,
       );
     });

@@ -6,7 +6,7 @@ import { PurchaseOrderProductColorSize } from '../purchase-orders/entities/Purch
 import { PurchaseOrderProductColor } from '../purchase-orders/entities/PurchaseOrderProductColor.entity';
 import { BomType } from '../../common/enums/database.enums';
 
-export const COST_VISIBLE_ROLES = new Set(['SA', 'TPKH', 'ACCOUNTING']);
+export const COST_VISIBLE_ROLES = new Set(['SA', 'ACCOUNTING']);
 
 @Injectable()
 export class BomCostService {
@@ -21,8 +21,8 @@ export class BomCostService {
 
   /**
    * Checks if the given user role code is authorized to view costs.
-   * Authorized roles: SA, TPKH, ACCOUNTING.
-   * Unauthorized roles: NVKH, RD, IT, etc.
+   * Authorized roles: SA, ACCOUNTING.
+   * Unauthorized roles: NVKH, RD, TPKH, IT, etc.
    */
   isCostVisible(roleCode?: string | null): boolean {
     if (!roleCode) return false;

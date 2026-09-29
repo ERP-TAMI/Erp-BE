@@ -1,4 +1,12 @@
-import { IsEnum, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
+import {
+  IsEnum,
+  IsInt,
+  IsOptional,
+  IsString,
+  Matches,
+  Max,
+  Min,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { BomType } from '../../../common/enums/database.enums';
@@ -46,6 +54,49 @@ export class QueryBomsDto {
   @IsOptional()
   @IsString()
   color?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Free-text search across BOM code, style code/name, PO code, product code/name, and color (matches any one)',
+  })
+  @IsOptional()
+  @IsString()
+  search?: string;
+
+  @ApiPropertyOptional({
+    description: 'Filter by created-at month, in YYYY-MM format',
+    example: '2026-09',
+  })
+  @IsOptional()
+  @IsString()
+  @Matches(/^\d{4}-\d{2}$/, {
+    message: 'month must be in YYYY-MM format (e.g. 2026-09)',
+  })
+  month?: string;
+
+  @ApiPropertyOptional({
+    description: 'Filter by created-at year (e.g. 2026)',
+    example: '2026',
+  })
+  @IsOptional()
+  @IsString()
+  year?: string;
+
+  @ApiPropertyOptional({
+    description: 'Filter by created-at from date (YYYY-MM-DD)',
+    example: '2026-09-01',
+  })
+  @IsOptional()
+  @IsString()
+  startDate?: string;
+
+  @ApiPropertyOptional({
+    description: 'Filter by created-at to date (YYYY-MM-DD)',
+    example: '2026-09-30',
+  })
+  @IsOptional()
+  @IsString()
+  endDate?: string;
 
   @ApiPropertyOptional({ description: 'Page number', default: 1 })
   @IsOptional()

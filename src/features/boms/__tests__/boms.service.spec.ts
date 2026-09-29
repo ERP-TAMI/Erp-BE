@@ -245,6 +245,103 @@ describe('BomsService (Read Model & Anti N+1 Tests)', () => {
       ]);
     });
 
+    it('search: ORs across bom code/style/PO/product/color in one clause and joins colors only once', async () => {
+      const qbMock = {
+        leftJoin: jest.fn().mockReturnThis(),
+        leftJoinAndSelect: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        addOrderBy: jest.fn().mockReturnThis(),
+        skip: jest.fn().mockReturnThis(),
+        take: jest.fn().mockReturnThis(),
+        getManyAndCount: jest.fn().mockResolvedValue([[], 0]),
+      };
+      bomRepoMock.createQueryBuilder.mockReturnValue(qbMock);
+
+      await service.findAll({ search: 'cotton' }, 'SA');
+
+      // Guards against double-joining 'popc' when both `color` and `search`
+      // would otherwise each try to add the same left join independently.
+      const colorJoinCalls = qbMock.leftJoin.mock.calls.filter(
+        ([table]) => table === 'purchase_order_product_colors',
+      );
+      expect(colorJoinCalls).toHaveLength(1);
+
+      const searchWhereCall = qbMock.andWhere.mock.calls.find(
+        ([sql]) =>
+          typeof sql === 'string' && sql.includes('bom.bom_code ILIKE :search'),
+      );
+      expect(searchWhereCall).toBeDefined();
+      expect(searchWhereCall?.[1]).toEqual({ search: '%cotton%' });
+      expect(searchWhereCall?.[0]).toEqual(
+        expect.stringContaining('style.style_code ILIKE :search'),
+      );
+      expect(searchWhereCall?.[0]).toEqual(
+        expect.stringContaining('po.po_code ILIKE :search'),
+      );
+      expect(searchWhereCall?.[0]).toEqual(
+        expect.stringContaining('pop.product_code ILIKE :search'),
+      );
+      expect(searchWhereCall?.[0]).toEqual(
+        expect.stringContaining('popc.color_name ILIKE :search'),
+      );
+    });
+
+    it('month filter: narrows the list to BOMs created within that calendar month', async () => {
+      const qbMock = {
+        leftJoin: jest.fn().mockReturnThis(),
+        leftJoinAndSelect: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        addOrderBy: jest.fn().mockReturnThis(),
+        skip: jest.fn().mockReturnThis(),
+        take: jest.fn().mockReturnThis(),
+        getManyAndCount: jest.fn().mockResolvedValue([[], 0]),
+      };
+      bomRepoMock.createQueryBuilder.mockReturnValue(qbMock);
+
+      await service.findAll({ month: '2026-09' }, 'SA');
+
+      const rangeCall = qbMock.andWhere.mock.calls.find(
+        ([sql]) =>
+          typeof sql === 'string' &&
+          sql.includes('bom.created_at >= :rangeStart'),
+      );
+      expect(rangeCall).toBeDefined();
+      expect(rangeCall?.[1]).toEqual({
+        rangeStart: new Date(Date.UTC(2026, 8, 1)),
+        rangeEnd: new Date(Date.UTC(2026, 9, 1)),
+      });
+    });
+
+    it('startDate/endDate filter takes priority over month/year on the list endpoint', async () => {
+      const qbMock = {
+        leftJoin: jest.fn().mockReturnThis(),
+        leftJoinAndSelect: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        addOrderBy: jest.fn().mockReturnThis(),
+        skip: jest.fn().mockReturnThis(),
+        take: jest.fn().mockReturnThis(),
+        getManyAndCount: jest.fn().mockResolvedValue([[], 0]),
+      };
+      bomRepoMock.createQueryBuilder.mockReturnValue(qbMock);
+
+      await service.findAll(
+        { month: '2026-01', startDate: '2026-09-01', endDate: '2026-09-30' },
+        'SA',
+      );
+
+      const rangeCalls = qbMock.andWhere.mock.calls.filter(
+        ([sql]) => typeof sql === 'string' && sql.includes('bom.created_at >='),
+      );
+      expect(rangeCalls).toHaveLength(1);
+      expect(rangeCalls[0][1]).toEqual({
+        rangeStart: new Date(Date.UTC(2026, 8, 1, 0, 0, 0, 0)),
+        rangeEnd: new Date(Date.UTC(2026, 8, 30, 23, 59, 59, 999)),
+      });
+    });
+
     it('masks cost fields to null for NVKH and RD roles in list endpoint', async () => {
       const mockBomPo = new Bom();
       mockBomPo.id = 'bom-po-1';
@@ -326,7 +423,7 @@ describe('BomsService (Read Model & Anti N+1 Tests)', () => {
       // Repository returns lines ordered by orderIndex
       bomLineRepoMock.find.mockResolvedValue([line2, line1]);
 
-      const result = await service.findOne('fit-uuid', 'TPKH');
+      const result = await service.findOne('fit-uuid', 'SA');
 
       expect(result.id).toBe('fit-uuid');
       expect(result.type).toBe(BomType.FIT);

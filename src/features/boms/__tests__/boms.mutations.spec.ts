@@ -574,6 +574,28 @@ describe('BOM Mutations: Create, Update Header, Discontinue (PR-02 Specification
       );
     });
 
+    it('strips HTML/script tags from rdNote before saving (defense in depth)', async () => {
+      const bom = new Bom();
+      bom.id = 'bom-rd-xss';
+      bom.discontinuedAt = null;
+      bom.rdNote = null;
+      bom.rowVersion = 1;
+
+      const saveMock = setupHeaderTxMock(bom, null);
+
+      await service.update(
+        'bom-rd-xss',
+        { rdNote: '<script>alert(1)</script>Ghi chú thật' },
+        'rd-user',
+        'RD',
+      );
+
+      expect(saveMock).toHaveBeenCalledWith(
+        Bom,
+        expect.objectContaining({ rdNote: 'alert(1)Ghi chú thật' }),
+      );
+    });
+
     it('28. rejects NVKH updating rdNote (ForbiddenException)', async () => {
       const bom = new Bom();
       bom.id = 'bom-1';
@@ -642,6 +664,55 @@ describe('BOM Mutations: Create, Update Header, Discontinue (PR-02 Specification
           'TPKH',
         ),
       ).rejects.toThrow(NotFoundException);
+    });
+
+    it('accepts a header update whose expectedRowVersion matches the current revision', async () => {
+      const bom = new Bom();
+      bom.id = 'bom-locked';
+      bom.discontinuedAt = null;
+      bom.currentRevisionId = 'rev-locked';
+      bom.rowVersion = 1;
+
+      const rev = new BomRevision();
+      rev.id = 'rev-locked';
+      rev.rowVersion = 5;
+
+      const saveMock = setupHeaderTxMock(bom, rev);
+
+      await service.update(
+        'bom-locked',
+        { rdNote: 'Updated with correct version', expectedRowVersion: 5 },
+        'user-id',
+        'TPKH',
+      );
+
+      expect(saveMock).toHaveBeenCalledWith(
+        Bom,
+        expect.objectContaining({ rdNote: 'Updated with correct version' }),
+      );
+    });
+
+    it('rejects a header update whose expectedRowVersion no longer matches (409 Conflict)', async () => {
+      const bom = new Bom();
+      bom.id = 'bom-locked';
+      bom.discontinuedAt = null;
+      bom.currentRevisionId = 'rev-locked';
+      bom.rowVersion = 1;
+
+      const rev = new BomRevision();
+      rev.id = 'rev-locked';
+      rev.rowVersion = 5;
+
+      setupHeaderTxMock(bom, rev);
+
+      await expect(
+        service.update(
+          'bom-locked',
+          { rdNote: 'Stale write', expectedRowVersion: 4 },
+          'user-id',
+          'TPKH',
+        ),
+      ).rejects.toThrow(ConflictException);
     });
 
     it('45-47. rejects line mutation on a CLOSED revision with BadRequestException (not ForbiddenException)', async () => {

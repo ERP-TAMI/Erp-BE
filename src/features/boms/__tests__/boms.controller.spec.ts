@@ -21,7 +21,7 @@ describe('BomsController (HTTP API & Role Masking)', () => {
   beforeEach(async () => {
     bomsServiceMock = {
       findAll: jest.fn().mockImplementation((query, roleCode) => {
-        const isCostVisible = ['SA', 'TPKH', 'ACCOUNTING'].includes(
+        const isCostVisible = ['SA', 'ACCOUNTING'].includes(
           roleCode?.toUpperCase(),
         );
         return Promise.resolve({
@@ -41,7 +41,7 @@ describe('BomsController (HTTP API & Role Masking)', () => {
         });
       }),
       findOne: jest.fn().mockImplementation((id, roleCode) => {
-        const isCostVisible = ['SA', 'TPKH', 'ACCOUNTING'].includes(
+        const isCostVisible = ['SA', 'ACCOUNTING'].includes(
           roleCode?.toUpperCase(),
         );
         return Promise.resolve({
@@ -264,7 +264,7 @@ describe('BomsController (HTTP API & Role Masking)', () => {
 
     bomAggregateServiceMock = {
       aggregate: jest.fn().mockImplementation((query, userRole) => {
-        const isCostVisible = ['SA', 'TPKH', 'ACCOUNTING'].includes(userRole);
+        const isCostVisible = ['SA', 'ACCOUNTING'].includes(userRole);
         return Promise.resolve({
           data: [
             {
@@ -359,15 +359,15 @@ describe('BomsController (HTTP API & Role Masking)', () => {
       );
     });
 
-    it('returns 200 with cost information when user is TPKH', async () => {
+    it('masks cost fields to null when user is TPKH', async () => {
       currentUser = { id: 'tpkh-id', roleCode: 'TPKH' };
 
       const res = await request(app.getHttpServer())
         .get('/api/v1/boms')
         .expect(200);
 
-      expect(res.body.data[0].costPerUnit).toBe(55);
-      expect(res.body.data[0].currentOrderCost).toBe(11000);
+      expect(res.body.data[0].costPerUnit).toBeNull();
+      expect(res.body.data[0].currentOrderCost).toBeNull();
       expect(bomsServiceMock.findAll).toHaveBeenCalledWith(
         expect.any(Object),
         'TPKH',
@@ -443,7 +443,7 @@ describe('BomsController (HTTP API & Role Masking)', () => {
   describe('GET /api/v1/boms/:id', () => {
     const validUuid = '123e4567-e89b-12d3-a456-426614174000';
 
-    it('returns 200 with full costs and line unit_cost when user is TPKH', async () => {
+    it('masks header and line cost fields when user is TPKH', async () => {
       currentUser = { id: 'tpkh-id', roleCode: 'TPKH' };
 
       const res = await request(app.getHttpServer())
@@ -451,10 +451,10 @@ describe('BomsController (HTTP API & Role Masking)', () => {
         .expect(200);
 
       expect(res.body.id).toBe(validUuid);
-      expect(res.body.costPerUnit).toBe(55);
-      expect(res.body.currentOrderCost).toBe(11000);
-      expect(res.body.lines[0].unitCost).toBe(27.5);
-      expect(res.body.lines[0].lineCost).toBe(55);
+      expect(res.body.costPerUnit).toBeNull();
+      expect(res.body.currentOrderCost).toBeNull();
+      expect(res.body.lines[0].unitCost).toBeNull();
+      expect(res.body.lines[0].lineCost).toBeNull();
     });
 
     it('masks header and line cost fields when user is NVKH', async () => {
@@ -792,6 +792,7 @@ describe('BomsController (HTTP API & Role Masking)', () => {
       expect(bomsServiceMock.deleteLine).toHaveBeenCalledWith(
         validBomId,
         validLineId,
+        {},
         'tpkh-id',
         'TPKH',
       );
@@ -1154,7 +1155,7 @@ describe('BomsController (HTTP API & Role Masking)', () => {
   // 20. GET /api/v1/boms/aggregate (NPL Aggregate)
   // ──────────────────────────────────────────────────────────────────────────
   describe('GET /api/v1/boms/aggregate', () => {
-    it('returns 200 with NPL aggregate items and cost when role is TPKH', async () => {
+    it('masks cost fields to null when role is TPKH (breakdown still visible)', async () => {
       currentUser = { id: 'tpkh-id', roleCode: 'TPKH' };
 
       const res = await request(app.getHttpServer())
@@ -1164,8 +1165,8 @@ describe('BomsController (HTTP API & Role Masking)', () => {
 
       expect(res.body.data.length).toBe(1);
       expect(res.body.data[0].totalRequiredQuantity).toBe(2500);
-      expect(res.body.data[0].totalEstimatedCost).toBe(300000000);
-      expect(res.body.data[0].unitCost).toBe(120000);
+      expect(res.body.data[0].totalEstimatedCost).toBeNull();
+      expect(res.body.data[0].unitCost).toBeNull();
       expect(res.body.data[0].breakdown).toBeDefined();
       expect(bomAggregateServiceMock.aggregate).toHaveBeenCalledWith(
         expect.objectContaining({ page: 1, limit: 10, breakdown: 'color' }),

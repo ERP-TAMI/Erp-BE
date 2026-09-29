@@ -13,6 +13,7 @@ import {
 } from '@nestjs/common';
 import { ApiOperation, ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { Auth } from '../../common/decorators/auth.decorator';
+import { Permission } from '../../common/decorators/permission.decorator';
 import {
   StyleDocumentListItem,
   StyleDocumentsService,
@@ -22,14 +23,18 @@ import {
 import { PresignStyleDocumentDto } from './dto/presign-style-document.dto';
 import { ConfirmStyleDocumentDto } from './dto/confirm-style-document.dto';
 
+const VIEW_PERMISSION = 'master_data.styles.view';
+const MANAGE_PERMISSION = 'master_data.styles.manage';
+
 @ApiTags('style-documents')
 @ApiBearerAuth()
-@Auth()
+@Auth(VIEW_PERMISSION)
 @Controller('styles/:styleId/documents')
 export class StyleDocumentsController {
   constructor(private readonly service: StyleDocumentsService) {}
 
   @Post('presign')
+  @Permission(MANAGE_PERMISSION)
   @ApiOperation({ summary: 'Xin presigned URL để upload tài liệu vào mẫu Fit' })
   async presign(
     @Param('styleId', ParseUUIDPipe) styleId: string,
@@ -39,6 +44,7 @@ export class StyleDocumentsController {
   }
 
   @Post('confirm')
+  @Permission(MANAGE_PERMISSION)
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
     summary: 'Xác nhận đã upload xong, ghi tài liệu vào mẫu Fit',
@@ -71,6 +77,7 @@ export class StyleDocumentsController {
   }
 
   @Delete(':documentId')
+  @Permission(MANAGE_PERMISSION)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Gỡ tài liệu khỏi mẫu Fit (không xoá file gốc)' })
   async remove(

@@ -1,13 +1,14 @@
 import {
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
   BadRequestException,
   ForbiddenException,
   ConflictException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, In, Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 import * as ExcelJS from 'exceljs';
 import axios from 'axios';
 import { imageSize } from 'image-size';
@@ -18,11 +19,12 @@ import { ProductionDocumentSizeRow } from './entities/ProductionDocumentSizeRow.
 import { Style } from '../styles/entities/Style.entity';
 import { StyleDocument } from '../styles/entities/StyleDocument.entity';
 import { Document } from '../documents/entities/Document.entity';
-import { BillOfMaterials } from '../boms/entities/BillOfMaterials.entity';
-import { BillOfMaterialLine } from '../boms/entities/BillOfMaterialLine.entity';
+import { Bom } from '../boms/entities/Bom.entity';
+import { BomLine } from '../boms/entities/BomLine.entity';
 import {
   ProductionDocStatus,
   DocumentPurpose,
+  BomType,
 } from '../../common/enums/database.enums';
 import {
   CreateStyleProductionDocDto,
@@ -82,6 +84,8 @@ export interface StyleProductionDocDetailResponse {
 
 @Injectable()
 export class StyleProductionDocsService {
+  private readonly logger = new Logger(StyleProductionDocsService.name);
+
   constructor(
     @InjectRepository(ProductionDocument)
     private readonly prodDocRepo: Repository<ProductionDocument>,
@@ -95,38 +99,28 @@ export class StyleProductionDocsService {
     private readonly styleDocRepo: Repository<StyleDocument>,
     @InjectRepository(Document)
     private readonly docRepo: Repository<Document>,
-    @InjectRepository(BillOfMaterials)
-    private readonly bomRepo: Repository<BillOfMaterials>,
-    @InjectRepository(BillOfMaterialLine)
-    private readonly bomLineRepo: Repository<BillOfMaterialLine>,
+    @InjectRepository(Bom)
+    private readonly bomRepo: Repository<Bom>,
+    @InjectRepository(BomLine)
+    private readonly bomLineRepo: Repository<BomLine>,
     @Inject(STORAGE_SERVICE)
     private readonly storage: StorageService,
     private readonly dataSource: DataSource,
   ) {}
 
   /**
-   * Deduplicate & sort material names from active BOMs for a style.
+   * Deduplicate & sort material names from the style's Fit BOM (bom_type='fit'),
+   * regardless of the current revision's approval status.
    */
-  private async getActiveBomMaterialCodes(
-    styleCode: string,
-  ): Promise<string[]> {
-    const boms = await this.bomRepo.find({
-      where: [
-        { poCodeSnapshot: styleCode },
-        { productCodeSnapshot: styleCode },
-      ],
+  private async getActiveBomMaterialCodes(styleId: string): Promise<string[]> {
+    const bom = await this.bomRepo.findOne({
+      where: { styleId, bomType: BomType.FIT },
     });
 
-    if (!boms.length) return [];
-
-    const revisionIds = boms
-      .map((b) => b.currentRevisionId)
-      .filter((id): id is string => Boolean(id));
-
-    if (!revisionIds.length) return [];
+    if (!bom?.currentRevisionId) return [];
 
     const lines = await this.bomLineRepo.find({
-      where: { revisionId: In(revisionIds) },
+      where: { revisionId: bom.currentRevisionId },
     });
 
     const codes = new Set<string>();
@@ -230,7 +224,7 @@ export class StyleProductionDocsService {
     const section1Description =
       dto.section1Description?.trim() || style.description || null;
 
-    const materialCodes = await this.getActiveBomMaterialCodes(style.styleCode);
+    const materialCodes = await this.getActiveBomMaterialCodes(style.id);
     const section2Accessories =
       dto.section2Accessories?.trim() ||
       (materialCodes.length > 0 ? materialCodes.join('\n') : null);
@@ -366,6 +360,17 @@ export class StyleProductionDocsService {
 
     const sectionsToSync = options?.sections ?? ['section1', 'section2'];
 
+    const hasExistingContent =
+      (sectionsToSync.includes('section1') &&
+        (doc.section1Description != null || doc.section1ImageUrl != null)) ||
+      (sectionsToSync.includes('section2') && doc.section2Accessories != null);
+
+    if (hasExistingContent && !options?.confirmOverwrite) {
+      throw new ConflictException(
+        'Tài liệu sản xuất đã có nội dung ở mục sắp đồng bộ. Vui lòng xác nhận ghi đè (confirmOverwrite=true).',
+      );
+    }
+
     if (sectionsToSync.includes('section1')) {
       doc.section1ImageUrl = style.baseImageKey ?? null;
       doc.section1Description = style.description
@@ -374,9 +379,7 @@ export class StyleProductionDocsService {
     }
 
     if (sectionsToSync.includes('section2')) {
-      const materialCodes = await this.getActiveBomMaterialCodes(
-        style.styleCode,
-      );
+      const materialCodes = await this.getActiveBomMaterialCodes(style.id);
       doc.section2Accessories =
         materialCodes.length > 0 ? materialCodes.join('\n') : null;
     }
@@ -464,6 +467,11 @@ export class StyleProductionDocsService {
       order: { createdAt: 'DESC' },
     });
     const existingTargetDoc = existingTargetDocs[0] ?? null;
+    const existingTargetSections = existingTargetDoc
+      ? await this.sectionRepo.find({
+          where: { productionDocumentId: existingTargetDoc.id, isFixed: false },
+        })
+      : [];
 
     if (existingTargetDoc) {
       const hasContent =
@@ -472,7 +480,8 @@ export class StyleProductionDocsService {
         existingTargetDoc.section2Accessories != null ||
         existingTargetDoc.section3Notes != null ||
         existingTargetDoc.section4CustomerFeedback != null ||
-        existingTargetDoc.sizeData != null;
+        existingTargetDoc.sizeData != null ||
+        existingTargetSections.length > 0;
 
       if (hasContent && !confirmOverwrite) {
         throw new ConflictException(
@@ -515,20 +524,53 @@ export class StyleProductionDocsService {
     targetData.copiedFromStyleId = sourceDoc.styleId;
     targetData.copiedAt = new Date();
 
-    let targetDoc: ProductionDocument;
-    if (existingTargetDoc) {
-      Object.assign(existingTargetDoc, targetData);
-      targetDoc = await this.prodDocRepo.save(existingTargetDoc);
-    } else {
-      const newDoc = this.prodDocRepo.create({
-        ...targetData,
-        styleId: targetStyleId,
-        name: sourceDoc.name,
-        description: sourceDoc.description,
-        status: ProductionDocStatus.DRAFT,
-      });
-      targetDoc = await this.prodDocRepo.save(newDoc);
-    }
+    const targetDoc = await this.dataSource.transaction(async (manager) => {
+      const prodDocRepo = manager.getRepository(ProductionDocument);
+      const sectionRepo = manager.getRepository(ProductionDocumentSection);
+
+      let targetDoc: ProductionDocument;
+      if (existingTargetDoc) {
+        Object.assign(existingTargetDoc, targetData);
+        targetDoc = await prodDocRepo.save(existingTargetDoc);
+      } else {
+        const newDoc = prodDocRepo.create({
+          ...targetData,
+          styleId: targetStyleId,
+          name: sourceDoc.name,
+          description: sourceDoc.description,
+          status: ProductionDocStatus.DRAFT,
+        });
+        targetDoc = await prodDocRepo.save(newDoc);
+      }
+
+      if (!excludedSet.has('sections')) {
+        if (existingTargetSections.length > 0) {
+          await sectionRepo.remove(existingTargetSections);
+        }
+
+        const sourceSections = await sectionRepo.find({
+          where: { productionDocumentId: sourceDocId, isFixed: false },
+          order: { orderIndex: 'ASC' },
+        });
+
+        if (sourceSections.length > 0) {
+          const clonedSections = sourceSections.map((s) =>
+            sectionRepo.create({
+              productionDocumentId: targetDoc.id,
+              sectionCode: s.sectionCode,
+              title: s.title,
+              content: s.content,
+              imageGroups: s.imageGroups,
+              orderIndex: s.orderIndex,
+              isFixed: false,
+            }),
+          );
+          await sectionRepo.save(clonedSections);
+        }
+      }
+
+      return targetDoc;
+    });
 
     return this.buildDetailResponse(targetDoc);
   }
@@ -741,6 +783,8 @@ export class StyleProductionDocsService {
       });
       doc = freshDoc || (created as any);
     }
+
+    const skippedImages: string[] = [];
 
     const WorkbookClass =
       (ExcelJS as any).Workbook ||
@@ -1036,6 +1080,12 @@ export class StyleProductionDocsService {
     const sketchImgUrl = doc.section1ImageUrl || style.baseImageKey;
     if (sketchImgUrl) {
       const imgRes = await this.getImageBuffer(sketchImgUrl);
+      if (!imgRes) {
+        this.logger.warn(
+          `Export Excel: không tải được ảnh mô tả hình dáng (Section 1) — style ${styleId}, key ${sketchImgUrl}`,
+        );
+        skippedImages.push('Ảnh mô tả hình dáng (Section 1)');
+      }
       if (imgRes) {
         try {
           const imgId = wb.addImage({
@@ -1046,8 +1096,11 @@ export class StyleProductionDocsService {
             tl: { col: 0, row: areaStart - 1 } as any,
             br: { col: 2, row: areaEnd } as any,
           });
-        } catch {
-          /* skip image embed error */
+        } catch (err) {
+          this.logger.warn(
+            `Export Excel: bỏ qua ảnh mô tả hình dáng (Section 1) do lỗi nhúng — style ${styleId}, key ${sketchImgUrl}: ${err}`,
+          );
+          skippedImages.push('Ảnh mô tả hình dáng (Section 1)');
         }
       }
     }
@@ -1110,9 +1163,15 @@ export class StyleProductionDocsService {
     );
     const FULL_SIZE_IMAGE_TOP_PADDING_PX = 8;
     let embeddedCount = 0;
-    for (const imgUrl of sizeImages) {
+    for (const [imgIndex, imgUrl] of sizeImages.entries()) {
       const imgRes = await this.getImageBuffer(imgUrl);
-      if (!imgRes) continue;
+      if (!imgRes) {
+        this.logger.warn(
+          `Export Excel: không tải được ảnh thông số Full Size #${imgIndex + 1} — style ${styleId}, key ${imgUrl}`,
+        );
+        skippedImages.push(`Ảnh thông số Full Size #${imgIndex + 1}`);
+        continue;
+      }
       try {
         const dims = imageSize(imgRes.buffer);
         const origW = dims.width ?? FULL_SIZE_FRAME_W_PX;
@@ -1159,8 +1218,11 @@ export class StyleProductionDocsService {
         } as any);
         row = endR + 1;
         embeddedCount++;
-      } catch {
-        /* skip image embed error */
+      } catch (err) {
+        this.logger.warn(
+          `Export Excel: bỏ qua ảnh thông số Full Size #${imgIndex + 1} do lỗi nhúng — style ${styleId}, key ${imgUrl}: ${err}`,
+        );
+        skippedImages.push(`Ảnh thông số Full Size #${imgIndex + 1}`);
       }
     }
 
@@ -1216,6 +1278,7 @@ export class StyleProductionDocsService {
       imageGroups: ReturnType<
         StyleProductionDocsService['normalizeImageGroups']
       >,
+      sectionLabel: string,
     ) => {
       for (let groupStart = 0; groupStart < imageGroups.length;) {
         const currentGroup = imageGroups[groupStart];
@@ -1285,7 +1348,15 @@ export class StyleProductionDocsService {
           );
           for (let imageIndex = 0; imageIndex < urls.length; imageIndex++) {
             const image = await this.getImageBuffer(urls[imageIndex]);
-            if (!image) continue;
+            if (!image) {
+              this.logger.warn(
+                `Export Excel: không tải được ảnh mục ${sectionLabel} (khối ${groupIndex + 1}, ảnh ${imageIndex + 1}) — style ${styleId}, key ${urls[imageIndex]}`,
+              );
+              skippedImages.push(
+                `Ảnh mục ${sectionLabel} (khối ${groupIndex + 1}, ảnh ${imageIndex + 1})`,
+              );
+              continue;
+            }
             const dims = imageSize(image.buffer);
             const origW = dims.width ?? FRAME_W_PX;
             const origH = dims.height ?? 280;
@@ -1358,7 +1429,7 @@ export class StyleProductionDocsService {
       textBlock(sec.content);
       const imageGroups = this.normalizeImageGroups(sec.imageGroups, undefined);
       if (imageGroups.length > 0) clearRangeBottomBorder(row - 1, 1, 8);
-      await renderDynamicImageGroup(imageGroups);
+      await renderDynamicImageGroup(imageGroups, String(i + 6));
     }
 
     // Footer
@@ -1375,6 +1446,18 @@ export class StyleProductionDocsService {
       bottom: true,
       left: true,
     });
+
+    if (skippedImages.length > 0) {
+      row += 2;
+      mergeCellsWithoutStyle(row, 1, row, 8);
+      const warningCell = ws.getRow(row).getCell(1);
+      warningCell.value = `⚠ Không tải được ${skippedImages.length} ảnh, đã bỏ qua khi xuất file: ${skippedImages.join('; ')}`;
+      applyStyle(warningCell, {
+        font: { ...BODY_FONT, bold: true, color: { argb: 'FFB91C1C' } },
+        alignment: { horizontal: 'left', vertical: 'middle', wrapText: true },
+      });
+      ws.getRow(row).height = 20 * Math.ceil(skippedImages.length / 2 || 1);
+    }
 
     // Excel rich-text runs keep their own font, so styling only the cell is
     // not enough. Normalize both the cell font and every rich-text run before

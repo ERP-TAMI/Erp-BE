@@ -2,8 +2,9 @@ import { IsNumber, IsOptional, IsString, IsUUID, Min } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { IsAbsent } from './create-bom.dto';
+import { OptionalExpectedRowVersionDto } from './expected-row-version.dto';
 
-export class UpdateBomLineDto {
+export class UpdateBomLineDto extends OptionalExpectedRowVersionDto {
   @ApiPropertyOptional({
     description: 'Material master UUID mới nếu thay đổi vật tư',
     example: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11',

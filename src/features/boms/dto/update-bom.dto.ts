@@ -1,7 +1,8 @@
 import { IsDateString, IsOptional, IsString } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
+import { OptionalExpectedRowVersionDto } from './expected-row-version.dto';
 
-export class UpdateBomDto {
+export class UpdateBomDto extends OptionalExpectedRowVersionDto {
   @ApiPropertyOptional({
     description: 'Hạn hoàn thành mẫu / sản xuất',
     example: '2026-10-20T00:00:00.000Z',

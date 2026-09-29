@@ -198,20 +198,20 @@ describe('BomCostService (Cost Calculation & Role Masking)', () => {
   // 4. ROLE & COST VISIBILITY
   // ──────────────────────────────────────────────────────────────────────────
   describe('Role / Cost Visibility (isCostVisible)', () => {
-    it('allows SA, TPKH, and ACCOUNTING to view costs', () => {
+    it('allows SA and ACCOUNTING to view costs', () => {
       expect(service.isCostVisible('SA')).toBe(true);
       expect(service.isCostVisible('sa')).toBe(true);
-      expect(service.isCostVisible('TPKH')).toBe(true);
-      expect(service.isCostVisible('tpkh')).toBe(true);
       expect(service.isCostVisible('ACCOUNTING')).toBe(true);
       expect(service.isCostVisible('accounting')).toBe(true);
     });
 
-    it('masks/hides costs for NVKH, RD, and IT (returns false)', () => {
+    it('masks/hides costs for NVKH, RD, TPKH, and IT (returns false)', () => {
       expect(service.isCostVisible('NVKH')).toBe(false);
       expect(service.isCostVisible('nvkh')).toBe(false);
       expect(service.isCostVisible('RD')).toBe(false);
       expect(service.isCostVisible('rd')).toBe(false);
+      expect(service.isCostVisible('TPKH')).toBe(false);
+      expect(service.isCostVisible('tpkh')).toBe(false);
       expect(service.isCostVisible('IT')).toBe(false);
       expect(service.isCostVisible(null)).toBe(false);
       expect(service.isCostVisible(undefined)).toBe(false);
