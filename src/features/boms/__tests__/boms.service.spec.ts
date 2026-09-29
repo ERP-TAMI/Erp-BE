@@ -304,7 +304,8 @@ describe('BomsService (Read Model & Anti N+1 Tests)', () => {
 
       const rangeCall = qbMock.andWhere.mock.calls.find(
         ([sql]) =>
-          typeof sql === 'string' && sql.includes('bom.created_at >= :rangeStart'),
+          typeof sql === 'string' &&
+          sql.includes('bom.created_at >= :rangeStart'),
       );
       expect(rangeCall).toBeDefined();
       expect(rangeCall?.[1]).toEqual({
@@ -332,8 +333,7 @@ describe('BomsService (Read Model & Anti N+1 Tests)', () => {
       );
 
       const rangeCalls = qbMock.andWhere.mock.calls.filter(
-        ([sql]) =>
-          typeof sql === 'string' && sql.includes('bom.created_at >='),
+        ([sql]) => typeof sql === 'string' && sql.includes('bom.created_at >='),
       );
       expect(rangeCalls).toHaveLength(1);
       expect(rangeCalls[0][1]).toEqual({
