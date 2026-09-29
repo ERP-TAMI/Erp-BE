@@ -2,6 +2,7 @@ import { EntityManager, Repository } from 'typeorm';
 import { AuditEvent, AuditEventChange, HttpAuditLog } from './entities';
 import { AuditService } from './audit.service';
 import { AuditEventType } from '../../common/enums/database.enums';
+import { User } from '../auth/entities/User.entity';
 
 function buildHttpAuditLogRepository(): jest.Mocked<Repository<HttpAuditLog>> {
   return {
@@ -19,12 +20,16 @@ function buildAuditService() {
   const auditEventChanges = {
     find: jest.fn().mockResolvedValue([]),
   } as unknown as jest.Mocked<Repository<AuditEventChange>>;
+  const users = {
+    find: jest.fn().mockResolvedValue([]),
+  } as unknown as jest.Mocked<Repository<User>>;
   const service = new AuditService(
     httpAuditLogs,
     auditEvents,
     auditEventChanges,
+    users,
   );
-  return { service, httpAuditLogs, auditEvents, auditEventChanges };
+  return { service, httpAuditLogs, auditEvents, auditEventChanges, users };
 }
 
 describe('AuditService', () => {

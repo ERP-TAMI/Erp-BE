@@ -10,6 +10,7 @@ import {
   getFieldLabel,
   isSensitiveField,
 } from './entity-audit.config';
+import { User } from '../auth/entities/User.entity';
 
 const SENSITIVE_MASK = '***';
 
@@ -87,6 +88,7 @@ export type EntityHistoryEvent = {
   occurredAt: Date;
   eventType: AuditEventType;
   actorUserId: string | null;
+  actorName: string | null;
   actorRole: string | null;
   targetLabel: string | null;
   reason: string | null;
@@ -102,6 +104,8 @@ export class AuditService {
     private readonly auditEvents: Repository<AuditEvent>,
     @InjectRepository(AuditEventChange)
     private readonly auditEventChanges: Repository<AuditEventChange>,
+    @InjectRepository(User)
+    private readonly users: Repository<User>,
   ) {}
 
   async recordHttpRequest(input: HttpAuditInput): Promise<void> {
@@ -267,11 +271,32 @@ export class AuditService {
       requesterPermissions,
     );
 
+    const actorIds = [
+      ...new Set(
+        events
+          .map((event) => event.actorUserId)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    ];
+    const actors =
+      actorIds.length === 0
+        ? []
+        : await this.users.find({
+            where: { id: In(actorIds) },
+            select: ['id', 'fullName', 'email'],
+          });
+    const actorNameById = new Map(
+      actors.map((actor) => [actor.id, actor.fullName || actor.email]),
+    );
+
     return events.map((event) => ({
       id: event.id,
       occurredAt: event.occurredAt,
       eventType: event.eventType,
       actorUserId: event.actorUserId,
+      actorName: event.actorUserId
+        ? (actorNameById.get(event.actorUserId) ?? null)
+        : null,
       actorRole: event.actorRole,
       targetLabel: event.targetLabel,
       reason: event.reason,
