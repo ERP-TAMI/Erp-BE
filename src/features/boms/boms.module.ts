@@ -13,6 +13,7 @@ import { BomsController } from './boms.controller';
 import { BomsService } from './boms.service';
 import { BomCostService } from './bom-cost.service';
 import { BomAggregateService } from './bom-aggregate.service';
+import { PurchaseOrderBomWriteAccessGuard } from './guards/purchase-order-bom-write-access.guard';
 
 @Module({
   imports: [
@@ -29,7 +30,12 @@ import { BomAggregateService } from './bom-aggregate.service';
     ]),
   ],
   controllers: [BomsController],
-  providers: [BomsService, BomCostService, BomAggregateService],
+  providers: [
+    BomsService,
+    BomCostService,
+    BomAggregateService,
+    PurchaseOrderBomWriteAccessGuard,
+  ],
   exports: [BomsService, BomCostService, BomAggregateService],
 })
 export class BomsModule {}

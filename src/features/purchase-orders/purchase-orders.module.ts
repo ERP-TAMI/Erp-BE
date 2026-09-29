@@ -9,6 +9,8 @@ import { Customer } from '../master-data/entities/Customer.entity';
 import { StorageModule } from '../storage/storage.module';
 import { PurchaseOrdersController } from './purchase-orders.controller';
 import { PurchaseOrdersService } from './purchase-orders.service';
+import { PurchaseOrderWriteAccessGuard } from './guards/purchase-order-write-access.guard';
+import { PurchaseOrderFullAccessGuard } from '../../common/guards/purchase-order-full-access.guard';
 
 @Module({
   imports: [
@@ -23,7 +25,11 @@ import { PurchaseOrdersService } from './purchase-orders.service';
     StorageModule,
   ],
   controllers: [PurchaseOrdersController],
-  providers: [PurchaseOrdersService],
+  providers: [
+    PurchaseOrdersService,
+    PurchaseOrderWriteAccessGuard,
+    PurchaseOrderFullAccessGuard,
+  ],
   exports: [PurchaseOrdersService],
 })
 export class PurchaseOrdersModule {}

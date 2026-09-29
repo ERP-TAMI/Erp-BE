@@ -4,6 +4,7 @@ import { JwtStrategy } from './jwt.strategy';
 import { User } from '../entities/User.entity';
 import { RecordStatus } from '../../../common/enums/database.enums';
 import { JwtPayload } from '../jwt-payload.type';
+import { PurchaseOrderMode } from '../../../common/enums/purchase-order-mode.enum';
 
 function buildUser(overrides: Partial<User> = {}): User {
   return {
@@ -12,6 +13,7 @@ function buildUser(overrides: Partial<User> = {}): User {
     status: RecordStatus.ACTIVE,
     lockoutUntil: null,
     manuallyLockedAt: null,
+    purchaseOrderMode: PurchaseOrderMode.READ_ONLY,
     authVersion: 1,
     ...overrides,
   } as User;
@@ -85,6 +87,7 @@ describe('JwtStrategy', () => {
       email: 'sa@tami.test',
       roleCode: 'SA',
       permissions: ['system.users.manage'],
+      purchaseOrderMode: PurchaseOrderMode.READ_ONLY,
     });
   });
 });

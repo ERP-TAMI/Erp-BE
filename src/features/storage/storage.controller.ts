@@ -8,6 +8,7 @@ import {
   NotFoundException,
   Post,
   Query,
+  UseGuards,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -24,6 +25,8 @@ import {
 } from './storage.interface';
 import { Style } from '../styles/entities/Style.entity';
 import { PurchaseOrder } from '../purchase-orders/entities/PurchaseOrder.entity';
+import { PurchaseOrderUploadWriteAccessGuard } from './guards/purchase-order-upload-write-access.guard';
+import { PurchaseOrderDownloadAccessGuard } from './guards/purchase-order-download-access.guard';
 
 const ENTITY_TYPE_PATH: Record<StorageEntityType, string> = {
   [StorageEntityType.STYLE]: 'styles',
@@ -41,6 +44,7 @@ export class StorageController {
   ) {}
 
   @Post('presign')
+  @UseGuards(PurchaseOrderUploadWriteAccessGuard)
   async presignUpload(@Body() dto: PresignUploadDto) {
     assertAllowedFile(dto.fileName, dto.mimeType, dto.sizeBytes);
     await this.assertEntityExists(dto.entityType, dto.entityId);
@@ -62,6 +66,7 @@ export class StorageController {
   }
 
   @Get('view-url')
+  @UseGuards(PurchaseOrderDownloadAccessGuard)
   async getViewUrl(
     @Query('objectKey') objectKey: string,
     @Query('download') download?: string,

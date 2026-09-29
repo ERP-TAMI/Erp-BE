@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { PurchaseOrderMode } from '../../../common/enums/purchase-order-mode.enum';
 
 export class AuthUserDto {
   @ApiProperty({ format: 'uuid' })
@@ -21,6 +22,9 @@ export class AuthUserDto {
 
   @ApiProperty({ type: [String] })
   permissions: string[];
+
+  @ApiProperty({ enum: PurchaseOrderMode })
+  purchaseOrderMode: PurchaseOrderMode;
 }
 
 export class AuthResponseDto {

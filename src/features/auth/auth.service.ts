@@ -21,6 +21,7 @@ import { AuthUserDto } from './dto/auth-response.dto';
 import { JwtPayload } from './jwt-payload.type';
 import { NotificationsService } from '../notifications/notifications.service';
 import { SmtpMailService } from './smtp-mail.service';
+import { PurchaseOrderMode } from '../../common/enums/purchase-order-mode.enum';
 
 export type SessionMeta = {
   userAgent?: string;
@@ -194,6 +195,37 @@ export class AuthService {
     return this.toAuthUserDto(user, roleInfo);
   }
 
+  async updatePurchaseOrderMode(
+    userId: string,
+    mode: PurchaseOrderMode,
+  ): Promise<AuthUserDto> {
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+    if (!user) {
+      throw new UnauthorizedException({
+        code: ErrorCode.UNAUTHORIZED,
+        message: 'Phiên đăng nhập không hợp lệ.',
+      });
+    }
+
+    const roleInfo = await this.getRoleInfo(user.id);
+    if (!roleInfo) {
+      throw new ForbiddenException({
+        code: ErrorCode.FORBIDDEN,
+        message: 'Tài khoản chưa được gán vai trò.',
+      });
+    }
+    if (roleInfo.roleCode !== 'SA') {
+      throw new ForbiddenException({
+        code: ErrorCode.FORBIDDEN,
+        message: 'Chỉ tài khoản SA được đổi chế độ chỉnh sửa PO.',
+      });
+    }
+
+    await this.userRepository.update(user.id, { purchaseOrderMode: mode });
+    user.purchaseOrderMode = mode;
+    return this.toAuthUserDto(user, roleInfo);
+  }
+
   private assertAccountUsable(user: User): void {
     if (user.status !== RecordStatus.ACTIVE) {
       throw new ForbiddenException({
@@ -340,6 +372,7 @@ export class AuthService {
       roleCode: roleInfo.roleCode,
       roleName: roleInfo.roleName,
       permissions: roleInfo.permissions,
+      purchaseOrderMode: user.purchaseOrderMode,
     };
   }
 
