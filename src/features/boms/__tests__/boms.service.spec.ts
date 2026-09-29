@@ -326,7 +326,7 @@ describe('BomsService (Read Model & Anti N+1 Tests)', () => {
       // Repository returns lines ordered by orderIndex
       bomLineRepoMock.find.mockResolvedValue([line2, line1]);
 
-      const result = await service.findOne('fit-uuid', 'TPKH');
+      const result = await service.findOne('fit-uuid', 'SA');
 
       expect(result.id).toBe('fit-uuid');
       expect(result.type).toBe(BomType.FIT);

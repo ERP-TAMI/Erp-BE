@@ -1,8 +1,9 @@
 import { IsOptional, IsUUID } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { IsAbsent } from './create-bom.dto';
+import { OptionalExpectedRowVersionDto } from './expected-row-version.dto';
 
-export class CopyFitToPoDto {
+export class CopyFitToPoDto extends OptionalExpectedRowVersionDto {
   @ApiPropertyOptional({
     description:
       'UUID của revision Fit BOM nguồn (phải thuộc Fit BOM tương ứng và ở trạng thái closed). Nếu bỏ trống, hệ thống sẽ tự tìm Fit BOM tương ứng theo styleId của sản phẩm đơn hàng.',

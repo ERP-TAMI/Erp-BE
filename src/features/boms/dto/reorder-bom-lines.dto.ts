@@ -9,6 +9,7 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty } from '@nestjs/swagger';
+import { OptionalExpectedRowVersionDto } from './expected-row-version.dto';
 
 export class ReorderBomLineItemDto {
   @ApiProperty({
@@ -29,7 +30,7 @@ export class ReorderBomLineItemDto {
   orderIndex: number;
 }
 
-export class ReorderBomLinesDto {
+export class ReorderBomLinesDto extends OptionalExpectedRowVersionDto {
   @ApiProperty({
     description: 'Danh sách các dòng cần sắp xếp lại thứ tự',
     type: [ReorderBomLineItemDto],

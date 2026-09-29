@@ -268,6 +268,73 @@ describe('BOM Lines Mutations: Add, Update, Delete, Reorder, Snapshot & Field Au
       expect(res.lineCost).toBeNull();
     });
 
+    it('accepts an add-line request whose expectedRowVersion matches the current revision', async () => {
+      const bom = createMockBom();
+      const currentRev = createMockRevision();
+      currentRev.rowVersion = 5;
+      const material = createMockMaterial();
+
+      dataSourceMock.transaction.mockImplementation(async (cb: any) => {
+        const managerMock = {
+          findOne: jest.fn().mockImplementation((entityClass) => {
+            if (entityClass === Bom) return Promise.resolve(bom);
+            if (entityClass === BomRevision) return Promise.resolve(currentRev);
+            if (entityClass === Material) return Promise.resolve(material);
+            return Promise.resolve(null);
+          }),
+          createQueryBuilder: jest.fn().mockReturnValue({
+            where: jest.fn().mockReturnThis(),
+            orderBy: jest.fn().mockReturnThis(),
+            getOne: jest.fn().mockResolvedValue(null),
+          }),
+          create: jest
+            .fn()
+            .mockImplementation((_, data) =>
+              Object.assign(new BomLine(), data, { id: 'line-new-2' }),
+            ),
+          save: jest
+            .fn()
+            .mockImplementation((_, entity) => Promise.resolve(entity)),
+        };
+        return cb(managerMock);
+      });
+
+      const res = await service.addLine(
+        'bom-1',
+        { materialId: 'mat-1', consumption: 1, expectedRowVersion: 5 },
+        'user-nvkh',
+        'NVKH',
+      );
+
+      expect(res.id).toBe('line-new-2');
+    });
+
+    it('rejects an add-line request whose expectedRowVersion no longer matches (409 Conflict)', async () => {
+      const bom = createMockBom();
+      const currentRev = createMockRevision();
+      currentRev.rowVersion = 5;
+
+      dataSourceMock.transaction.mockImplementation(async (cb: any) => {
+        const managerMock = {
+          findOne: jest.fn().mockImplementation((entityClass) => {
+            if (entityClass === Bom) return Promise.resolve(bom);
+            if (entityClass === BomRevision) return Promise.resolve(currentRev);
+            return Promise.resolve(null);
+          }),
+        };
+        return cb(managerMock);
+      });
+
+      await expect(
+        service.addLine(
+          'bom-1',
+          { materialId: 'mat-1', consumption: 1, expectedRowVersion: 4 },
+          'user-nvkh',
+          'NVKH',
+        ),
+      ).rejects.toThrow(ConflictException);
+    });
+
     it('allows RD (N2) to add line to PO BOM', async () => {
       const bom = createMockBom({
         bomType: BomType.PO,
@@ -314,7 +381,7 @@ describe('BOM Lines Mutations: Add, Update, Delete, Reorder, Snapshot & Field Au
       expect(res.consumption).toBe(2.0);
     });
 
-    it('allows TPKH (N3) to add line and see costs', async () => {
+    it('allows TPKH (N3) to add line (cost fields masked, new line has no unit cost yet anyway)', async () => {
       const bom = createMockBom();
       const currentRev = createMockRevision({
         status: BomRevisionStatus.WAIT_TPKH_CONFIRM,
@@ -354,7 +421,7 @@ describe('BOM Lines Mutations: Add, Update, Delete, Reorder, Snapshot & Field Au
       );
 
       expect(res.id).toBe('line-tpkh');
-      // TPKH has cost visibility, but new line unitCost is null
+      // TPKH is masked from cost fields; a brand-new line has no unit cost yet either way
       expect(res.unitCost).toBeNull();
       expect(res.lineCost).toBeNull();
     });
@@ -782,6 +849,7 @@ describe('BOM Lines Mutations: Add, Update, Delete, Reorder, Snapshot & Field Au
       const res = await service.deleteLine(
         'bom-1',
         'line-to-delete',
+        undefined,
         'user-tpkh',
         'TPKH',
       );
@@ -805,11 +873,17 @@ describe('BOM Lines Mutations: Add, Update, Delete, Reorder, Snapshot & Field Au
       });
 
       await expect(
-        service.deleteLine('bom-1', 'line-1', 'user-acct', 'ACCOUNTING'),
+        service.deleteLine(
+          'bom-1',
+          'line-1',
+          undefined,
+          'user-acct',
+          'ACCOUNTING',
+        ),
       ).rejects.toThrow(ForbiddenException);
 
       await expect(
-        service.deleteLine('bom-1', 'line-1', 'user-sa', 'SA'),
+        service.deleteLine('bom-1', 'line-1', undefined, 'user-sa', 'SA'),
       ).rejects.toThrow(ForbiddenException);
     });
   });

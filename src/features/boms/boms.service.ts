@@ -31,6 +31,7 @@ import {
   CreateBomLineDto,
   UpdateBomLineDto,
   ReorderBomLinesDto,
+  DeleteBomLineDto,
   BomLineResponseDto,
   ForwardBomDto,
   RejectBomDto,
@@ -59,6 +60,7 @@ import {
   assertRevisionDataReadyForApprove,
 } from './boms.policy';
 import { BomRevisionStatus, BomType } from '../../common/enums/database.enums';
+import { stripHtmlTags } from '../../common/utils/sanitize-text.util';
 
 export interface PaginatedResult<T> {
   data: T[];
@@ -114,6 +116,19 @@ export class BomsService {
         currentRowVersion,
       });
     }
+  }
+
+  /** Same as assertExpectedRowVersion, but a no-op when the client didn't send
+   * expectedRowVersion at all — used by write endpoints that batch multiple
+   * line mutations in quick succession (RD/Accounting bulk entry) where the
+   * caller cannot always predict the row version of an in-flight batch
+   * member. Still enforced whenever the field is actually provided. */
+  private assertExpectedRowVersionIfProvided(
+    currentRev: BomRevision,
+    expectedRowVersion: number | undefined,
+  ): void {
+    if (expectedRowVersion === undefined) return;
+    this.assertExpectedRowVersion(currentRev, expectedRowVersion);
   }
 
   /**
@@ -903,7 +918,7 @@ export class BomsService {
           currentRevisionId: null,
           colorNameSnapshot: null,
           deadline: dto.deadline ? new Date(dto.deadline) : null,
-          rdNote: dto.rdNote ? dto.rdNote.trim() : null,
+          rdNote: dto.rdNote ? stripHtmlTags(dto.rdNote.trim()) : null,
           discontinuedAt: null,
           discontinuedBy: null,
           discontinuedReason: null,
@@ -998,13 +1013,19 @@ export class BomsService {
       }
 
       assertCanUpdateBomHeader(roleCode, dto, bom, currentRev);
+      if (currentRev) {
+        this.assertExpectedRowVersionIfProvided(
+          currentRev,
+          dto.expectedRowVersion,
+        );
+      }
 
       if (dto.deadline !== undefined) {
         bom.deadline = dto.deadline ? new Date(dto.deadline) : null;
       }
 
       if (dto.rdNote !== undefined) {
-        bom.rdNote = dto.rdNote ? dto.rdNote.trim() : null;
+        bom.rdNote = dto.rdNote ? stripHtmlTags(dto.rdNote.trim()) : null;
       }
 
       if (currentRev) {
@@ -1143,6 +1164,10 @@ export class BomsService {
       }
 
       assertCanAddLine(userRole, bom, currentRev);
+      this.assertExpectedRowVersionIfProvided(
+        currentRev,
+        dto.expectedRowVersion,
+      );
 
       const material = await manager.findOne(Material, {
         where: { id: dto.materialId },
@@ -1288,6 +1313,10 @@ export class BomsService {
       }
 
       assertCanUpdateLine(userRole, bom, currentRev, dto);
+      this.assertExpectedRowVersionIfProvided(
+        currentRev,
+        dto.expectedRowVersion,
+      );
 
       const line = await manager.findOne(BomLine, { where: { id: lineId } });
       if (!line) {
@@ -1383,6 +1412,7 @@ export class BomsService {
   async deleteLine(
     bomId: string,
     lineId: string,
+    dto?: DeleteBomLineDto,
     _userId?: string,
     userRole?: string | null,
   ): Promise<{ success: boolean; message: string }> {
@@ -1410,6 +1440,10 @@ export class BomsService {
       }
 
       assertCanDeleteLine(userRole, bom, currentRev);
+      this.assertExpectedRowVersionIfProvided(
+        currentRev,
+        dto?.expectedRowVersion,
+      );
 
       const line = await manager.findOne(BomLine, { where: { id: lineId } });
       if (!line) {
@@ -1488,6 +1522,10 @@ export class BomsService {
       }
 
       assertCanReorderLines(userRole, bom, currentRev);
+      this.assertExpectedRowVersionIfProvided(
+        currentRev,
+        dto.expectedRowVersion,
+      );
 
       const lineIds = dto.items.map((it) => it.lineId);
       const orderIndices = dto.items.map((it) => it.orderIndex);
@@ -2347,6 +2385,11 @@ export class BomsService {
           `Chỉ có thể sao chép khi revision hiện tại của PO BOM đang ở trạng thái wait_nvkh. Trạng thái hiện tại: ${targetRev.status}`,
         );
       }
+
+      this.assertExpectedRowVersionIfProvided(
+        targetRev,
+        dto.expectedRowVersion,
+      );
 
       // 3. Prevent Accidental Overwrite: Target MUST have 0 lines
       const existingLineCount = await manager.count(BomLine, {

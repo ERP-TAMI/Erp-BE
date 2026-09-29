@@ -691,14 +691,10 @@ describe('BOM V2 NPL Aggregate & Backend Completion (PR-07 Specification)', () =
   // 4. COST HANDLING & ROLE MASKING (Sections 15, 16, 23, 37)
   // ──────────────────────────────────────────────────────────────────────────
   describe('4. Cost Calculation & Role Masking', () => {
-    it('exposes totalEstimatedCost and unitCost for TPKH, ACCOUNTING, and SA roles', async () => {
+    it('exposes totalEstimatedCost and unitCost for ACCOUNTING and SA roles', async () => {
       setupAggregateEnv();
 
-      const roles = [
-        UserRoleCode.TPKH,
-        UserRoleCode.ACCOUNTING,
-        UserRoleCode.SA,
-      ];
+      const roles = [UserRoleCode.ACCOUNTING, UserRoleCode.SA];
       for (const role of roles) {
         const result = await aggregateService.aggregate({}, role);
         const matA = result.data.find((i) => i.materialId === 'mat-A');
@@ -708,10 +704,10 @@ describe('BOM V2 NPL Aggregate & Backend Completion (PR-07 Specification)', () =
       }
     });
 
-    it('masks totalEstimatedCost and unitCost to null for NVKH and RD roles', async () => {
+    it('masks totalEstimatedCost and unitCost to null for NVKH, RD, and TPKH roles', async () => {
       setupAggregateEnv();
 
-      const roles = [UserRoleCode.NVKH, UserRoleCode.RD];
+      const roles = [UserRoleCode.NVKH, UserRoleCode.RD, UserRoleCode.TPKH];
       for (const role of roles) {
         const result = await aggregateService.aggregate({}, role);
         const matA = result.data.find((i) => i.materialId === 'mat-A');
@@ -900,7 +896,7 @@ describe('BOM V2 NPL Aggregate & Backend Completion (PR-07 Specification)', () =
       mockColorSizeRows[2].quantity = 0;
       mockColorSizeRows[3].quantity = 0;
 
-      const result = await aggregateService.aggregate({}, UserRoleCode.TPKH);
+      const result = await aggregateService.aggregate({}, UserRoleCode.SA);
       const matB = result.data.find((i) => i.materialId === 'mat-B');
       expect(matB?.totalRequiredQuantity).toBe(0);
       expect(matB?.totalEstimatedCost).toBe(0);
@@ -1017,7 +1013,7 @@ describe('BOM V2 NPL Aggregate & Backend Completion (PR-07 Specification)', () =
       // Set line2A (in BOM 2) unitCost to null while line1A has unitCost = 50000
       mockLines.find((l) => l.id === 'line-2-a')!.unitCost = null;
 
-      const result = await aggregateService.aggregate({}, UserRoleCode.TPKH);
+      const result = await aggregateService.aggregate({}, UserRoleCode.SA);
       const matA = result.data.find((i) => i.materialId === 'mat-A');
       expect(matA?.costComplete).toBe(false);
       expect(matA?.totalEstimatedCost).toBeNull();
@@ -1059,7 +1055,7 @@ describe('BOM V2 NPL Aggregate & Backend Completion (PR-07 Specification)', () =
       // Clear all color size rows
       mockColorSizeRows = [];
 
-      const result = await aggregateService.aggregate({}, UserRoleCode.TPKH);
+      const result = await aggregateService.aggregate({}, UserRoleCode.SA);
       const matA = result.data.find((i) => i.materialId === 'mat-A');
       expect(matA?.totalRequiredQuantity).toBe(0);
       expect(matA?.totalEstimatedCost).toBe(0);

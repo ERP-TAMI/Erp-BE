@@ -8,6 +8,7 @@ export * from './expected-row-version.dto';
 export * from './create-bom-line.dto';
 export * from './update-bom-line.dto';
 export * from './reorder-bom-lines.dto';
+export * from './delete-bom-line.dto';
 export * from './forward-bom.dto';
 export * from './reject-bom.dto';
 export * from './approve-bom.dto';
