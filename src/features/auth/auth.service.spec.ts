@@ -7,6 +7,7 @@ import { RecordStatus } from '../../common/enums/database.enums';
 import { ErrorCode } from '../../common/enums/error-code.enum';
 import * as passwordUtil from '../../common/security/password.util';
 import { LOGIN_FAILED_THRESHOLD } from './auth.constants';
+import { PurchaseOrderMode } from '../../common/enums/purchase-order-mode.enum';
 import { NotificationsService } from '../notifications/notifications.service';
 import { SmtpMailService } from './smtp-mail.service';
 
@@ -25,6 +26,7 @@ function buildUser(overrides: Partial<User> = {}): User {
     manuallyLockedAt: null,
     manuallyLockedBy: null,
     authVersion: 1,
+    purchaseOrderMode: PurchaseOrderMode.READ_ONLY,
     lastLoginAt: null,
     rowVersion: 1,
     createdAt: new Date(),
@@ -345,6 +347,46 @@ describe('AuthService', () => {
         roleCode: 'SA',
         permissions: ['a.b'],
       });
+    });
+  });
+
+  describe('updatePurchaseOrderMode', () => {
+    it('persists the requested mode for SA and returns the updated user', async () => {
+      const user = buildUser({
+        purchaseOrderMode: PurchaseOrderMode.READ_ONLY,
+      });
+      userRepository.findOne.mockResolvedValue(user);
+
+      await expect(
+        service.updatePurchaseOrderMode(
+          'user-1',
+          PurchaseOrderMode.FULL_ACCESS,
+        ),
+      ).resolves.toMatchObject({ purchaseOrderMode: 'FULL_ACCESS' });
+
+      expect(userRepository.update).toHaveBeenCalledWith('user-1', {
+        purchaseOrderMode: PurchaseOrderMode.FULL_ACCESS,
+      });
+    });
+
+    it('does not let a non-SA account change the mode', async () => {
+      userRepository.findOne.mockResolvedValue(buildUser());
+      dataSource.query.mockResolvedValueOnce([
+        {
+          role_code: 'TPKH',
+          role_name: 'Trưởng phòng Kinh doanh',
+          permissions: [],
+        },
+      ]);
+
+      await expect(
+        service.updatePurchaseOrderMode(
+          'user-1',
+          PurchaseOrderMode.FULL_ACCESS,
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+
+      expect(userRepository.update).not.toHaveBeenCalled();
     });
   });
 });
