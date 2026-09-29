@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, EntityManager, Repository } from 'typeorm';
 import { StyleOperationStep } from './entities/StyleOperationStep.entity';
 import { Style } from './entities/Style.entity';
 import {
@@ -12,6 +12,28 @@ import {
   UpdateStyleOperationStepDto,
   StyleOperationStepItemDto,
 } from './dto/style-operation-step.dto';
+import { AuditService } from '../audit/audit.service';
+import { diffEntity } from '../audit/entity-diff.util';
+import { AuditEventType } from '../../common/enums/database.enums';
+
+export type AuditActor = { id: string; roleCode: string };
+
+const AGGREGATE_TYPE = 'StyleOperationStep';
+
+const TRACKED_FIELDS = [
+  'stepName',
+  'description',
+  'stageId',
+  'timePerPiece',
+  'ssv',
+  'targetTotal',
+  'note',
+  'orderIndex',
+  'isGroup',
+  'groupId',
+  'groupItems',
+  'parentStepId',
+] as const satisfies readonly (keyof StyleOperationStep)[];
 
 @Injectable()
 export class StyleOperationStepsService {
@@ -21,7 +43,29 @@ export class StyleOperationStepsService {
     @InjectRepository(Style)
     private readonly styleRepo: Repository<Style>,
     private readonly dataSource: DataSource,
+    private readonly auditService: AuditService,
   ) {}
+
+  private async recordStepChange(
+    manager: EntityManager,
+    styleId: string,
+    step: StyleOperationStep,
+    eventType: AuditEventType,
+    before: Partial<StyleOperationStep> | null,
+    actor: AuditActor,
+  ): Promise<void> {
+    const changes = diffEntity(before, step, TRACKED_FIELDS);
+    await this.auditService.recordEntityChange(manager, {
+      aggregateType: AGGREGATE_TYPE,
+      aggregateId: step.id,
+      parentId: styleId,
+      actorId: actor.id,
+      actorRole: actor.roleCode,
+      targetLabel: step.stepName,
+      eventType,
+      changes,
+    });
+  }
 
   async findByStyleId(styleId: string): Promise<StyleOperationStep[]> {
     await this.ensureStyleExists(styleId);
@@ -34,6 +78,7 @@ export class StyleOperationStepsService {
   async create(
     styleId: string,
     dto: CreateStyleOperationStepDto,
+    actor: AuditActor,
   ): Promise<StyleOperationStep> {
     await this.ensureStyleExists(styleId);
     if (dto.stageId) {
@@ -54,13 +99,25 @@ export class StyleOperationStepsService {
       groupId: dto.groupId ?? null,
       groupItems: dto.groupItems ?? null,
     });
-    return this.stepRepo.save(step);
+    return this.dataSource.transaction(async (manager) => {
+      const saved = await manager.getRepository(StyleOperationStep).save(step);
+      await this.recordStepChange(
+        manager,
+        styleId,
+        saved,
+        AuditEventType.CREATED,
+        null,
+        actor,
+      );
+      return saved;
+    });
   }
 
   async createMany(
     styleId: string,
     steps: StyleOperationStepItemDto[],
     as3bCmBaseDays?: number,
+    actor?: AuditActor,
   ): Promise<StyleOperationStep[]> {
     await this.ensureStyleExists(styleId);
 
@@ -71,6 +128,41 @@ export class StyleOperationStepsService {
       return await this.dataSource.transaction(async (manager) => {
         const stepRepo = manager.getRepository(StyleOperationStep);
         const styleRepo = manager.getRepository(Style);
+
+        // Snapshot trước khi xoá — dùng để so sánh field-level cho audit log,
+        // vì createMany luôn xoá-rồi-tạo-lại chứ không UPDATE tại chỗ.
+        const beforeSteps = await stepRepo.find({ where: { styleId } });
+        const beforeById = new Map(beforeSteps.map((s) => [s.id, s]));
+        const recordAudit = async (
+          after: StyleOperationStep,
+          eventType: AuditEventType,
+          before: StyleOperationStep | null,
+        ): Promise<void> => {
+          if (!actor) return;
+          await this.recordStepChange(
+            manager,
+            styleId,
+            after,
+            eventType,
+            before,
+            actor,
+          );
+        };
+        const recordDeleted = async (
+          before: StyleOperationStep,
+        ): Promise<void> => {
+          if (!actor) return;
+          await this.auditService.recordEntityChange(manager, {
+            aggregateType: AGGREGATE_TYPE,
+            aggregateId: before.id,
+            parentId: styleId,
+            actorId: actor.id,
+            actorRole: actor.roleCode,
+            targetLabel: before.stepName,
+            eventType: AuditEventType.DELETED,
+            changes: [],
+          });
+        };
 
         if (as3bCmBaseDays && as3bCmBaseDays > 0) {
           await styleRepo.update(styleId, { as3bCmBaseDays });
@@ -86,7 +178,12 @@ export class StyleOperationStepsService {
           [styleId],
         );
 
-        if (!steps || steps.length === 0) return [];
+        if (!steps || steps.length === 0) {
+          for (const before of beforeSteps) {
+            await recordDeleted(before);
+          }
+          return [];
+        }
 
         const isUuid = (val?: string | null): boolean => {
           if (!val) return false;
@@ -189,6 +286,12 @@ export class StyleOperationStepsService {
 
           const saved = await stepRepo.save(entity);
           savedStepsMap.set(index, saved);
+          const before = beforeById.get(saved.id) ?? null;
+          await recordAudit(
+            saved,
+            before ? AuditEventType.UPDATED : AuditEventType.CREATED,
+            before,
+          );
 
           if (rawId) {
             tempIdToRealIdMap.set(rawId, saved.id);
@@ -241,6 +344,12 @@ export class StyleOperationStepsService {
 
           const saved = await stepRepo.save(entity);
           savedStepsMap.set(index, saved);
+          const before = beforeById.get(saved.id) ?? null;
+          await recordAudit(
+            saved,
+            before ? AuditEventType.UPDATED : AuditEventType.CREATED,
+            before,
+          );
 
           if (rawId) {
             tempIdToRealIdMap.set(rawId, saved.id);
@@ -249,7 +358,15 @@ export class StyleOperationStepsService {
           tempIdToRealIdMap.set(saved.id, saved.id);
         }
 
-        return steps.map((_, index) => savedStepsMap.get(index)!);
+        const afterSteps = steps.map((_, index) => savedStepsMap.get(index)!);
+        const afterIds = new Set(afterSteps.map((s) => s.id));
+        for (const before of beforeSteps) {
+          if (!afterIds.has(before.id)) {
+            await recordDeleted(before);
+          }
+        }
+
+        return afterSteps;
       });
     } catch (err: any) {
       console.error(
@@ -270,8 +387,10 @@ export class StyleOperationStepsService {
     styleId: string,
     stepId: string,
     dto: UpdateStyleOperationStepDto,
+    actor: AuditActor,
   ): Promise<StyleOperationStep> {
     const step = await this.findOwnedStep(styleId, stepId);
+    const before = { ...step };
 
     if (dto.stepName !== undefined) step.stepName = dto.stepName;
     if (dto.description !== undefined)
@@ -304,18 +423,60 @@ export class StyleOperationStepsService {
       step.stageId = dto.stageId ?? null;
     }
 
-    return this.stepRepo.save(step);
+    return this.dataSource.transaction(async (manager) => {
+      const saved = await manager.getRepository(StyleOperationStep).save(step);
+      await this.recordStepChange(
+        manager,
+        styleId,
+        saved,
+        AuditEventType.UPDATED,
+        before,
+        actor,
+      );
+      return saved;
+    });
   }
 
-  async remove(styleId: string, stepId: string): Promise<void> {
+  async remove(
+    styleId: string,
+    stepId: string,
+    actor: AuditActor,
+  ): Promise<void> {
     const step = await this.findOwnedStep(styleId, stepId);
 
-    // Nếu là nhóm công đoạn, xoá tất cả công đoạn con
-    if (step.isGroup) {
-      await this.stepRepo.delete({ parentStepId: step.id });
-    }
+    const recordDeleted = async (
+      manager: EntityManager,
+      deleted: StyleOperationStep,
+    ): Promise<void> => {
+      await this.auditService.recordEntityChange(manager, {
+        aggregateType: AGGREGATE_TYPE,
+        aggregateId: deleted.id,
+        parentId: styleId,
+        actorId: actor.id,
+        actorRole: actor.roleCode,
+        targetLabel: deleted.stepName,
+        eventType: AuditEventType.DELETED,
+        changes: [],
+      });
+    };
 
-    await this.stepRepo.remove(step);
+    await this.dataSource.transaction(async (manager) => {
+      const stepRepo = manager.getRepository(StyleOperationStep);
+
+      // Nếu là nhóm công đoạn, xoá tất cả công đoạn con
+      if (step.isGroup) {
+        const children = await stepRepo.find({
+          where: { parentStepId: step.id },
+        });
+        await stepRepo.delete({ parentStepId: step.id });
+        for (const child of children) {
+          await recordDeleted(manager, child);
+        }
+      }
+
+      await stepRepo.remove(step);
+      await recordDeleted(manager, step);
+    });
   }
 
   private async findOwnedStep(

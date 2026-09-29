@@ -1,9 +1,26 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { EntityManager, Repository } from 'typeorm';
+import { EntityManager, In, Repository } from 'typeorm';
 import { AuditEventType } from '../../common/enums/database.enums';
 import { AuditEvent, AuditEventChange, HttpAuditLog } from './entities';
 import { QueryHttpAuditLogsDto } from './dto/query-http-audit-logs.dto';
+import { EntityFieldChange } from './entity-diff.util';
+import {
+  canViewSensitiveFields,
+  getFieldLabel,
+  isSensitiveField,
+} from './entity-audit.config';
+
+const SENSITIVE_MASK = '***';
+
+const REASON_REQUIRED_EVENT_TYPES = new Set<AuditEventType>([
+  AuditEventType.UPDATED,
+  AuditEventType.DELETED,
+  AuditEventType.STATUS_CHANGED,
+  AuditEventType.APPROVED,
+  AuditEventType.REJECTED,
+  AuditEventType.ROLE_CHANGED,
+]);
 
 export type PaginatedHttpAuditLogs = {
   items: HttpAuditLog[];
@@ -46,11 +63,45 @@ export type HttpAuditInput = {
   errorMessage: string | null;
 };
 
+export type EntityAuditInput = {
+  aggregateType: string;
+  aggregateId: string;
+  parentId?: string;
+  actorId: string;
+  actorRole: string;
+  targetLabel?: string;
+  eventType: AuditEventType;
+  reason?: string;
+  changes: EntityFieldChange[];
+};
+
+export type EntityHistoryChange = {
+  fieldName: string;
+  fieldLabel: string;
+  oldValue: unknown;
+  newValue: unknown;
+};
+
+export type EntityHistoryEvent = {
+  id: string;
+  occurredAt: Date;
+  eventType: AuditEventType;
+  actorUserId: string | null;
+  actorRole: string | null;
+  targetLabel: string | null;
+  reason: string | null;
+  changes: EntityHistoryChange[];
+};
+
 @Injectable()
 export class AuditService {
   constructor(
     @InjectRepository(HttpAuditLog)
     private readonly httpAuditLogs: Repository<HttpAuditLog>,
+    @InjectRepository(AuditEvent)
+    private readonly auditEvents: Repository<AuditEvent>,
+    @InjectRepository(AuditEventChange)
+    private readonly auditEventChanges: Repository<AuditEventChange>,
   ) {}
 
   async recordHttpRequest(input: HttpAuditInput): Promise<void> {
@@ -127,5 +178,132 @@ export class AuditService {
         }),
       ),
     );
+  }
+
+  /**
+   * Generic per-record changelog, used by any module's create/update/delete
+   * flow. Skips writing entirely for a no-op update (empty diff) so unrelated
+   * saves (e.g. re-submitting a bulk grid with nothing actually changed)
+   * don't spam the timeline.
+   */
+  async recordEntityChange(
+    manager: EntityManager,
+    input: EntityAuditInput,
+  ): Promise<void> {
+    // Chỉ bỏ qua khi UPDATED thực sự rỗng (save lại mà không đổi gì). Các
+    // eventType khác (CREATED, DELETED, STATUS_CHANGED, ...) vẫn có ý nghĩa
+    // dù không có field-diff — ví dụ DELETED không cần diff, bản thân sự
+    // kiện "đã xoá" đã là thông tin cần ghi.
+    if (
+      input.changes.length === 0 &&
+      input.eventType === AuditEventType.UPDATED
+    ) {
+      return;
+    }
+
+    const reason: string | undefined = REASON_REQUIRED_EVENT_TYPES.has(
+      input.eventType,
+    )
+      ? (input.reason ??
+        this.buildDefaultReason(
+          input.aggregateType,
+          input.eventType,
+          input.changes,
+        ))
+      : input.reason;
+
+    const eventRepository = manager.getRepository(AuditEvent);
+    const event = await eventRepository.save(
+      eventRepository.create({
+        occurredAt: new Date(),
+        actorUserId: input.actorId,
+        aggregateType: input.aggregateType,
+        aggregateId: input.aggregateId,
+        parentId: input.parentId,
+        eventType: input.eventType,
+        actorRole: input.actorRole,
+        targetLabel: input.targetLabel,
+        reason,
+      }),
+    );
+
+    if (input.changes.length === 0) return;
+    const changeRepository = manager.getRepository(AuditEventChange);
+    await changeRepository.save(
+      input.changes.map((change) =>
+        changeRepository.create({
+          auditEventId: event.id,
+          fieldName: change.fieldName,
+          oldValue: change.oldValue as string,
+          newValue: change.newValue as string,
+        }),
+      ),
+    );
+  }
+
+  async findEntityHistory(
+    aggregateType: string,
+    aggregateId: string,
+    requesterPermissions: string[],
+  ): Promise<EntityHistoryEvent[]> {
+    const events = await this.auditEvents.find({
+      where: { aggregateType, aggregateId },
+      order: { occurredAt: 'DESC' },
+    });
+    if (events.length === 0) return [];
+
+    const changes = await this.auditEventChanges.find({
+      where: { auditEventId: In(events.map((event) => event.id)) },
+    });
+    const changesByEvent = new Map<string, AuditEventChange[]>();
+    for (const change of changes) {
+      const list = changesByEvent.get(change.auditEventId) ?? [];
+      list.push(change);
+      changesByEvent.set(change.auditEventId, list);
+    }
+
+    const canViewSensitive = canViewSensitiveFields(
+      aggregateType,
+      requesterPermissions,
+    );
+
+    return events.map((event) => ({
+      id: event.id,
+      occurredAt: event.occurredAt,
+      eventType: event.eventType,
+      actorUserId: event.actorUserId,
+      actorRole: event.actorRole,
+      targetLabel: event.targetLabel,
+      reason: event.reason,
+      changes: (changesByEvent.get(event.id) ?? []).map((change) => {
+        const sensitive = isSensitiveField(aggregateType, change.fieldName);
+        const masked = sensitive && !canViewSensitive;
+        return {
+          fieldName: change.fieldName,
+          fieldLabel: getFieldLabel(aggregateType, change.fieldName),
+          oldValue: masked ? SENSITIVE_MASK : change.oldValue,
+          newValue: masked ? SENSITIVE_MASK : change.newValue,
+        };
+      }),
+    }));
+  }
+
+  private buildDefaultReason(
+    aggregateType: string,
+    eventType: AuditEventType,
+    changes: EntityFieldChange[],
+  ): string {
+    const labels = changes.map((change) =>
+      getFieldLabel(aggregateType, change.fieldName),
+    );
+    if (eventType === AuditEventType.DELETED) return 'Đã xoá bản ghi';
+    if (eventType === AuditEventType.STATUS_CHANGED) {
+      return labels.length
+        ? `Đổi trạng thái: ${labels.join(', ')}`
+        : 'Đổi trạng thái';
+    }
+    return labels.length
+      ? `Cập nhật: ${labels.join(', ')}`
+      : 'Cập nhật bản ghi';
   }
 }

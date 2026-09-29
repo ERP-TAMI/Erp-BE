@@ -6,6 +6,7 @@ import { DocumentVersion } from '../documents/entities/DocumentVersion.entity';
 import { DraftBomFamilie } from '../draft-boms/entities/DraftBomFamilie.entity';
 import { PurchaseOrderProduct } from '../purchase-orders/entities/PurchaseOrderProduct.entity';
 import { StorageModule } from '../storage/storage.module';
+import { AuditModule } from '../audit/audit.module';
 import { StylesService } from './styles.service';
 import { StylesController } from './styles.controller';
 import { StyleOperationStepsService } from './style-operation-steps.service';
@@ -27,6 +28,7 @@ import { StyleOperationStepsExportService } from './style-operation-steps-export
       PurchaseOrderProduct,
     ]),
     StorageModule,
+    AuditModule,
   ],
   controllers: [
     StylesController,

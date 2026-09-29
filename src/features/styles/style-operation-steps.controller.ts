@@ -11,8 +11,12 @@ import {
   HttpCode,
   HttpStatus,
   Res,
+  Req,
 } from '@nestjs/common';
-import { Response } from 'express';
+import { Request, Response } from 'express';
+import { RequestUser } from '../auth/jwt-payload.type';
+
+type AuthenticatedRequest = Request & { user: RequestUser };
 import {
   ApiTags,
   ApiOperation,
@@ -114,8 +118,12 @@ export class StyleOperationStepsController {
   async create(
     @Param('styleId', ParseUUIDPipe) styleId: string,
     @Body() dto: CreateStyleOperationStepDto,
+    @Req() req: AuthenticatedRequest,
   ): Promise<StyleOperationStep> {
-    return this.service.create(styleId, dto);
+    return this.service.create(styleId, dto, {
+      id: req.user.id,
+      roleCode: req.user.roleCode,
+    });
   }
 
   @Put()
@@ -130,12 +138,16 @@ export class StyleOperationStepsController {
   async replaceAll(
     @Param('styleId', ParseUUIDPipe) styleId: string,
     @Body() body: BulkSaveStyleOperationStepsDto,
+    @Req() req: AuthenticatedRequest,
   ): Promise<StyleOperationStep[]> {
     const steps = Array.isArray(body) ? body : body?.steps || [];
     const as3bCmBaseDays = Array.isArray(body)
       ? undefined
       : body?.as3bCmBaseDays;
-    return this.service.createMany(styleId, steps, as3bCmBaseDays);
+    return this.service.createMany(styleId, steps, as3bCmBaseDays, {
+      id: req.user.id,
+      roleCode: req.user.roleCode,
+    });
   }
 
   @Patch(':stepId')
@@ -146,8 +158,12 @@ export class StyleOperationStepsController {
     @Param('styleId', ParseUUIDPipe) styleId: string,
     @Param('stepId', ParseUUIDPipe) stepId: string,
     @Body() dto: UpdateStyleOperationStepDto,
+    @Req() req: AuthenticatedRequest,
   ): Promise<StyleOperationStep> {
-    return this.service.update(styleId, stepId, dto);
+    return this.service.update(styleId, stepId, dto, {
+      id: req.user.id,
+      roleCode: req.user.roleCode,
+    });
   }
 
   @Delete(':stepId')
@@ -158,7 +174,11 @@ export class StyleOperationStepsController {
   async remove(
     @Param('styleId', ParseUUIDPipe) styleId: string,
     @Param('stepId', ParseUUIDPipe) stepId: string,
+    @Req() req: AuthenticatedRequest,
   ): Promise<void> {
-    return this.service.remove(styleId, stepId);
+    return this.service.remove(styleId, stepId, {
+      id: req.user.id,
+      roleCode: req.user.roleCode,
+    });
   }
 }
