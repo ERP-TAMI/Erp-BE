@@ -36,6 +36,9 @@ export class StyleOperationStepsService {
     dto: CreateStyleOperationStepDto,
   ): Promise<StyleOperationStep> {
     await this.ensureStyleExists(styleId);
+    if (dto.stageId) {
+      await this.ensureStageExists(dto.stageId);
+    }
     const step = this.stepRepo.create({
       styleId,
       parentStepId: dto.parentStepId ?? null,
@@ -101,6 +104,29 @@ export class StyleOperationStepsService {
 
         const groupRows = await manager.query('SELECT id FROM stage_groups');
         groupRows.forEach((r: { id: string }) => validGroupIds.add(r.id));
+
+        // Trước đây stageId/groupId không hợp lệ bị âm thầm set về null — người
+        // dùng lưu xong tưởng đã gán đúng công đoạn/nhóm nhưng thực ra mất
+        // trắng không cảnh báo. Giờ chặn sớm, liệt kê rõ dòng nào bị lỗi.
+        const invalidRefs: string[] = [];
+        steps.forEach((step, index) => {
+          const line = index + 1;
+          if (step.stageId && !validStageIds.has(step.stageId)) {
+            invalidRefs.push(
+              `Dòng ${line} ("${step.stepName || ''}"): công đoạn (stage) không tồn tại`,
+            );
+          }
+          if (step.groupId && !validGroupIds.has(step.groupId)) {
+            invalidRefs.push(
+              `Dòng ${line} ("${step.stepName || ''}"): nhóm công đoạn (group) không tồn tại`,
+            );
+          }
+        });
+        if (invalidRefs.length > 0) {
+          throw new BadRequestException(
+            `Dữ liệu công đoạn tham chiếu không hợp lệ:\n${invalidRefs.join('\n')}`,
+          );
+        }
 
         const tempIdToRealIdMap = new Map<string, string>();
         const savedStepsMap = new Map<number, StyleOperationStep>();
@@ -241,13 +267,11 @@ export class StyleOperationStepsService {
   }
 
   async update(
+    styleId: string,
     stepId: string,
     dto: UpdateStyleOperationStepDto,
   ): Promise<StyleOperationStep> {
-    const step = await this.stepRepo.findOne({ where: { id: stepId } });
-    if (!step) {
-      throw new NotFoundException(`Công đoạn #${stepId} không tồn tại`);
-    }
+    const step = await this.findOwnedStep(styleId, stepId);
 
     if (dto.stepName !== undefined) step.stepName = dto.stepName;
     if (dto.description !== undefined)
@@ -260,19 +284,22 @@ export class StyleOperationStepsService {
     if (dto.isGroup !== undefined) step.isGroup = dto.isGroup;
     if (dto.groupId !== undefined) step.groupId = dto.groupId ?? null;
     if (dto.groupItems !== undefined) step.groupItems = dto.groupItems ?? null;
-    if (dto.parentStepId !== undefined)
-      step.parentStepId = dto.parentStepId ?? null;
-    if (dto.stageId !== undefined) {
-      if (dto.stageId) {
-        const rows = await this.stepRepo.query(
-          'SELECT 1 FROM stages WHERE id = $1',
-          [dto.stageId],
-        );
-        if (rows.length === 0) {
+    if (dto.parentStepId !== undefined) {
+      if (dto.parentStepId) {
+        const parent = await this.stepRepo.findOne({
+          where: { id: dto.parentStepId },
+        });
+        if (!parent) {
           throw new BadRequestException(
-            `Công đoạn (stage) #${dto.stageId} không tồn tại`,
+            `Công đoạn cha #${dto.parentStepId} không tồn tại`,
           );
         }
+      }
+      step.parentStepId = dto.parentStepId ?? null;
+    }
+    if (dto.stageId !== undefined) {
+      if (dto.stageId) {
+        await this.ensureStageExists(dto.stageId);
       }
       step.stageId = dto.stageId ?? null;
     }
@@ -280,11 +307,8 @@ export class StyleOperationStepsService {
     return this.stepRepo.save(step);
   }
 
-  async remove(stepId: string): Promise<void> {
-    const step = await this.stepRepo.findOne({ where: { id: stepId } });
-    if (!step) {
-      throw new NotFoundException(`Công đoạn #${stepId} không tồn tại`);
-    }
+  async remove(styleId: string, stepId: string): Promise<void> {
+    const step = await this.findOwnedStep(styleId, stepId);
 
     // Nếu là nhóm công đoạn, xoá tất cả công đoạn con
     if (step.isGroup) {
@@ -294,18 +318,27 @@ export class StyleOperationStepsService {
     await this.stepRepo.remove(step);
   }
 
-  async reorder(
+  private async findOwnedStep(
     styleId: string,
-    orderedIds: string[],
-  ): Promise<StyleOperationStep[]> {
-    await this.ensureStyleExists(styleId);
+    stepId: string,
+  ): Promise<StyleOperationStep> {
+    const step = await this.stepRepo.findOne({ where: { id: stepId } });
+    if (!step || step.styleId !== styleId) {
+      throw new NotFoundException(`Công đoạn #${stepId} không tồn tại`);
+    }
+    return step;
+  }
 
-    const updates = (orderedIds || []).map((id, index) =>
-      this.stepRepo.update(id, { orderIndex: index }),
+  private async ensureStageExists(stageId: string): Promise<void> {
+    const rows = await this.stepRepo.query(
+      'SELECT 1 FROM stages WHERE id = $1',
+      [stageId],
     );
-    await Promise.all(updates);
-
-    return this.findByStyleId(styleId);
+    if (rows.length === 0) {
+      throw new BadRequestException(
+        `Công đoạn (stage) #${stageId} không tồn tại`,
+      );
+    }
   }
 
   private async ensureStyleExists(styleId: string): Promise<void> {

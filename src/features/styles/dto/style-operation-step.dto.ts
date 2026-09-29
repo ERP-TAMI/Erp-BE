@@ -245,13 +245,3 @@ export class BulkSaveStyleOperationStepsDto {
   @Min(1)
   as3bCmBaseDays?: number;
 }
-
-export class ReorderStyleOperationStepsDto {
-  @ApiProperty({
-    description: 'Mảng chứa ID các công đoạn theo thứ tự mới',
-    type: [String],
-  })
-  @IsArray()
-  @IsString({ each: true })
-  orderedIds: string[];
-}

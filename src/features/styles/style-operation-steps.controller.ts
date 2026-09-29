@@ -27,7 +27,6 @@ import {
   CreateStyleOperationStepDto,
   UpdateStyleOperationStepDto,
   BulkSaveStyleOperationStepsDto,
-  ReorderStyleOperationStepsDto,
 } from './dto/style-operation-step.dto';
 import { StyleOperationStep } from './entities/StyleOperationStep.entity';
 
@@ -144,11 +143,11 @@ export class StyleOperationStepsController {
   @ApiResponse({ status: 200, description: 'Công đoạn đã được cập nhật' })
   @ApiResponse({ status: 404, description: 'Không tìm thấy công đoạn' })
   async update(
-    @Param('styleId', ParseUUIDPipe) _styleId: string,
+    @Param('styleId', ParseUUIDPipe) styleId: string,
     @Param('stepId', ParseUUIDPipe) stepId: string,
     @Body() dto: UpdateStyleOperationStepDto,
   ): Promise<StyleOperationStep> {
-    return this.service.update(stepId, dto);
+    return this.service.update(styleId, stepId, dto);
   }
 
   @Delete(':stepId')
@@ -157,23 +156,9 @@ export class StyleOperationStepsController {
   @ApiResponse({ status: 204, description: 'Đã xóa công đoạn' })
   @ApiResponse({ status: 404, description: 'Không tìm thấy công đoạn' })
   async remove(
-    @Param('styleId', ParseUUIDPipe) _styleId: string,
+    @Param('styleId', ParseUUIDPipe) styleId: string,
     @Param('stepId', ParseUUIDPipe) stepId: string,
   ): Promise<void> {
-    return this.service.remove(stepId);
-  }
-
-  @Put('reorder')
-  @ApiOperation({ summary: 'Sắp xếp lại thứ tự các công đoạn quy trình' })
-  @ApiResponse({
-    status: 200,
-    description: 'Danh sách công đoạn đã được sắp xếp',
-  })
-  @ApiResponse({ status: 404, description: 'Không tìm thấy mẫu Fit' })
-  async reorder(
-    @Param('styleId', ParseUUIDPipe) styleId: string,
-    @Body() body: ReorderStyleOperationStepsDto,
-  ): Promise<StyleOperationStep[]> {
-    return this.service.reorder(styleId, body.orderedIds || []);
+    return this.service.remove(styleId, stepId);
   }
 }
