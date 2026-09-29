@@ -4,8 +4,8 @@ import { PRODUCTION_ENTITIES } from './entities';
 import { Style } from '../styles/entities/Style.entity';
 import { StyleDocument } from '../styles/entities/StyleDocument.entity';
 import { Document } from '../documents/entities/Document.entity';
-import { BillOfMaterials } from '../boms/entities/BillOfMaterials.entity';
-import { BillOfMaterialLine } from '../boms/entities/BillOfMaterialLine.entity';
+import { Bom } from '../boms/entities/Bom.entity';
+import { BomLine } from '../boms/entities/BomLine.entity';
 import { StorageModule } from '../storage/storage.module';
 import { ProductionController } from './production.controller';
 import { ProductionService } from './production.service';
@@ -19,8 +19,8 @@ import { StyleProductionDocsService } from './style-production-docs.service';
       Style,
       StyleDocument,
       Document,
-      BillOfMaterials,
-      BillOfMaterialLine,
+      Bom,
+      BomLine,
     ]),
     StorageModule,
   ],
