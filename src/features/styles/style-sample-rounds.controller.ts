@@ -13,6 +13,7 @@ import {
 } from '@nestjs/common';
 import { ApiOperation, ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { Auth } from '../../common/decorators/auth.decorator';
+import { Permission } from '../../common/decorators/permission.decorator';
 import {
   StyleSampleRoundsService,
   StyleSampleRoundItem,
@@ -27,9 +28,12 @@ import {
   ConfirmStyleSampleImageDto,
 } from './dto/style-sample-round.dto';
 
+const VIEW_PERMISSION = 'master_data.styles.view';
+const MANAGE_PERMISSION = 'master_data.styles.manage';
+
 @ApiTags('style-sample-rounds')
 @ApiBearerAuth()
-@Auth()
+@Auth(VIEW_PERMISSION)
 @Controller('styles/:styleId/sample-rounds')
 export class StyleSampleRoundsController {
   constructor(private readonly service: StyleSampleRoundsService) {}
@@ -43,6 +47,7 @@ export class StyleSampleRoundsController {
   }
 
   @Post()
+  @Permission(MANAGE_PERMISSION)
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Tạo lần may mẫu mới cho mẫu Fit' })
   async create(
@@ -55,6 +60,7 @@ export class StyleSampleRoundsController {
   }
 
   @Patch(':roundId')
+  @Permission(MANAGE_PERMISSION)
   @ApiOperation({ summary: 'Sửa thông tin lần may mẫu' })
   async update(
     @Param('styleId', ParseUUIDPipe) styleId: string,
@@ -67,6 +73,7 @@ export class StyleSampleRoundsController {
   }
 
   @Post(':roundId/images/presign')
+  @Permission(MANAGE_PERMISSION)
   @ApiOperation({ summary: 'Xin presigned URL để upload ảnh lần may mẫu' })
   async presignImage(
     @Param('styleId', ParseUUIDPipe) styleId: string,
@@ -77,6 +84,7 @@ export class StyleSampleRoundsController {
   }
 
   @Post(':roundId/images/confirm')
+  @Permission(MANAGE_PERMISSION)
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Xác nhận đã upload xong, ghi ảnh vào lần may mẫu' })
   async confirmImage(
@@ -100,6 +108,7 @@ export class StyleSampleRoundsController {
   }
 
   @Delete(':roundId/images/:imageId')
+  @Permission(MANAGE_PERMISSION)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Xoá ảnh khỏi lần may mẫu' })
   async removeImage(

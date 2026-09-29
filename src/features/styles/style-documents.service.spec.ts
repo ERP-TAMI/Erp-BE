@@ -210,6 +210,22 @@ describe('StyleDocumentsService', () => {
       expect(storageMock.deleteObject).toHaveBeenCalledWith(objectKey);
       expect(docRepoMock.save).not.toHaveBeenCalled();
     });
+
+    it('rejects when the uploaded content does not match its declared extension (magic-byte check)', async () => {
+      storageMock.getObjectHead.mockResolvedValueOnce(
+        Buffer.from('<html><script>alert(1)</script></html>'),
+      );
+
+      await expect(
+        service.confirm(STYLE_ID, 'user-1', {
+          objectKey: `styles/${STYLE_ID}/documents/fit_attachment/fake.pdf`,
+          fileName: 'fake.pdf',
+          mimeType: 'application/pdf',
+          sizeBytes: 40,
+        }),
+      ).rejects.toThrow(BadRequestException);
+      expect(docRepoMock.save).not.toHaveBeenCalled();
+    });
   });
 
   describe('list', () => {

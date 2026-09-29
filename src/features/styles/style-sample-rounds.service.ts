@@ -201,24 +201,40 @@ export class StyleSampleRoundsService {
     dto: CreateStyleSampleRoundDto,
     userId?: string,
   ): Promise<StyleSampleRoundItem> {
-    await this.assertStyleExists(styleId);
-
     const status = dto.status || SampleStatus.WORKING;
     const isReviewed = status !== SampleStatus.WORKING;
 
-    const currentCount = await this.roundRepo.count({ where: { styleId } });
-    const round = this.roundRepo.create({
-      styleId,
-      roundNo: currentCount + 1,
-      sampleDate: dto.sampleDate ? new Date(dto.sampleDate) : new Date(),
-      feedback: dto.feedback || null,
-      status,
-      createdBy: userId,
-      createdAt: new Date(),
-      reviewedBy: isReviewed ? userId : null,
-      reviewedAt: isReviewed ? new Date() : null,
+    // roundNo = count()+1 đụng unique constraint nếu 2 request tạo round cùng
+    // lúc cho cùng 1 style (cả hai đọc cùng count trước khi insert). Khoá
+    // pessimistic_write trên chính style trong lúc đếm+ghi để serialize các
+    // request cùng style, không ảnh hưởng style khác.
+    const saved = await this.dataSource.transaction(async (manager) => {
+      const style = await manager.findOne(Style, {
+        where: { id: styleId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!style) {
+        throw new NotFoundException(
+          `Không tìm thấy mẫu Fit với ID: ${styleId}`,
+        );
+      }
+
+      const roundRepo = manager.getRepository(StyleSampleRound);
+      const currentCount = await roundRepo.count({ where: { styleId } });
+      const round = roundRepo.create({
+        styleId,
+        roundNo: currentCount + 1,
+        sampleDate: dto.sampleDate ? new Date(dto.sampleDate) : new Date(),
+        feedback: dto.feedback || null,
+        status,
+        createdBy: userId,
+        createdAt: new Date(),
+        reviewedBy: isReviewed ? userId : null,
+        reviewedAt: isReviewed ? new Date() : null,
+      });
+      return roundRepo.save(round);
     });
-    const saved = await this.roundRepo.save(round);
+
     return this.toItem(saved, []);
   }
 

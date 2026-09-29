@@ -21,6 +21,11 @@ import {
   DEFAULT_MAX_UPLOAD_SIZE_BYTES,
 } from '../../common/utils/file-validation';
 import {
+  MAGIC_BYTES_SAMPLE_SIZE,
+  TEXT_EXTENSIONS_SCANNED_IN_FULL,
+  validateFileMagicBytes,
+} from '../../common/utils/file-magic-bytes.util';
+import {
   PRESIGN_GET_EXPIRY_SECONDS,
   PRESIGN_PUT_EXPIRY_SECONDS,
   STORAGE_SERVICE,
@@ -138,6 +143,19 @@ export class StyleDocumentsService {
         `Dung lượng tệp vượt quá giới hạn ${(DEFAULT_MAX_UPLOAD_SIZE_BYTES / (1024 * 1024)).toFixed(0)}MB.`,
       );
     }
+
+    // Server không nhận file thô (client PUT thẳng lên S3), nên phần kiểm tra
+    // magic-byte phải chạy ở đây, đọc từ nội dung thật đã lưu trên S3 — client
+    // tự khai fileName/mimeType, một file HTML/script đổi đuôi .pdf vẫn qua
+    // được assertAllowedFile() vì hàm đó chỉ so tên/mimeType.
+    const ext = extname(dto.fileName).toLowerCase();
+    const magicByteSample = TEXT_EXTENSIONS_SCANNED_IN_FULL.has(ext)
+      ? await this.storage.getObjectBuffer(dto.objectKey)
+      : await this.storage.getObjectHead(
+          dto.objectKey,
+          MAGIC_BYTES_SAMPLE_SIZE,
+        );
+    validateFileMagicBytes(ext, magicByteSample);
 
     const now = new Date();
 
