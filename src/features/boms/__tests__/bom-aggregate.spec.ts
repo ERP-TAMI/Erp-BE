@@ -41,9 +41,61 @@ describe('BOM V2 NPL Aggregate & Backend Completion (PR-07 Specification)', () =
     limit: number;
   };
 
-  function eligibleBoms() {
+  function eligibleBoms(state?: QueryState) {
+    const monthStart = state?.filters
+      .map((filter) => filter.params?.monthStart)
+      .find((value): value is Date => value instanceof Date);
+    const monthEnd = state?.filters
+      .map((filter) => filter.params?.monthEnd)
+      .find((value): value is Date => value instanceof Date);
+    const yearStart = state?.filters
+      .map((filter) => filter.params?.yearStart)
+      .find((value): value is Date => value instanceof Date);
+    const yearEnd = state?.filters
+      .map((filter) => filter.params?.yearEnd)
+      .find((value): value is Date => value instanceof Date);
+    const startDate = state?.filters
+      .map((filter) => filter.params?.startDate)
+      .find((value): value is Date => value instanceof Date);
+    const endExclusive = state?.filters
+      .map((filter) => filter.params?.endExclusive)
+      .find((value): value is Date => value instanceof Date);
+    const selectedProductIds = state?.filters
+      .map((filter) => filter.params?.purchaseOrderProductIds)
+      .find(Array.isArray) as string[] | undefined;
+
     return mockBoms.filter((bom) => {
       if (bom.bomType !== BomType.PO || bom.discontinuedAt) return false;
+      if (
+        monthStart &&
+        monthEnd &&
+        (!bom.createdAt ||
+          bom.createdAt < monthStart ||
+          bom.createdAt >= monthEnd)
+      ) {
+        return false;
+      }
+      if (
+        yearStart &&
+        yearEnd &&
+        (!bom.createdAt ||
+          bom.createdAt < yearStart ||
+          bom.createdAt >= yearEnd)
+      ) {
+        return false;
+      }
+      if (
+        (startDate && (!bom.createdAt || bom.createdAt < startDate)) ||
+        (endExclusive && (!bom.createdAt || bom.createdAt >= endExclusive))
+      ) {
+        return false;
+      }
+      if (
+        selectedProductIds?.length &&
+        !selectedProductIds.includes(bom.purchaseOrderProductId)
+      ) {
+        return false;
+      }
       const revision = mockRevisions.find(
         (candidate) => candidate.id === bom.currentRevisionId,
       );
@@ -58,7 +110,7 @@ describe('BOM V2 NPL Aggregate & Backend Completion (PR-07 Specification)', () =
     const materialSearch = state.filters
       .map((filter) => filter.params?.materialSearch)
       .find((value) => typeof value === 'string');
-    const eligible = eligibleBoms();
+    const eligible = eligibleBoms(state);
     const revisionIds = new Set(eligible.map((bom) => bom.currentRevisionId));
 
     return mockLines.filter((line) => {
@@ -77,7 +129,7 @@ describe('BOM V2 NPL Aggregate & Backend Completion (PR-07 Specification)', () =
   }
 
   function queryGroupRows(state: QueryState) {
-    const eligible = eligibleBoms();
+    const eligible = eligibleBoms(state);
     const lines = selectedLines(state);
     const groups = new Map<string, any>();
 
@@ -178,7 +230,7 @@ describe('BOM V2 NPL Aggregate & Backend Completion (PR-07 Specification)', () =
     const hasProduct = aliases.has('productId');
     const groups = new Map<string, any>();
 
-    for (const bom of eligibleBoms()) {
+    for (const bom of eligibleBoms(state)) {
       for (const line of selectedLines(state).filter(
         (candidate) => candidate.revisionId === bom.currentRevisionId,
       )) {
@@ -290,7 +342,7 @@ describe('BOM V2 NPL Aggregate & Backend Completion (PR-07 Specification)', () =
       if (
         state.selections.some((selection) => selection.alias === 'totalBoms')
       ) {
-        const boms = eligibleBoms();
+        const boms = eligibleBoms(state);
         return Promise.resolve({
           totalBoms: boms.length,
           totalProducts: new Set(boms.map((bom) => bom.purchaseOrderProductId))
@@ -321,6 +373,7 @@ describe('BOM V2 NPL Aggregate & Backend Completion (PR-07 Specification)', () =
       bomCode: 'BOM-PO01-P01',
       bomType: BomType.PO,
       purchaseOrderProductId: 'pop-1',
+      createdAt: new Date('2026-09-01T00:00:00.000Z'),
       currentRevisionId: 'rev-po-1',
       discontinuedAt: null,
       rowVersion: 1,
@@ -364,6 +417,7 @@ describe('BOM V2 NPL Aggregate & Backend Completion (PR-07 Specification)', () =
       bomCode: 'BOM-PO01-P02',
       bomType: BomType.PO,
       purchaseOrderProductId: 'pop-2',
+      createdAt: new Date('2026-10-01T00:00:00.000Z'),
       currentRevisionId: 'rev-po-2',
       discontinuedAt: null,
       rowVersion: 1,
@@ -1009,6 +1063,137 @@ describe('BOM V2 NPL Aggregate & Backend Completion (PR-07 Specification)', () =
           popCode: '%pop-uuid-456%',
         },
       );
+    });
+
+    it('filters aggregate BOMs to the selected UTC creation month', async () => {
+      setupAggregateEnv();
+
+      const andWhereSpy = (aggregateAndWhereSpy = jest.fn());
+
+      await aggregateService.aggregate({ month: '2026-09' });
+
+      expect(andWhereSpy).toHaveBeenCalledWith(
+        'bom.created_at >= :monthStart AND bom.created_at < :monthEnd',
+        {
+          monthStart: new Date('2026-09-01T00:00:00.000Z'),
+          monthEnd: new Date('2026-10-01T00:00:00.000Z'),
+        },
+      );
+    });
+
+    it('filters aggregate BOMs to the selected UTC creation year', async () => {
+      setupAggregateEnv();
+
+      const andWhereSpy = (aggregateAndWhereSpy = jest.fn());
+
+      await aggregateService.aggregate({ year: '2026' });
+
+      expect(andWhereSpy).toHaveBeenCalledWith(
+        'bom.created_at >= :yearStart AND bom.created_at < :yearEnd',
+        {
+          yearStart: new Date('2026-01-01T00:00:00.000Z'),
+          yearEnd: new Date('2027-01-01T00:00:00.000Z'),
+        },
+      );
+    });
+
+    it('filters aggregate BOMs by inclusive UTC dates using an exclusive next-day boundary', async () => {
+      setupAggregateEnv();
+
+      const andWhereSpy = (aggregateAndWhereSpy = jest.fn());
+
+      await aggregateService.aggregate({
+        startDate: '2026-09-01',
+        endDate: '2026-09-30',
+      });
+
+      expect(andWhereSpy).toHaveBeenCalledWith('bom.created_at >= :startDate', {
+        startDate: new Date('2026-09-01T00:00:00.000Z'),
+      });
+      expect(andWhereSpy).toHaveBeenCalledWith(
+        'bom.created_at < :endExclusive',
+        { endExclusive: new Date('2026-10-01T00:00:00.000Z') },
+      );
+    });
+
+    it('filters aggregate by the selected set of PO product IDs', async () => {
+      setupAggregateEnv();
+
+      const andWhereSpy = (aggregateAndWhereSpy = jest.fn());
+
+      await aggregateService.aggregate({
+        purchaseOrderProductIds: ['pop-1', 'pop-2'],
+      });
+
+      expect(andWhereSpy).toHaveBeenCalledWith(
+        'pop.id IN (:...purchaseOrderProductIds)',
+        { purchaseOrderProductIds: ['pop-1', 'pop-2'] },
+      );
+    });
+
+    it('returns only the material demand from BOMs created in the selected month', async () => {
+      setupAggregateEnv();
+
+      const result = await aggregateService.aggregate({ month: '2026-09' });
+
+      expect(result.data.map((item) => item.materialId).sort()).toEqual([
+        'mat-A',
+        'mat-B',
+      ]);
+      expect(
+        result.data.find((item) => item.materialId === 'mat-A')
+          ?.totalRequiredQuantity,
+      ).toBe(500);
+      expect(result.meta.totalProducts).toBe(1);
+    });
+
+    it('aggregates the selected calendar year across all months in that year', async () => {
+      setupAggregateEnv();
+
+      const result = await aggregateService.aggregate({ year: '2026' });
+
+      expect(
+        result.data.find((item) => item.materialId === 'mat-A')
+          ?.totalRequiredQuantity,
+      ).toBe(1100);
+      expect(result.meta.totalProducts).toBe(2);
+    });
+
+    it('returns only the material demand created within the selected date range', async () => {
+      setupAggregateEnv();
+
+      const result = await aggregateService.aggregate({
+        startDate: '2026-09-01',
+        endDate: '2026-09-30',
+      });
+
+      expect(result.data.map((item) => item.materialId).sort()).toEqual([
+        'mat-A',
+        'mat-B',
+      ]);
+      expect(
+        result.data.find((item) => item.materialId === 'mat-A')
+          ?.totalRequiredQuantity,
+      ).toBe(500);
+      expect(result.meta.totalProducts).toBe(1);
+    });
+
+    it('returns only the material demand for the selected PO products', async () => {
+      setupAggregateEnv();
+
+      const result = await aggregateService.aggregate({
+        purchaseOrderProductIds: ['pop-2'],
+      });
+
+      expect(result.data.map((item) => item.materialId).sort()).toEqual([
+        'mat-A',
+        'mat-C',
+      ]);
+      expect(
+        result.data.find((item) => item.materialId === 'mat-A')
+          ?.totalRequiredQuantity,
+      ).toBe(600);
+      expect(result.meta.totalProducts).toBe(1);
     });
 
     it('sets costComplete=false and totalEstimatedCost=null when one line has null unitCost and another has valid unitCost', async () => {
