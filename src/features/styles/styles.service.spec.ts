@@ -10,6 +10,7 @@ import { StylesService } from './styles.service';
 import { Style } from './entities/Style.entity';
 import { StyleDocument } from './entities/StyleDocument.entity';
 import { DraftBomFamilie } from '../draft-boms/entities/DraftBomFamilie.entity';
+import { PurchaseOrderProduct } from '../purchase-orders/entities/PurchaseOrderProduct.entity';
 import { StyleStatus } from '../../common/enums/database.enums';
 import { STORAGE_SERVICE } from '../storage/storage.interface';
 
@@ -17,6 +18,7 @@ describe('StylesService', () => {
   let service: StylesService;
   let repositoryMock: any;
   let draftBomFamilyRepositoryMock: any;
+  let poProductRepositoryMock: any;
   let styleDocumentRepositoryMock: any;
   let dataSourceMock: any;
   let managerMock: any;
@@ -60,6 +62,10 @@ describe('StylesService', () => {
       exists: jest.fn().mockResolvedValue(false),
     };
 
+    poProductRepositoryMock = {
+      exists: jest.fn().mockResolvedValue(false),
+    };
+
     styleDocumentRepositoryMock = {
       find: jest.fn().mockResolvedValue([]),
     };
@@ -96,6 +102,10 @@ describe('StylesService', () => {
         {
           provide: getRepositoryToken(DraftBomFamilie),
           useValue: draftBomFamilyRepositoryMock,
+        },
+        {
+          provide: getRepositoryToken(PurchaseOrderProduct),
+          useValue: poProductRepositoryMock,
         },
         {
           provide: getRepositoryToken(StyleDocument),
@@ -322,6 +332,9 @@ describe('StylesService', () => {
       expect(draftBomFamilyRepositoryMock.exists).toHaveBeenCalledWith({
         where: { styleId: STYLE_ID },
       });
+      expect(poProductRepositoryMock.exists).toHaveBeenCalledWith({
+        where: { sourceStyleId: STYLE_ID },
+      });
       expect(managerMock.remove).toHaveBeenCalledWith(
         Style,
         expect.objectContaining({ id: STYLE_ID }),
@@ -331,6 +344,14 @@ describe('StylesService', () => {
     it('throws ConflictException when the style has an unpromoted draft BOM', async () => {
       repositoryMock.findOne.mockResolvedValue({ ...mockStyle });
       draftBomFamilyRepositoryMock.exists.mockResolvedValue(true);
+
+      await expect(service.remove(STYLE_ID)).rejects.toThrow(ConflictException);
+      expect(dataSourceMock.transaction).not.toHaveBeenCalled();
+    });
+
+    it('throws ConflictException when a PO product still references this style as its copy source', async () => {
+      repositoryMock.findOne.mockResolvedValue({ ...mockStyle });
+      poProductRepositoryMock.exists.mockResolvedValue(true);
 
       await expect(service.remove(STYLE_ID)).rejects.toThrow(ConflictException);
       expect(dataSourceMock.transaction).not.toHaveBeenCalled();

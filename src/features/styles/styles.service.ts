@@ -10,6 +10,7 @@ import { DataSource, Repository } from 'typeorm';
 import { Style } from './entities/Style.entity';
 import { StyleDocument } from './entities/StyleDocument.entity';
 import { DraftBomFamilie } from '../draft-boms/entities/DraftBomFamilie.entity';
+import { PurchaseOrderProduct } from '../purchase-orders/entities/PurchaseOrderProduct.entity';
 import { StyleStatus } from '../../common/enums/database.enums';
 import { CreateStyleDto, UpdateStyleDto, StyleQueryDto } from './dto';
 import { STORAGE_SERVICE, StorageService } from '../storage/storage.interface';
@@ -38,6 +39,8 @@ export class StylesService {
     private readonly draftBomFamilyRepository: Repository<DraftBomFamilie>,
     @InjectRepository(StyleDocument)
     private readonly styleDocumentRepository: Repository<StyleDocument>,
+    @InjectRepository(PurchaseOrderProduct)
+    private readonly poProductRepository: Repository<PurchaseOrderProduct>,
     @Inject(STORAGE_SERVICE)
     private readonly storage: StorageService,
     private readonly dataSource: DataSource,
@@ -257,6 +260,19 @@ export class StylesService {
     if (hasDraftBom) {
       throw new ConflictException(
         'Không thể xoá mẫu Fit vì đang có Fit BOM đang soạn thảo (draft) chưa duyệt.',
+      );
+    }
+
+    // source_style_id chỉ ON DELETE SET NULL ở DB (xem
+    // db/database-schema-postgresql15.sql) — nếu không chặn ở đây, xoá style
+    // sẽ âm thầm cắt đứt liên kết "sao chép từ mẫu Fit nào" trên sản phẩm PO
+    // đã copy-from-fit, không còn cách nào truy vết lại sau khi xoá.
+    const hasReferencingPoProducts = await this.poProductRepository.exists({
+      where: { sourceStyleId: id },
+    });
+    if (hasReferencingPoProducts) {
+      throw new ConflictException(
+        'Không thể xoá mẫu Fit vì đang được dùng làm nguồn sao chép cho sản phẩm PO.',
       );
     }
 

@@ -4,6 +4,7 @@ import { STYLES_ENTITIES } from './entities';
 import { Document } from '../documents/entities/Document.entity';
 import { DocumentVersion } from '../documents/entities/DocumentVersion.entity';
 import { DraftBomFamilie } from '../draft-boms/entities/DraftBomFamilie.entity';
+import { PurchaseOrderProduct } from '../purchase-orders/entities/PurchaseOrderProduct.entity';
 import { StorageModule } from '../storage/storage.module';
 import { StylesService } from './styles.service';
 import { StylesController } from './styles.controller';
@@ -23,6 +24,7 @@ import { StyleOperationStepsExportService } from './style-operation-steps-export
       Document,
       DocumentVersion,
       DraftBomFamilie,
+      PurchaseOrderProduct,
     ]),
     StorageModule,
   ],
