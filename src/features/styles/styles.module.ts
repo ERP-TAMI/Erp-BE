@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { STYLES_ENTITIES } from './entities';
 import { Document } from '../documents/entities/Document.entity';
 import { DocumentVersion } from '../documents/entities/DocumentVersion.entity';
+import { DraftBomFamilie } from '../draft-boms/entities/DraftBomFamilie.entity';
 import { StorageModule } from '../storage/storage.module';
 import { StylesService } from './styles.service';
 import { StylesController } from './styles.controller';
@@ -17,7 +18,12 @@ import { StyleOperationStepsExportService } from './style-operation-steps-export
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([...STYLES_ENTITIES, Document, DocumentVersion]),
+    TypeOrmModule.forFeature([
+      ...STYLES_ENTITIES,
+      Document,
+      DocumentVersion,
+      DraftBomFamilie,
+    ]),
     StorageModule,
   ],
   controllers: [

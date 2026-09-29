@@ -6,8 +6,10 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { Style } from './entities/Style.entity';
+import { StyleDocument } from './entities/StyleDocument.entity';
+import { DraftBomFamilie } from '../draft-boms/entities/DraftBomFamilie.entity';
 import { StyleStatus } from '../../common/enums/database.enums';
 import { CreateStyleDto, UpdateStyleDto, StyleQueryDto } from './dto';
 import { STORAGE_SERVICE, StorageService } from '../storage/storage.interface';
@@ -32,8 +34,13 @@ export class StylesService {
   constructor(
     @InjectRepository(Style)
     private readonly styleRepository: Repository<Style>,
+    @InjectRepository(DraftBomFamilie)
+    private readonly draftBomFamilyRepository: Repository<DraftBomFamilie>,
+    @InjectRepository(StyleDocument)
+    private readonly styleDocumentRepository: Repository<StyleDocument>,
     @Inject(STORAGE_SERVICE)
     private readonly storage: StorageService,
+    private readonly dataSource: DataSource,
   ) {}
 
   // baseImageKey stores an S3 object key, never a URL — a presigned URL
@@ -243,8 +250,112 @@ export class StylesService {
 
   async remove(id: string): Promise<void> {
     const style = await this.findOne(id);
+
+    const hasDraftBom = await this.draftBomFamilyRepository.exists({
+      where: { styleId: id },
+    });
+    if (hasDraftBom) {
+      throw new ConflictException(
+        'Không thể xoá mẫu Fit vì đang có Fit BOM đang soạn thảo (draft) chưa duyệt.',
+      );
+    }
+
+    // documents/document_versions bị dùng chung giữa nhiều module (style,
+    // PO, PO product, thư mục nội bộ) qua các bảng junction riêng — style_id
+    // cascade xoá style_documents, nhưng bản thân document/document_versions
+    // (và object S3) không tự dọn theo trước đây, để rác vĩnh viễn không ai
+    // dọn được qua app. Lấy danh sách document trước khi xoá style để biết
+    // "ứng viên" nào cần kiểm tra mồ côi sau khi cascade chạy xong.
+    const linkedDocuments = await this.styleDocumentRepository.find({
+      where: { styleId: id },
+    });
+    const candidateDocumentIds = [
+      ...new Set(linkedDocuments.map((d) => d.documentId)),
+    ];
+
+    let orphanedStorageKeys: string[] = [];
+
     try {
-      await this.styleRepository.remove(style);
+      await this.dataSource.transaction(async (manager) => {
+        await manager.remove(Style, style);
+
+        if (candidateDocumentIds.length === 0) return;
+
+        // Một document có thể vẫn đang được dùng ở nơi khác (style khác, PO,
+        // PO product, thư mục) — chỉ coi là mồ côi khi KHÔNG còn bất kỳ
+        // tham chiếu nào ở tất cả các bảng junction biết tới documents.id.
+        const stillReferencedRows: { document_id: string }[] =
+          await manager.query(
+            `SELECT document_id FROM style_documents WHERE document_id = ANY($1)
+             UNION SELECT document_id FROM folder_documents WHERE document_id = ANY($1)
+             UNION SELECT document_id FROM purchase_order_documents WHERE document_id = ANY($1)
+             UNION SELECT document_id FROM purchase_order_product_documents WHERE document_id = ANY($1)
+             UNION SELECT source_style_document_id AS document_id FROM purchase_order_product_documents WHERE source_style_document_id = ANY($1)`,
+            [candidateDocumentIds],
+          );
+        const stillReferencedIds = new Set(
+          stillReferencedRows.map((r) => r.document_id),
+        );
+        const orphanDocumentIds = candidateDocumentIds.filter(
+          (docId) => !stillReferencedIds.has(docId),
+        );
+        if (orphanDocumentIds.length === 0) return;
+
+        // Riêng từng version cũng có thể bị tham chiếu trực tiếp (ảnh sample,
+        // color card...) độc lập với document cha — bỏ qua toàn bộ document
+        // đó nếu bất kỳ version nào của nó còn bị dùng, an toàn hơn là xoá
+        // một phần.
+        const versionRows: {
+          id: string;
+          document_id: string;
+          storage_key: string;
+        }[] = await manager.query(
+          `SELECT id, document_id, storage_key FROM document_versions WHERE document_id = ANY($1)`,
+          [orphanDocumentIds],
+        );
+        if (versionRows.length === 0) return;
+
+        const versionIds = versionRows.map((v) => v.id);
+        const versionsStillReferencedRows: { document_version_id: string }[] =
+          await manager.query(
+            `SELECT document_version_id FROM product_color_card_versions WHERE document_version_id = ANY($1)
+             UNION SELECT document_version_id FROM production_document_images WHERE document_version_id = ANY($1)
+             UNION SELECT document_version_id FROM purchase_order_product_sample_images WHERE document_version_id = ANY($1)
+             UNION SELECT document_version_id FROM style_sample_images WHERE document_version_id = ANY($1)`,
+            [versionIds],
+          );
+        const referencedVersionIds = new Set(
+          versionsStillReferencedRows.map((r) => r.document_version_id),
+        );
+        const documentIdsWithReferencedVersion = new Set(
+          versionRows
+            .filter((v) => referencedVersionIds.has(v.id))
+            .map((v) => v.document_id),
+        );
+
+        const safeToDeleteDocumentIds = orphanDocumentIds.filter(
+          (docId) => !documentIdsWithReferencedVersion.has(docId),
+        );
+        if (safeToDeleteDocumentIds.length === 0) return;
+
+        orphanedStorageKeys = versionRows
+          .filter((v) => safeToDeleteDocumentIds.includes(v.document_id))
+          .map((v) => v.storage_key);
+
+        // Bỏ con trỏ current_version_id trước để không đụng FK RESTRICT khi
+        // xoá document_versions.
+        await manager.query(
+          `UPDATE documents SET current_version_id = NULL WHERE id = ANY($1)`,
+          [safeToDeleteDocumentIds],
+        );
+        await manager.query(
+          `DELETE FROM document_versions WHERE document_id = ANY($1)`,
+          [safeToDeleteDocumentIds],
+        );
+        await manager.query(`DELETE FROM documents WHERE id = ANY($1)`, [
+          safeToDeleteDocumentIds,
+        ]);
+      });
     } catch (error) {
       if (this.isForeignKeyViolation(error)) {
         throw new ConflictException(
@@ -252,6 +363,17 @@ export class StylesService {
         );
       }
       throw error;
+    }
+
+    // Dọn S3 sau khi transaction DB đã commit thành công — S3 không có giao
+    // dịch nên làm best-effort ở đây; một object sót lại nếu bước này lỗi chỉ
+    // là rác lưu trữ nhỏ, không phải lỗi toàn vẹn dữ liệu.
+    for (const storageKey of orphanedStorageKeys) {
+      try {
+        await this.storage.deleteObject(storageKey);
+      } catch {
+        // best-effort cleanup — bỏ qua, không chặn kết quả xoá style
+      }
     }
   }
 
