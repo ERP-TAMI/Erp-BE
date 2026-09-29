@@ -287,6 +287,61 @@ describe('BomsService (Read Model & Anti N+1 Tests)', () => {
       );
     });
 
+    it('month filter: narrows the list to BOMs created within that calendar month', async () => {
+      const qbMock = {
+        leftJoin: jest.fn().mockReturnThis(),
+        leftJoinAndSelect: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        addOrderBy: jest.fn().mockReturnThis(),
+        skip: jest.fn().mockReturnThis(),
+        take: jest.fn().mockReturnThis(),
+        getManyAndCount: jest.fn().mockResolvedValue([[], 0]),
+      };
+      bomRepoMock.createQueryBuilder.mockReturnValue(qbMock);
+
+      await service.findAll({ month: '2026-09' }, 'SA');
+
+      const rangeCall = qbMock.andWhere.mock.calls.find(
+        ([sql]) =>
+          typeof sql === 'string' && sql.includes('bom.created_at >= :rangeStart'),
+      );
+      expect(rangeCall).toBeDefined();
+      expect(rangeCall?.[1]).toEqual({
+        rangeStart: new Date(Date.UTC(2026, 8, 1)),
+        rangeEnd: new Date(Date.UTC(2026, 9, 1)),
+      });
+    });
+
+    it('startDate/endDate filter takes priority over month/year on the list endpoint', async () => {
+      const qbMock = {
+        leftJoin: jest.fn().mockReturnThis(),
+        leftJoinAndSelect: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        addOrderBy: jest.fn().mockReturnThis(),
+        skip: jest.fn().mockReturnThis(),
+        take: jest.fn().mockReturnThis(),
+        getManyAndCount: jest.fn().mockResolvedValue([[], 0]),
+      };
+      bomRepoMock.createQueryBuilder.mockReturnValue(qbMock);
+
+      await service.findAll(
+        { month: '2026-01', startDate: '2026-09-01', endDate: '2026-09-30' },
+        'SA',
+      );
+
+      const rangeCalls = qbMock.andWhere.mock.calls.filter(
+        ([sql]) =>
+          typeof sql === 'string' && sql.includes('bom.created_at >='),
+      );
+      expect(rangeCalls).toHaveLength(1);
+      expect(rangeCalls[0][1]).toEqual({
+        rangeStart: new Date(Date.UTC(2026, 8, 1, 0, 0, 0, 0)),
+        rangeEnd: new Date(Date.UTC(2026, 8, 30, 23, 59, 59, 999)),
+      });
+    });
+
     it('masks cost fields to null for NVKH and RD roles in list endpoint', async () => {
       const mockBomPo = new Bom();
       mockBomPo.id = 'bom-po-1';
