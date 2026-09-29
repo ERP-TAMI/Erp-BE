@@ -1,7 +1,7 @@
 import { MigrationInterface, QueryRunner } from 'typeorm';
 
-export class GrantNvkhStylesManage1740000000036 implements MigrationInterface {
-  name = 'GrantNvkhStylesManage1740000000036';
+export class GrantNvkhStylesManage1740000000039 implements MigrationInterface {
+  name = 'GrantNvkhStylesManage1740000000039';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.query(`
