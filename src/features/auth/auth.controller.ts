@@ -48,6 +48,7 @@ import {
 import { PasswordResetService } from './password-reset.service';
 import { ProfileService } from './profile.service';
 import { ChangeMyPasswordDto, UpdateMyProfileDto } from './dto/profile.dto';
+import { UpdatePurchaseOrderModeDto } from './dto/update-purchase-order-mode.dto';
 import {
   CHANGE_PASSWORD_RATE_LIMIT,
   CHANGE_PASSWORD_RATE_LIMIT_TTL_MS,
@@ -193,6 +194,18 @@ export class AuthController {
     @Req() req: AuthenticatedRequest,
   ): Promise<AuthUserDto> {
     return this.profileService.updateProfile(dto, req.user);
+  }
+
+  @Patch('me/purchase-order-mode')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOkResponse({ type: AuthUserDto })
+  @ApiForbiddenResponse({ description: 'Only SA accounts can change PO mode' })
+  updateMyPurchaseOrderMode(
+    @Body() dto: UpdatePurchaseOrderModeDto,
+    @Req() req: AuthenticatedRequest,
+  ): Promise<AuthUserDto> {
+    return this.authService.updatePurchaseOrderMode(req.user.id, dto.mode);
   }
 
   @Patch('me/password')

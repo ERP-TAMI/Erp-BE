@@ -1,3 +1,5 @@
+import { PurchaseOrderMode } from '../../common/enums/purchase-order-mode.enum';
+
 export type JwtPayload = {
   sub: string;
   email: string;
@@ -11,4 +13,5 @@ export type RequestUser = {
   email: string;
   roleCode: string;
   permissions: string[];
+  purchaseOrderMode: PurchaseOrderMode;
 };

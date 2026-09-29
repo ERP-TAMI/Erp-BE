@@ -102,7 +102,42 @@ export class BomAggregateService {
       });
     }
 
-    if (query.purchaseOrderProductId?.trim()) {
+    if (query.startDate || query.endDate) {
+      if (query.startDate) {
+        qb.andWhere('bom.created_at >= :startDate', {
+          startDate: new Date(`${query.startDate}T00:00:00.000Z`),
+        });
+      }
+      if (query.endDate) {
+        const endExclusive = new Date(`${query.endDate}T00:00:00.000Z`);
+        endExclusive.setUTCDate(endExclusive.getUTCDate() + 1);
+        qb.andWhere('bom.created_at < :endExclusive', { endExclusive });
+      }
+    } else if (query.month) {
+      const [year, month] = query.month.split('-').map(Number);
+      qb.andWhere(
+        'bom.created_at >= :monthStart AND bom.created_at < :monthEnd',
+        {
+          monthStart: new Date(Date.UTC(year, month - 1, 1)),
+          monthEnd: new Date(Date.UTC(year, month, 1)),
+        },
+      );
+    } else if (query.year) {
+      const year = Number(query.year);
+      qb.andWhere(
+        'bom.created_at >= :yearStart AND bom.created_at < :yearEnd',
+        {
+          yearStart: new Date(Date.UTC(year, 0, 1)),
+          yearEnd: new Date(Date.UTC(year + 1, 0, 1)),
+        },
+      );
+    }
+
+    if (query.purchaseOrderProductIds?.length) {
+      qb.andWhere('pop.id IN (:...purchaseOrderProductIds)', {
+        purchaseOrderProductIds: query.purchaseOrderProductIds,
+      });
+    } else if (query.purchaseOrderProductId?.trim()) {
       const term = query.purchaseOrderProductId.trim();
       qb.andWhere(
         '(pop.id::text = :popId OR pop.product_code ILIKE :popCode)',

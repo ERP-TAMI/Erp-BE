@@ -12,6 +12,7 @@ import {
   HttpCode,
   HttpStatus,
   Req,
+  UseGuards,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -44,12 +45,17 @@ import {
   UpdatePoProductDto,
   SaveProductOperationStepsDto,
   CreateProductSampleRoundDto,
+  UpdateProductSampleRoundDto,
+  PresignProductSampleImageDto,
+  ConfirmProductSampleImageDto,
   PresignPoDocumentDto,
   ConfirmPoDocumentDto,
 } from './dto';
 import { PurchaseOrder } from './entities/PurchaseOrder.entity';
 import { PurchaseOrderProduct } from './entities/PurchaseOrderProduct.entity';
 import { PurchaseOrderStatusHistory } from './entities/PurchaseOrderStatusHistory.entity';
+import { PurchaseOrderWriteAccessGuard } from './guards/purchase-order-write-access.guard';
+import { PurchaseOrderFullAccessGuard } from '../../common/guards/purchase-order-full-access.guard';
 
 @ApiTags('purchase-orders')
 @ApiBearerAuth()
@@ -63,6 +69,7 @@ export class PurchaseOrdersController {
   constructor(private readonly service: PurchaseOrdersService) {}
 
   @Post()
+  @UseGuards(PurchaseOrderWriteAccessGuard)
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Tạo mới đơn hàng Purchase Order (PO)' })
   @ApiResponse({ status: 201, description: 'Đơn hàng PO được tạo thành công' })
@@ -122,6 +129,7 @@ export class PurchaseOrdersController {
   }
 
   @Patch(':id')
+  @UseGuards(PurchaseOrderWriteAccessGuard)
   @ApiOperation({ summary: 'Cập nhật thông tin đơn hàng PO' })
   @ApiResponse({ status: 200, description: 'Đơn hàng PO đã được cập nhật' })
   @ApiResponse({ status: 400, description: 'PO đã ở trạng thái Đã khóa' })
@@ -136,6 +144,7 @@ export class PurchaseOrdersController {
   }
 
   @Delete(':id')
+  @UseGuards(PurchaseOrderWriteAccessGuard)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Xóa đơn hàng PO (chỉ khi còn ở trạng thái Nháp)' })
   @ApiResponse({ status: 204, description: 'Đã xóa đơn hàng PO' })
@@ -149,6 +158,7 @@ export class PurchaseOrdersController {
   }
 
   @Patch(':id/status')
+  @UseGuards(PurchaseOrderWriteAccessGuard)
   @ApiOperation({ summary: 'Chuyển trạng thái đơn hàng PO (State machine)' })
   @ApiResponse({ status: 200, description: 'Trạng thái PO đã được cập nhật' })
   @ApiResponse({
@@ -179,6 +189,7 @@ export class PurchaseOrdersController {
   }
 
   @Post(':id/products')
+  @UseGuards(PurchaseOrderWriteAccessGuard)
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Thêm sản phẩm mới vào đơn hàng PO' })
   @ApiResponse({ status: 201, description: 'Sản phẩm đã được thêm vào PO' })
@@ -208,6 +219,7 @@ export class PurchaseOrdersController {
   }
 
   @Patch(':id/products/:productId')
+  @UseGuards(PurchaseOrderWriteAccessGuard)
   @ApiOperation({ summary: 'Cập nhật sản phẩm trong đơn hàng PO' })
   @ApiResponse({ status: 200, description: 'Sản phẩm đã được cập nhật' })
   @ApiResponse({ status: 400, description: 'PO đã khóa' })
@@ -223,6 +235,7 @@ export class PurchaseOrdersController {
   }
 
   @Delete(':id/products/:productId')
+  @UseGuards(PurchaseOrderWriteAccessGuard)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Xóa sản phẩm khỏi đơn hàng PO' })
   @ApiResponse({ status: 204, description: 'Đã xóa sản phẩm khỏi PO' })
@@ -236,6 +249,7 @@ export class PurchaseOrdersController {
   }
 
   @Patch(':id/products/:productId/status')
+  @UseGuards(PurchaseOrderWriteAccessGuard)
   @ApiOperation({ summary: 'Cập nhật trạng thái sản phẩm PO' })
   @ApiResponse({ status: 200, description: 'Đã cập nhật trạng thái sản phẩm' })
   async updateProductStatus(
@@ -265,6 +279,7 @@ export class PurchaseOrdersController {
   }
 
   @Put(':id/products/:productId/operation-steps')
+  @UseGuards(PurchaseOrderWriteAccessGuard)
   @ApiOperation({ summary: 'Lưu bảng công đoạn của sản phẩm' })
   async saveProductOperationSteps(
     @Param('productId', ParseUUIDPipe) productId: string,
@@ -284,6 +299,7 @@ export class PurchaseOrdersController {
   }
 
   @Post(':id/products/:productId/sample-rounds')
+  @UseGuards(PurchaseOrderWriteAccessGuard)
   @ApiOperation({ summary: 'Tạo đợt may mẫu mới cho sản phẩm' })
   async createProductSampleRound(
     @Param('productId', ParseUUIDPipe) productId: string,
@@ -292,6 +308,103 @@ export class PurchaseOrdersController {
   ) {
     const userId = req?.user?.id || req?.user?.sub;
     return this.service.createProductSampleRound(productId, dto, userId);
+  }
+
+  @Patch(':id/products/:productId/sample-rounds/:roundId')
+  @UseGuards(PurchaseOrderWriteAccessGuard)
+  @ApiOperation({ summary: 'Sửa thông tin đợt may mẫu' })
+  async updateProductSampleRound(
+    @Param('id', ParseUUIDPipe) poId: string,
+    @Param('productId', ParseUUIDPipe) productId: string,
+    @Param('roundId', ParseUUIDPipe) roundId: string,
+    @Body() dto: UpdateProductSampleRoundDto,
+    @Req() req?: any,
+  ) {
+    const userId = req?.user?.id || req?.user?.sub;
+    return this.service.updateProductSampleRound(
+      poId,
+      productId,
+      roundId,
+      dto,
+      userId,
+    );
+  }
+
+  @Post(':id/products/:productId/sample-rounds/:roundId/images/presign')
+  @UseGuards(PurchaseOrderWriteAccessGuard)
+  @ApiOperation({ summary: 'Xin presigned URL để upload ảnh đợt may mẫu' })
+  async presignProductSampleImage(
+    @Param('id', ParseUUIDPipe) poId: string,
+    @Param('productId', ParseUUIDPipe) productId: string,
+    @Param('roundId', ParseUUIDPipe) roundId: string,
+    @Body() dto: PresignProductSampleImageDto,
+  ) {
+    return this.service.presignProductSampleImage(
+      poId,
+      productId,
+      roundId,
+      dto,
+    );
+  }
+
+  @Post(':id/products/:productId/sample-rounds/:roundId/images/confirm')
+  @UseGuards(PurchaseOrderWriteAccessGuard)
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary: 'Xác nhận đã upload xong, ghi ảnh vào đợt may mẫu',
+  })
+  async confirmProductSampleImage(
+    @Param('id', ParseUUIDPipe) poId: string,
+    @Param('productId', ParseUUIDPipe) productId: string,
+    @Param('roundId', ParseUUIDPipe) roundId: string,
+    @Body() dto: ConfirmProductSampleImageDto,
+    @Req() req?: any,
+  ) {
+    const userId = req?.user?.id || req?.user?.sub;
+    return this.service.confirmProductSampleImage(
+      poId,
+      productId,
+      roundId,
+      userId,
+      dto,
+    );
+  }
+
+  @Get(
+    ':id/products/:productId/sample-rounds/:roundId/images/:imageId/download-url',
+  )
+  @UseGuards(PurchaseOrderFullAccessGuard)
+  @ApiOperation({ summary: 'Lấy URL tải ảnh đợt may mẫu về máy' })
+  async getProductSampleImageDownloadUrl(
+    @Param('id', ParseUUIDPipe) poId: string,
+    @Param('productId', ParseUUIDPipe) productId: string,
+    @Param('roundId', ParseUUIDPipe) roundId: string,
+    @Param('imageId', ParseUUIDPipe) imageId: string,
+  ) {
+    return this.service.getProductSampleImageDownloadUrl(
+      poId,
+      productId,
+      roundId,
+      imageId,
+    );
+  }
+
+  @Delete(':id/products/:productId/sample-rounds/:roundId/images/:imageId')
+  @UseGuards(PurchaseOrderWriteAccessGuard)
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Xoá ảnh khỏi đợt may mẫu' })
+  async removeProductSampleImage(
+    @Param('id', ParseUUIDPipe) poId: string,
+    @Param('productId', ParseUUIDPipe) productId: string,
+    @Param('roundId', ParseUUIDPipe) roundId: string,
+    @Param('imageId', ParseUUIDPipe) imageId: string,
+  ) {
+    return this.service.removeProductSampleImage(
+      poId,
+      productId,
+      roundId,
+      imageId,
+    );
   }
 
   @Get(':id/products/:productId/production-doc')
@@ -303,6 +416,7 @@ export class PurchaseOrdersController {
   }
 
   @Patch(':id/products/:productId/production-doc')
+  @UseGuards(PurchaseOrderWriteAccessGuard)
   @ApiOperation({
     summary: 'Cập nhật tài liệu sản xuất tiếng Việt của sản phẩm',
   })
@@ -316,6 +430,7 @@ export class PurchaseOrdersController {
   }
 
   @Patch(':id/products/:productId/documents/:documentId/purpose')
+  @UseGuards(PurchaseOrderWriteAccessGuard)
   @ApiOperation({
     summary: 'Cập nhật mục (PO Chi Tiết, TechPack, Khác) của tài liệu sản phẩm',
   })
@@ -334,6 +449,7 @@ export class PurchaseOrdersController {
   }
 
   @Delete(':id/products/:productId/documents/:documentId')
+  @UseGuards(PurchaseOrderWriteAccessGuard)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Hủy gán tài liệu khỏi sản phẩm' })
   async unlinkProductDocument(
@@ -345,6 +461,7 @@ export class PurchaseOrdersController {
   }
 
   @Post(':id/products/:productId/documents/presign')
+  @UseGuards(PurchaseOrderWriteAccessGuard)
   @ApiOperation({
     summary: 'Xin presigned URL để tải tài liệu lên cho sản phẩm PO',
   })
@@ -365,6 +482,7 @@ export class PurchaseOrdersController {
   }
 
   @Post(':id/products/:productId/documents/confirm')
+  @UseGuards(PurchaseOrderWriteAccessGuard)
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
     summary: 'Xác nhận đã tải lên xong, ghi tài liệu vào sản phẩm PO',
@@ -388,6 +506,7 @@ export class PurchaseOrdersController {
   }
 
   @Post(':id/products/:productId/documents/:documentId/versions/confirm')
+  @UseGuards(PurchaseOrderWriteAccessGuard)
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
     summary:
@@ -424,6 +543,7 @@ export class PurchaseOrdersController {
   // greedily swallow requests like POST .../documents/presign (treating
   // "presign" as the documentId) before they ever reach the intended handler.
   @Post(':id/products/:productId/documents/:documentId')
+  @UseGuards(PurchaseOrderWriteAccessGuard)
   @ApiOperation({ summary: 'Gán tài liệu từ PO vào sản phẩm (kéo thả)' })
   async linkProductDocument(
     @Param('id', ParseUUIDPipe) id: string,
@@ -457,6 +577,7 @@ export class PurchaseOrdersController {
   }
 
   @Post(':id/documents')
+  @UseGuards(PurchaseOrderWriteAccessGuard)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Gán tài liệu vào đơn hàng PO' })
   @ApiResponse({ status: 200, description: 'Tài liệu đã được gán vào PO' })
@@ -470,6 +591,7 @@ export class PurchaseOrdersController {
   }
 
   @Patch(':id/documents/:documentId')
+  @UseGuards(PurchaseOrderWriteAccessGuard)
   @ApiOperation({ summary: 'Cập nhật phân loại tài liệu trong PO' })
   @ApiResponse({ status: 200, description: 'Đã cập nhật phân loại tài liệu' })
   @ApiResponse({
@@ -493,6 +615,7 @@ export class PurchaseOrdersController {
   }
 
   @Delete(':id/documents/:documentId')
+  @UseGuards(PurchaseOrderWriteAccessGuard)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Bỏ gán tài liệu khỏi PO (Không xóa file gốc)' })
   @ApiResponse({ status: 204, description: 'Đã gỡ gán tài liệu khỏi PO' })
@@ -504,6 +627,7 @@ export class PurchaseOrdersController {
   }
 
   @Post(':id/documents/presign')
+  @UseGuards(PurchaseOrderWriteAccessGuard)
   @ApiOperation({ summary: 'Xin presigned URL để tải tài liệu lên PO' })
   @ApiResponse({
     status: 201,
@@ -518,6 +642,7 @@ export class PurchaseOrdersController {
   }
 
   @Post(':id/documents/confirm')
+  @UseGuards(PurchaseOrderWriteAccessGuard)
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
     summary: 'Xác nhận đã tải lên xong, ghi tài liệu vào PO',

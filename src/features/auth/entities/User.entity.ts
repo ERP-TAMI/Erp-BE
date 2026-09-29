@@ -1,5 +1,6 @@
 import { Entity, Column, PrimaryGeneratedColumn } from 'typeorm';
 import { RecordStatus } from '../../../common/enums/database.enums';
+import { PurchaseOrderMode } from '../../../common/enums/purchase-order-mode.enum';
 
 @Entity('users')
 export class User {
@@ -41,6 +42,14 @@ export class User {
 
   @Column({ type: 'int', default: 1, name: 'auth_version' })
   authVersion: number;
+
+  @Column({
+    type: 'varchar',
+    length: 20,
+    default: PurchaseOrderMode.READ_ONLY,
+    name: 'purchase_order_mode',
+  })
+  purchaseOrderMode: PurchaseOrderMode;
 
   @Column({ type: 'timestamptz', nullable: true, name: 'last_login_at' })
   lastLoginAt: Date | null;

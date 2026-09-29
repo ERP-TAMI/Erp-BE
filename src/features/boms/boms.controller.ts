@@ -12,6 +12,7 @@ import {
   ParseUUIDPipe,
   HttpCode,
   HttpStatus,
+  UseGuards,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -47,6 +48,7 @@ import {
   BomAggregateItemDto,
 } from './dto';
 import { BomAggregateService } from './bom-aggregate.service';
+import { PurchaseOrderBomWriteAccessGuard } from './guards/purchase-order-bom-write-access.guard';
 
 @ApiTags('boms')
 @ApiBearerAuth()
@@ -59,6 +61,7 @@ export class BomsController {
   ) {}
 
   @Post()
+  @UseGuards(PurchaseOrderBomWriteAccessGuard)
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Khởi tạo BOM mới (Fit BOM hoặc PO BOM)' })
   @ApiResponse({
@@ -150,6 +153,7 @@ export class BomsController {
   }
 
   @Patch(':id')
+  @UseGuards(PurchaseOrderBomWriteAccessGuard)
   @ApiOperation({ summary: 'Cập nhật thông tin header BOM (deadline, rdNote)' })
   @ApiResponse({ status: 200, description: 'Cập nhật thành công' })
   @ApiResponse({
@@ -172,6 +176,7 @@ export class BomsController {
   }
 
   @Post(':id/discontinue')
+  @UseGuards(PurchaseOrderBomWriteAccessGuard)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Ngừng sử dụng BOM (Discontinue)' })
   @ApiResponse({ status: 200, description: 'BOM đã ngừng sử dụng' })
@@ -192,6 +197,7 @@ export class BomsController {
   }
 
   @Post(':id/lines')
+  @UseGuards(PurchaseOrderBomWriteAccessGuard)
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
     summary: 'Thêm dòng vật tư mới vào working revision của BOM',
@@ -221,6 +227,7 @@ export class BomsController {
   }
 
   @Put(':id/lines/reorder')
+  @UseGuards(PurchaseOrderBomWriteAccessGuard)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Sắp xếp lại thứ tự các dòng vật tư trong working revision',
@@ -252,6 +259,7 @@ export class BomsController {
   }
 
   @Patch(':id/lines/:lineId')
+  @UseGuards(PurchaseOrderBomWriteAccessGuard)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Cập nhật thông tin dòng vật tư trong working revision',
@@ -285,6 +293,7 @@ export class BomsController {
   }
 
   @Delete(':id/lines/:lineId')
+  @UseGuards(PurchaseOrderBomWriteAccessGuard)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Xóa dòng vật tư khỏi working revision' })
   @ApiResponse({ status: 200, description: 'Xóa dòng vật tư thành công' })
@@ -309,6 +318,7 @@ export class BomsController {
   }
 
   @Post(':id/forward')
+  @UseGuards(PurchaseOrderBomWriteAccessGuard)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Chuyển BOM sang bước tiếp theo trong quy trình workflow',
@@ -338,6 +348,7 @@ export class BomsController {
   }
 
   @Post(':id/reject')
+  @UseGuards(PurchaseOrderBomWriteAccessGuard)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Từ chối / trả lại BOM về các bước trước trong quy trình workflow',
@@ -367,6 +378,7 @@ export class BomsController {
   }
 
   @Post(':id/approve')
+  @UseGuards(PurchaseOrderBomWriteAccessGuard)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary:
@@ -397,6 +409,7 @@ export class BomsController {
   }
 
   @Post(':id/revisions')
+  @UseGuards(PurchaseOrderBomWriteAccessGuard)
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
     summary: 'Tạo revision mới từ revision đã đóng (closed)',
@@ -503,6 +516,7 @@ export class BomsController {
   }
 
   @Post(':id/copy-from-fit')
+  @UseGuards(PurchaseOrderBomWriteAccessGuard)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary:

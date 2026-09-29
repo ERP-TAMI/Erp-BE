@@ -431,6 +431,45 @@ export class UpdateProductSampleRoundDto {
   status?: SampleStatus;
 }
 
+export class PresignProductSampleImageDto {
+  @ApiProperty({ description: 'Tên file gốc' })
+  @IsString()
+  @IsNotEmpty({ message: 'fileName không được để trống' })
+  fileName: string;
+
+  @ApiProperty({ description: 'MIME type của file' })
+  @IsString()
+  @IsNotEmpty({ message: 'mimeType không được để trống' })
+  mimeType: string;
+
+  @ApiProperty({ description: 'Kích thước file (bytes)' })
+  @IsInt()
+  @Min(1, { message: 'sizeBytes phải lớn hơn 0' })
+  sizeBytes: number;
+}
+
+export class ConfirmProductSampleImageDto {
+  @ApiProperty({ description: 'Object key nhận được từ bước presign' })
+  @IsString()
+  @IsNotEmpty({ message: 'objectKey không được để trống' })
+  objectKey: string;
+
+  @ApiProperty({ description: 'Tên file gốc' })
+  @IsString()
+  @IsNotEmpty({ message: 'fileName không được để trống' })
+  fileName: string;
+
+  @ApiProperty({ description: 'MIME type của file' })
+  @IsString()
+  @IsNotEmpty({ message: 'mimeType không được để trống' })
+  mimeType: string;
+
+  @ApiProperty({ description: 'Kích thước file (bytes)' })
+  @IsInt()
+  @Min(1, { message: 'sizeBytes phải lớn hơn 0' })
+  sizeBytes: number;
+}
+
 export class LinkProductDocumentDto {
   @ApiProperty({ description: 'ID tài liệu PO cần gán vào Product' })
   @IsUUID('4')

@@ -20,7 +20,11 @@ import {
   STORAGE_SERVICE,
   StorageService,
 } from '../storage/storage.interface';
-import { isResolvableObjectKey } from '../storage/storage-key.util';
+import {
+  isResolvableObjectKey,
+  isObjectKeyInScope,
+  isDuplicateStorageKeyError,
+} from '../storage/storage-key.util';
 import { PurchaseOrder } from './entities/PurchaseOrder.entity';
 import { PurchaseOrderStatusHistory } from './entities/PurchaseOrderStatusHistory.entity';
 import { PurchaseOrderDocument } from './entities/PurchaseOrderDocument.entity';
@@ -71,6 +75,9 @@ import {
   ProductColorItemDto,
   SaveProductOperationStepsDto,
   CreateProductSampleRoundDto,
+  UpdateProductSampleRoundDto,
+  PresignProductSampleImageDto,
+  ConfirmProductSampleImageDto,
   PresignPoDocumentDto,
   ConfirmPoDocumentDto,
 } from './dto';
@@ -107,6 +114,15 @@ export const ALLOWED_PO_MIME_BY_EXTENSION: Record<string, string[]> = {
 };
 
 const PO_DOCUMENT_MAX_SIZE_BYTES = 25 * 1024 * 1024;
+
+const SAMPLE_IMAGE_ALLOWLIST: Record<string, string[]> = {
+  '.png': ['image/png'],
+  '.jpg': ['image/jpeg'],
+  '.jpeg': ['image/jpeg'],
+  '.webp': ['image/webp'],
+  '.gif': ['image/gif'],
+};
+const MAX_SAMPLE_IMAGE_SIZE_BYTES = 5 * 1024 * 1024;
 
 /** Đủ cho mọi chữ ký magic (dài nhất 12 byte) và cho mẫu 4096 byte của tệp văn bản. */
 const MAGIC_BYTES_SAMPLE_SIZE = 4096;
@@ -340,15 +356,15 @@ export class PurchaseOrdersService {
     return this.findOne(savedPo.id);
   }
 
-  async findAll(
+  /**
+   * Áp các bộ lọc dùng chung cho danh sách PO — trừ status, để dùng lại được
+   * cho cả truy vấn phân trang chính lẫn truy vấn đếm theo trạng thái (đếm
+   * theo status thì không thể tự lọc theo chính status đang đếm).
+   */
+  private applyPoListFilters(
+    qb: ReturnType<Repository<PurchaseOrder>['createQueryBuilder']>,
     query: QueryPurchaseOrderDto,
-  ): Promise<PaginatedPoResult<PurchaseOrder & { productsCount: number }>> {
-    const page = Math.max(1, Number(query.page) || 1);
-    const limit = Math.max(1, Math.min(100, Number(query.limit) || 10));
-    const skip = (page - 1) * limit;
-
-    const qb = this.poRepo.createQueryBuilder('po');
-
+  ): void {
     if (query.search?.trim()) {
       const search = `%${query.search.trim().toLowerCase()}%`;
       qb.andWhere(
@@ -369,10 +385,6 @@ export class PurchaseOrdersService {
       });
     }
 
-    if (query.status) {
-      qb.andWhere('po.status = :status', { status: query.status });
-    }
-
     if (query.dateFrom?.trim()) {
       qb.andWhere('po.receivedDate >= :dateFrom', {
         dateFrom: query.dateFrom.trim(),
@@ -383,6 +395,23 @@ export class PurchaseOrdersService {
       qb.andWhere('po.receivedDate <= :dateTo', {
         dateTo: query.dateTo.trim(),
       });
+    }
+  }
+
+  async findAll(query: QueryPurchaseOrderDto): Promise<
+    PaginatedPoResult<PurchaseOrder & { productsCount: number }> & {
+      statusCounts: Record<string, number>;
+    }
+  > {
+    const page = Math.max(1, Number(query.page) || 1);
+    const limit = Math.max(1, Math.min(100, Number(query.limit) || 10));
+    const skip = (page - 1) * limit;
+
+    const qb = this.poRepo.createQueryBuilder('po');
+    this.applyPoListFilters(qb, query);
+
+    if (query.status) {
+      qb.andWhere('po.status = :status', { status: query.status });
     }
 
     const sortColumn = query.sortBy || 'createdAt';
@@ -430,12 +459,32 @@ export class PurchaseOrdersService {
       productsCount: countsMap[po.id] || 0,
     }));
 
+    // Đếm theo trạng thái trên cùng bộ lọc search/ngày (không lọc theo status
+    // vì đây chính là chiều đang đếm) — để 4 thẻ tổng quan ở PO List phản
+    // ánh đúng số liệu trên toàn bộ kết quả tìm kiếm, không chỉ 10 dòng của
+    // trang hiện tại.
+    const statusCountsQb = this.poRepo.createQueryBuilder('po');
+    this.applyPoListFilters(statusCountsQb, query);
+    const statusCountsRaw = await statusCountsQb
+      .select('po.status', 'status')
+      .addSelect('COUNT(po.id)', 'count')
+      .groupBy('po.status')
+      .getRawMany<{ status: string; count: string }>();
+    const statusCounts = statusCountsRaw.reduce(
+      (acc, row) => {
+        acc[row.status] = Number(row.count) || 0;
+        return acc;
+      },
+      {} as Record<string, number>,
+    );
+
     return {
       items: itemsWithCounts,
       total,
       page,
       limit,
       totalPages,
+      statusCounts,
     };
   }
 
@@ -3311,30 +3360,140 @@ export class PurchaseOrdersService {
   /**
    * Quản lý đợt mẫu riêng của Product
    */
+  private async assertPoProductExists(
+    poId: string,
+    productId: string,
+  ): Promise<PurchaseOrderProduct> {
+    const product = await this.productRepo.findOne({
+      where: { id: productId, purchaseOrderId: poId },
+    });
+    if (!product) {
+      throw new NotFoundException(
+        `Không tìm thấy sản phẩm #${productId} trong đơn hàng PO`,
+      );
+    }
+    return product;
+  }
+
+  /**
+   * Như assertPoProductExists, nhưng còn chặn khi sản phẩm đã Khóa — dùng cho
+   * các thao tác ghi (sửa/upload/xoá đợt may mẫu). Endpoint chỉ-đọc (vd. lấy
+   * link tải ảnh) vẫn dùng assertPoProductExists thẳng, không qua hàm này,
+   * vì sản phẩm khóa vẫn được phép xem/tải về theo đúng banner cảnh báo bên FE.
+   */
+  private async assertPoProductEditable(
+    poId: string,
+    productId: string,
+  ): Promise<PurchaseOrderProduct> {
+    const product = await this.assertPoProductExists(poId, productId);
+    if (product.status === ProductStatus.CLOSED) {
+      throw new BadRequestException(
+        'Sản phẩm đã bị khóa, không thể chỉnh sửa đợt may mẫu.',
+      );
+    }
+    return product;
+  }
+
+  private async findProductSampleRoundOrThrow(
+    productId: string,
+    roundId: string,
+  ): Promise<PurchaseOrderProductSampleRound> {
+    const round = await this.productSampleRoundRepo.findOne({
+      where: { id: roundId, productId },
+    });
+    if (!round) {
+      throw new NotFoundException(`Không tìm thấy đợt may mẫu #${roundId}`);
+    }
+    return round;
+  }
+
+  private async mapProductSampleImages(
+    roundIds: string[],
+  ): Promise<Map<string, any[]>> {
+    const map = new Map<string, any[]>();
+    if (roundIds.length === 0) return map;
+
+    const rows = await this.productSampleImageRepo
+      .createQueryBuilder('img')
+      .innerJoin(DocumentVersion, 'v', 'v.id = img.documentVersionId')
+      .where('img.sampleRoundId IN (:...roundIds)', { roundIds })
+      .select('img.id', 'id')
+      .addSelect('img.sampleRoundId', 'sampleRoundId')
+      .addSelect('img.orderIndex', 'orderIndex')
+      .addSelect('img.colorNameSnapshot', 'colorName')
+      .addSelect('v.storageKey', 'storageKey')
+      .addSelect('v.originalFileName', 'fileName')
+      .addSelect('v.mimeType', 'mimeType')
+      .addSelect('v.uploadedAt', 'uploadedAt')
+      .orderBy('img.orderIndex', 'ASC')
+      .getRawMany<{
+        id: string;
+        sampleRoundId: string;
+        orderIndex: number;
+        colorName: string | null;
+        storageKey: string;
+        fileName: string;
+        mimeType: string;
+        uploadedAt: Date;
+      }>();
+
+    const withUrls = await Promise.all(
+      rows.map(async (row) => ({
+        ...row,
+        url: await this.storage.getPresignedGetUrl(
+          row.storageKey,
+          PRESIGN_GET_EXPIRY_SECONDS,
+        ),
+      })),
+    );
+
+    for (const row of withUrls) {
+      const list = map.get(row.sampleRoundId) || [];
+      list.push({
+        id: row.id,
+        url: row.url,
+        fileName: row.fileName,
+        mimeType: row.mimeType,
+        orderIndex: row.orderIndex,
+        colorName: row.colorName,
+        uploadedAt: row.uploadedAt,
+      });
+      map.set(row.sampleRoundId, list);
+    }
+    return map;
+  }
+
+  private toProductSampleRoundItem(
+    round: PurchaseOrderProductSampleRound,
+    images: any[],
+  ) {
+    return {
+      id: round.id,
+      roundNo: round.roundNo,
+      sampleDate: round.sampleDate,
+      feedback: round.feedback,
+      status: round.status,
+      createdBy: round.createdBy,
+      createdAt: round.createdAt,
+      reviewedBy: round.reviewedBy,
+      reviewedAt: round.reviewedAt,
+      images,
+    };
+  }
+
   async getProductSampleRounds(productId: string) {
     const rounds = await this.productSampleRoundRepo.find({
       where: { productId },
       order: { roundNo: 'ASC' },
     });
+    if (rounds.length === 0) return [];
 
-    const roundIds = rounds.map((r) => r.id);
-    const imagesMap: Map<string, PurchaseOrderProductSampleImage[]> = new Map();
-    if (roundIds.length > 0) {
-      const images = await this.productSampleImageRepo.find({
-        where: { sampleRoundId: In(roundIds) },
-        order: { orderIndex: 'ASC' },
-      });
-      for (const img of images) {
-        const list = imagesMap.get(img.sampleRoundId) || [];
-        list.push(img);
-        imagesMap.set(img.sampleRoundId, list);
-      }
-    }
-
-    return rounds.map((r) => ({
-      ...r,
-      images: imagesMap.get(r.id) || [],
-    }));
+    const imagesMap = await this.mapProductSampleImages(
+      rounds.map((r) => r.id),
+    );
+    return rounds.map((r) =>
+      this.toProductSampleRoundItem(r, imagesMap.get(r.id) || []),
+    );
   }
 
   async createProductSampleRound(
@@ -3348,8 +3507,13 @@ export class PurchaseOrdersService {
     if (!product) {
       throw new NotFoundException(`Không tìm thấy sản phẩm #${productId}`);
     }
+    if (product.status === ProductStatus.CLOSED) {
+      throw new BadRequestException(
+        'Sản phẩm đã bị khóa, không thể chỉnh sửa đợt may mẫu.',
+      );
+    }
 
-    return await this.dataSource.transaction(async (manager) => {
+    const savedRound = await this.dataSource.transaction(async (manager) => {
       const roundRepo = manager.getRepository(PurchaseOrderProductSampleRound);
       const imageRepo = manager.getRepository(PurchaseOrderProductSampleImage);
 
@@ -3365,7 +3529,7 @@ export class PurchaseOrdersService {
         createdBy: userId,
         createdAt: new Date(),
       });
-      const savedRound = await roundRepo.save(round);
+      const saved = await roundRepo.save(round);
 
       // NOTE: dto.images used to be accepted by the DTO but silently dropped
       // here — the round was created with no attached images at all, even
@@ -3373,21 +3537,237 @@ export class PurchaseOrdersService {
       const imagesToCreate = (dto.images || []).filter(
         (img) => !!img.documentVersionId,
       );
-      let savedImages: PurchaseOrderProductSampleImage[] = [];
       if (imagesToCreate.length > 0) {
         const imageEntities = imagesToCreate.map((img, idx) =>
           imageRepo.create({
-            sampleRoundId: savedRound.id,
+            sampleRoundId: saved.id,
             documentVersionId: img.documentVersionId as string,
             colorNameSnapshot: img.colorName || undefined,
             orderIndex: idx,
           }),
         );
-        savedImages = await imageRepo.save(imageEntities);
+        await imageRepo.save(imageEntities);
       }
 
-      return { ...savedRound, images: savedImages };
+      return saved;
     });
+
+    const imagesMap = await this.mapProductSampleImages([savedRound.id]);
+    return this.toProductSampleRoundItem(
+      savedRound,
+      imagesMap.get(savedRound.id) || [],
+    );
+  }
+
+  async updateProductSampleRound(
+    poId: string,
+    productId: string,
+    roundId: string,
+    dto: UpdateProductSampleRoundDto,
+    userId?: string,
+  ) {
+    await this.assertPoProductEditable(poId, productId);
+    const round = await this.findProductSampleRoundOrThrow(productId, roundId);
+
+    if (dto.sampleDate !== undefined) {
+      round.sampleDate = new Date(dto.sampleDate);
+    }
+    if (dto.feedback !== undefined) {
+      round.feedback = dto.feedback;
+    }
+    if (dto.status !== undefined && dto.status !== round.status) {
+      round.status = dto.status;
+      if (dto.status === SampleStatus.WORKING) {
+        round.reviewedBy = null as unknown as string;
+        round.reviewedAt = null as unknown as Date;
+      } else {
+        round.reviewedBy = (userId ?? null) as unknown as string;
+        round.reviewedAt = new Date();
+      }
+    }
+
+    const saved = await this.productSampleRoundRepo.save(round);
+    const imagesMap = await this.mapProductSampleImages([roundId]);
+    return this.toProductSampleRoundItem(saved, imagesMap.get(roundId) || []);
+  }
+
+  async presignProductSampleImage(
+    poId: string,
+    productId: string,
+    roundId: string,
+    dto: PresignProductSampleImageDto,
+  ): Promise<{ objectKey: string; uploadUrl: string; expiresIn: number }> {
+    await this.assertPoProductEditable(poId, productId);
+    await this.findProductSampleRoundOrThrow(productId, roundId);
+    assertAllowedFile(dto.fileName, dto.mimeType, dto.sizeBytes, {
+      allowlist: SAMPLE_IMAGE_ALLOWLIST,
+      maxSizeBytes: MAX_SAMPLE_IMAGE_SIZE_BYTES,
+    });
+
+    const ext = path.extname(dto.fileName).toLowerCase();
+    const objectKey = `purchase-orders/${poId}/products/${productId}/sample-rounds/${roundId}/images/${randomUUID()}${ext}`;
+
+    const uploadUrl = await this.storage.getPresignedPutUrl(
+      objectKey,
+      dto.mimeType,
+      PRESIGN_PUT_EXPIRY_SECONDS,
+    );
+
+    return { objectKey, uploadUrl, expiresIn: PRESIGN_PUT_EXPIRY_SECONDS };
+  }
+
+  async confirmProductSampleImage(
+    poId: string,
+    productId: string,
+    roundId: string,
+    userId: string | undefined,
+    dto: ConfirmProductSampleImageDto,
+  ) {
+    await this.assertPoProductEditable(poId, productId);
+    await this.findProductSampleRoundOrThrow(productId, roundId);
+
+    if (
+      !isObjectKeyInScope(
+        dto.objectKey,
+        `purchase-orders/${poId}/products/${productId}/sample-rounds/${roundId}/images/`,
+      )
+    ) {
+      throw new BadRequestException(
+        'objectKey không thuộc phạm vi tải lên này, vui lòng lấy lại link upload.',
+      );
+    }
+
+    const head = await this.storage.headObject(dto.objectKey);
+    if (!head.exists) {
+      throw new BadRequestException(
+        'Ảnh chưa được tải lên thành công, vui lòng thử upload lại.',
+      );
+    }
+    if (head.sizeBytes && head.sizeBytes > MAX_SAMPLE_IMAGE_SIZE_BYTES) {
+      await this.storage.deleteObject(dto.objectKey);
+      throw new BadRequestException(
+        `Dung lượng ảnh vượt quá giới hạn ${(MAX_SAMPLE_IMAGE_SIZE_BYTES / (1024 * 1024)).toFixed(0)}MB.`,
+      );
+    }
+
+    const now = new Date();
+
+    return this.dataSource
+      .transaction(async (manager) => {
+        const docRepo = manager.getRepository(Document);
+        const versionRepo = manager.getRepository(DocumentVersion);
+        const imageRepo = manager.getRepository(
+          PurchaseOrderProductSampleImage,
+        );
+
+        const doc = await docRepo.save(
+          docRepo.create({
+            title: dto.fileName,
+            createdBy: userId || (null as any),
+            createdAt: now,
+          }),
+        );
+
+        const version = await versionRepo.save(
+          versionRepo.create({
+            documentId: doc.id,
+            versionNo: 1,
+            originalFileName: dto.fileName,
+            storageKey: dto.objectKey,
+            mimeType: dto.mimeType,
+            byteSize: dto.sizeBytes,
+            status: UploadStatus.READY,
+            uploadedBy: userId || (null as any),
+            uploadedAt: now,
+          }),
+        );
+
+        doc.currentVersionId = version.id;
+        await docRepo.save(doc);
+
+        const orderIndex = await imageRepo.count({
+          where: { sampleRoundId: roundId },
+        });
+        const image = await imageRepo.save(
+          imageRepo.create({
+            sampleRoundId: roundId,
+            documentVersionId: version.id,
+            orderIndex,
+          }),
+        );
+
+        const url = await this.storage.getPresignedGetUrl(
+          dto.objectKey,
+          PRESIGN_GET_EXPIRY_SECONDS,
+        );
+
+        return {
+          id: image.id,
+          url,
+          fileName: dto.fileName,
+          mimeType: dto.mimeType,
+          orderIndex,
+          colorName: null as string | null,
+          uploadedAt: now,
+        };
+      })
+      .catch((error) => {
+        if (isDuplicateStorageKeyError(error)) {
+          throw new BadRequestException(
+            'Ảnh này đã được đính kèm trong hệ thống, không thể đính kèm lại.',
+          );
+        }
+        throw error;
+      });
+  }
+
+  async getProductSampleImageDownloadUrl(
+    poId: string,
+    productId: string,
+    roundId: string,
+    imageId: string,
+  ): Promise<{ url: string; expiresIn: number }> {
+    await this.assertPoProductExists(poId, productId);
+    await this.findProductSampleRoundOrThrow(productId, roundId);
+
+    const row = await this.productSampleImageRepo
+      .createQueryBuilder('img')
+      .innerJoin(DocumentVersion, 'v', 'v.id = img.documentVersionId')
+      .where('img.id = :imageId', { imageId })
+      .andWhere('img.sampleRoundId = :roundId', { roundId })
+      .select('v.storageKey', 'storageKey')
+      .addSelect('v.originalFileName', 'fileName')
+      .getRawOne<{ storageKey: string; fileName: string }>();
+
+    if (!row) {
+      throw new NotFoundException(`Không tìm thấy ảnh #${imageId}`);
+    }
+
+    const url = await this.storage.getPresignedGetUrl(
+      row.storageKey,
+      PRESIGN_GET_EXPIRY_SECONDS,
+      row.fileName,
+    );
+
+    return { url, expiresIn: PRESIGN_GET_EXPIRY_SECONDS };
+  }
+
+  async removeProductSampleImage(
+    poId: string,
+    productId: string,
+    roundId: string,
+    imageId: string,
+  ): Promise<void> {
+    await this.assertPoProductEditable(poId, productId);
+    await this.findProductSampleRoundOrThrow(productId, roundId);
+
+    const image = await this.productSampleImageRepo.findOne({
+      where: { id: imageId, sampleRoundId: roundId },
+    });
+    if (!image) {
+      throw new NotFoundException(`Không tìm thấy ảnh #${imageId}`);
+    }
+    await this.productSampleImageRepo.remove(image);
   }
 
   /**

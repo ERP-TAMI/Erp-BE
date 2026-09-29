@@ -4,6 +4,7 @@ import * as request from 'supertest';
 import { BomsController } from '../boms.controller';
 import { BomsService } from '../boms.service';
 import { BomAggregateService } from '../bom-aggregate.service';
+import { PurchaseOrderBomWriteAccessGuard } from '../guards/purchase-order-bom-write-access.guard';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { PermissionGuard } from '../../../common/guards/permission.guard';
 import {
@@ -310,11 +311,17 @@ describe('BomsController (HTTP API & Role Masking)', () => {
       .useValue({
         canActivate: (context: any) => {
           const req = context.switchToHttp().getRequest();
-          req.user = currentUser;
+          req.user = {
+            permissions: [],
+            purchaseOrderMode: 'READ_ONLY',
+            ...currentUser,
+          };
           return true;
         },
       })
       .overrideGuard(PermissionGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(PurchaseOrderBomWriteAccessGuard)
       .useValue({ canActivate: () => true })
       .compile();
 
@@ -329,7 +336,7 @@ describe('BomsController (HTTP API & Role Masking)', () => {
   });
 
   afterEach(async () => {
-    await app.close();
+    await app?.close();
   });
 
   // ──────────────────────────────────────────────────────────────────────────
