@@ -10,6 +10,7 @@ import { LOGIN_FAILED_THRESHOLD } from './auth.constants';
 import { PurchaseOrderMode } from '../../common/enums/purchase-order-mode.enum';
 import { NotificationsService } from '../notifications/notifications.service';
 import { SmtpMailService } from './smtp-mail.service';
+import { AuditService } from '../audit/audit.service';
 
 function buildUser(overrides: Partial<User> = {}): User {
   return {
@@ -57,6 +58,7 @@ describe('AuthService', () => {
   let jwtService: { sign: jest.Mock };
   let notifications: jest.Mocked<NotificationsService>;
   let mail: jest.Mocked<SmtpMailService>;
+  let audit: jest.Mocked<AuditService>;
   let service: AuthService;
 
   const roleInfoRow = [
@@ -93,6 +95,9 @@ describe('AuthService', () => {
     mail = {
       sendTemporaryAccountLockEmail: jest.fn().mockResolvedValue(undefined),
     } as unknown as jest.Mocked<SmtpMailService>;
+    audit = {
+      recordUserChange: jest.fn().mockResolvedValue(undefined),
+    } as unknown as jest.Mocked<AuditService>;
 
     service = new AuthService(
       userRepository,
@@ -101,6 +106,7 @@ describe('AuthService', () => {
       jwtService as never,
       notifications,
       mail,
+      audit,
     );
 
     jest.spyOn(passwordUtil, 'verifyPassword');
@@ -236,6 +242,14 @@ describe('AuthService', () => {
         expect.objectContaining({ loginFailedCount: 0, lockoutUntil: null }),
       );
       expect(sessionRepository.save).toHaveBeenCalled();
+      expect(audit.recordUserChange).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          actorId: user.id,
+          targetId: user.id,
+          eventType: 'login',
+        }),
+      );
     });
   });
 

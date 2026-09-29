@@ -31,8 +31,8 @@ describe('schema entities', () => {
       .tables.filter((metadata) => entities.includes(metadata.target as never))
       .map((metadata) => metadata.name);
 
-    expect(entities).toHaveLength(63);
-    expect(new Set(tables).size).toBe(63);
+    expect(entities).toHaveLength(64);
+    expect(new Set(tables).size).toBe(64);
     expect(tables).toEqual(
       expect.arrayContaining([
         'users',
@@ -41,6 +41,7 @@ describe('schema entities', () => {
         'purchase_order_products',
         'boms',
         'audit_events',
+        'http_audit_logs',
       ]),
     );
   });
