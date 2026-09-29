@@ -211,15 +211,35 @@ export class BomsService {
       );
     }
 
-    if (query.color?.trim()) {
+    const needsColorJoin =
+      Boolean(query.color?.trim()) || Boolean(query.search?.trim());
+    if (needsColorJoin) {
       qb.leftJoin(
         'purchase_order_product_colors',
         'popc',
         'pop.id = popc.product_id',
       );
+    }
+
+    if (query.color?.trim()) {
       qb.andWhere('popc.color_name ILIKE :colorFilter', {
         colorFilter: `%${query.color.trim()}%`,
       });
+    }
+
+    if (query.search?.trim()) {
+      qb.andWhere(
+        `(
+          bom.bom_code ILIKE :search
+          OR style.style_code ILIKE :search
+          OR style.style_name ILIKE :search
+          OR po.po_code ILIKE :search
+          OR pop.product_code ILIKE :search
+          OR pop.product_name ILIKE :search
+          OR popc.color_name ILIKE :search
+        )`,
+        { search: `%${query.search.trim()}%` },
+      );
     }
 
     // ─── Sorting & Pagination ─────────────────────────────────────────────

@@ -245,6 +245,48 @@ describe('BomsService (Read Model & Anti N+1 Tests)', () => {
       ]);
     });
 
+    it('search: ORs across bom code/style/PO/product/color in one clause and joins colors only once', async () => {
+      const qbMock = {
+        leftJoin: jest.fn().mockReturnThis(),
+        leftJoinAndSelect: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        addOrderBy: jest.fn().mockReturnThis(),
+        skip: jest.fn().mockReturnThis(),
+        take: jest.fn().mockReturnThis(),
+        getManyAndCount: jest.fn().mockResolvedValue([[], 0]),
+      };
+      bomRepoMock.createQueryBuilder.mockReturnValue(qbMock);
+
+      await service.findAll({ search: 'cotton' }, 'SA');
+
+      // Guards against double-joining 'popc' when both `color` and `search`
+      // would otherwise each try to add the same left join independently.
+      const colorJoinCalls = qbMock.leftJoin.mock.calls.filter(
+        ([table]) => table === 'purchase_order_product_colors',
+      );
+      expect(colorJoinCalls).toHaveLength(1);
+
+      const searchWhereCall = qbMock.andWhere.mock.calls.find(
+        ([sql]) =>
+          typeof sql === 'string' && sql.includes('bom.bom_code ILIKE :search'),
+      );
+      expect(searchWhereCall).toBeDefined();
+      expect(searchWhereCall?.[1]).toEqual({ search: '%cotton%' });
+      expect(searchWhereCall?.[0]).toEqual(
+        expect.stringContaining('style.style_code ILIKE :search'),
+      );
+      expect(searchWhereCall?.[0]).toEqual(
+        expect.stringContaining('po.po_code ILIKE :search'),
+      );
+      expect(searchWhereCall?.[0]).toEqual(
+        expect.stringContaining('pop.product_code ILIKE :search'),
+      );
+      expect(searchWhereCall?.[0]).toEqual(
+        expect.stringContaining('popc.color_name ILIKE :search'),
+      );
+    });
+
     it('masks cost fields to null for NVKH and RD roles in list endpoint', async () => {
       const mockBomPo = new Bom();
       mockBomPo.id = 'bom-po-1';

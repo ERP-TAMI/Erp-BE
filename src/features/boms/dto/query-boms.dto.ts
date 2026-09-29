@@ -47,6 +47,14 @@ export class QueryBomsDto {
   @IsString()
   color?: string;
 
+  @ApiPropertyOptional({
+    description:
+      'Free-text search across BOM code, style code/name, PO code, product code/name, and color (matches any one)',
+  })
+  @IsOptional()
+  @IsString()
+  search?: string;
+
   @ApiPropertyOptional({ description: 'Page number', default: 1 })
   @IsOptional()
   @Type(() => Number)
