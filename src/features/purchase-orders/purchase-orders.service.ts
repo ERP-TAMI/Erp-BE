@@ -49,6 +49,7 @@ import {
   ProductionDocumentSection,
   ProductionDocumentImage,
 } from '../production/entities';
+import { UpdateStyleProductionDocDto } from '../production/dto/update-style-production-doc.dto';
 import { Document } from '../documents/entities/Document.entity';
 import { DocumentVersion } from '../documents/entities/DocumentVersion.entity';
 import { Customer } from '../master-data/entities/Customer.entity';
@@ -398,8 +399,9 @@ export class PurchaseOrdersService {
     });
   }
 
-  /** Giống normalizeImageRef bên Mẫu Fit: không để link S3 có chữ ký (chứa
-   * access key) lọt vào lịch sử — chỉ áp cho giá trị ghi audit. */
+  /** Giống normalizeImageRef bên Mẫu Fit: FE gửi lại nguyên link đã ký nhận
+   * được lúc đọc, nên phải rút về object key trước khi vào DB hoặc lịch sử —
+   * link đó chứa access key và hết hạn sau 1 giờ. */
   private toAuditImageRef(value: unknown): unknown {
     if (typeof value !== 'string' || !/^https?:\/\//.test(value)) return value;
     if (!this.storage.isTrustedObjectHost(value)) return value;
@@ -408,6 +410,51 @@ export class PurchaseOrdersService {
     } catch {
       return value;
     }
+  }
+
+  private toStoredImageRef(value: string | null | undefined): string | null {
+    if (!value) return null;
+    return this.toAuditImageRef(value.trim()) as string;
+  }
+
+  private toStoredSizeData(sizeData: unknown): unknown {
+    if (!Array.isArray(sizeData)) return sizeData;
+    return sizeData.map((item) =>
+      item &&
+      typeof item === 'object' &&
+      typeof (item as { imageUrl?: unknown }).imageUrl === 'string'
+        ? {
+            ...item,
+            imageUrl: this.toStoredImageRef(
+              (item as { imageUrl: string }).imageUrl,
+            ),
+          }
+        : item,
+    );
+  }
+
+  private toStoredImageGroups(imageGroups: unknown): any[] {
+    if (!Array.isArray(imageGroups)) return [];
+    return imageGroups.map((group) =>
+      group && typeof group === 'object' && Array.isArray(group.imageUrls)
+        ? {
+            ...group,
+            imageUrls: (group.imageUrls as unknown[]).map((url) =>
+              typeof url === 'string' ? this.toStoredImageRef(url) : url,
+            ),
+          }
+        : group,
+    );
+  }
+
+  /** Ngược lại với toStoredImageRef: key trong DB phải ký lại mỗi lần đọc. */
+  private async resolveImageRef(
+    value: string | null | undefined,
+  ): Promise<string | null> {
+    if (!value) return null;
+    if (/^https?:\/\//.test(value)) return value;
+    if (!isResolvableObjectKey(value)) return value;
+    return this.storage.getPresignedGetUrl(value);
   }
 
   private productionDocAuditSnapshot(
@@ -2912,12 +2959,11 @@ export class PurchaseOrdersService {
     userId?: string,
     actor?: AuditActor,
   ): Promise<PurchaseOrderProduct> {
-    const product = await this.productRepo.findOne({
-      where: { id: productId, purchaseOrderId: poId },
-    });
-    if (!product) {
-      throw new NotFoundException(`Không tìm thấy sản phẩm #${productId}`);
-    }
+    const product = await this.assertPoOpenForProduct(
+      poId,
+      productId,
+      'chỉnh sửa sản phẩm',
+    );
 
     if (product.status === ProductStatus.CLOSED) {
       throw new BadRequestException(
@@ -3164,12 +3210,11 @@ export class PurchaseOrdersService {
     productId: string,
     actor?: AuditActor,
   ): Promise<void> {
-    const product = await this.productRepo.findOne({
-      where: { id: productId, purchaseOrderId: poId },
-    });
-    if (!product) {
-      throw new NotFoundException(`Không tìm thấy sản phẩm #${productId}`);
-    }
+    const product = await this.assertPoOpenForProduct(
+      poId,
+      productId,
+      'xóa sản phẩm',
+    );
 
     if (product.status === ProductStatus.CLOSED) {
       throw new BadRequestException(
@@ -3239,6 +3284,17 @@ export class PurchaseOrdersService {
     targetPurpose?: DocumentPurpose,
     actor?: AuditActor,
   ) {
+    const product = await this.assertPoOpenForProduct(
+      poId,
+      productId,
+      'gán tài liệu',
+    );
+    if (product.status === ProductStatus.CLOSED) {
+      throw new BadRequestException(
+        'Sản phẩm đã bị khóa, không thể gán tài liệu.',
+      );
+    }
+
     const poDoc = await this.poDocRepo.findOne({
       where: { purchaseOrderId: poId, documentId },
     });
@@ -3319,6 +3375,16 @@ export class PurchaseOrdersService {
     purpose: DocumentPurpose,
     actor?: AuditActor,
   ) {
+    const product = await this.assertPoOpenForProduct(
+      poId,
+      productId,
+      'đổi phân loại tài liệu',
+    );
+    if (product.status === ProductStatus.CLOSED) {
+      throw new BadRequestException(
+        'Sản phẩm đã bị khóa, không thể đổi phân loại tài liệu.',
+      );
+    }
     const existing = await this.productDocRepo.findOne({
       where: { productId, documentId },
     });
@@ -3360,6 +3426,16 @@ export class PurchaseOrdersService {
     documentId: string,
     actor?: AuditActor,
   ): Promise<void> {
+    const product = await this.assertPoOpenForProduct(
+      poId,
+      productId,
+      'gỡ tài liệu',
+    );
+    if (product.status === ProductStatus.CLOSED) {
+      throw new BadRequestException(
+        'Sản phẩm đã bị khóa, không thể gỡ tài liệu.',
+      );
+    }
     const existing = await this.productDocRepo.findOne({
       where: { productId, documentId },
     });
@@ -3390,14 +3466,11 @@ export class PurchaseOrdersService {
     productId: string,
     dto: PresignPoDocumentDto,
   ): Promise<{ objectKey: string; uploadUrl: string; expiresIn: number }> {
-    const product = await this.productRepo.findOne({
-      where: { id: productId, purchaseOrderId: poId },
-    });
-    if (!product) {
-      throw new NotFoundException(
-        `Không tìm thấy sản phẩm #${productId} trong đơn hàng PO`,
-      );
-    }
+    const product = await this.assertPoOpenForProduct(
+      poId,
+      productId,
+      'tải lên tài liệu mới',
+    );
     if (product.status === ProductStatus.CLOSED) {
       throw new BadRequestException(
         'Sản phẩm đã bị khóa, không thể tải lên tài liệu mới.',
@@ -3441,14 +3514,11 @@ export class PurchaseOrdersService {
     fileName: string;
     fileSize: number;
   }> {
-    const product = await this.productRepo.findOne({
-      where: { id: productId, purchaseOrderId: poId },
-    });
-    if (!product) {
-      throw new NotFoundException(
-        `Không tìm thấy sản phẩm #${productId} trong đơn hàng PO`,
-      );
-    }
+    const product = await this.assertPoOpenForProduct(
+      poId,
+      productId,
+      'tải lên tài liệu mới',
+    );
     if (product.status === ProductStatus.CLOSED) {
       throw new BadRequestException(
         'Sản phẩm đã bị khóa, không thể tải lên tài liệu mới.',
@@ -3562,14 +3632,11 @@ export class PurchaseOrdersService {
     dto: ConfirmPoDocumentDto,
     actor?: AuditActor,
   ) {
-    const product = await this.productRepo.findOne({
-      where: { id: productId, purchaseOrderId: poId },
-    });
-    if (!product) {
-      throw new NotFoundException(
-        `Không tìm thấy sản phẩm #${productId} trong đơn hàng PO`,
-      );
-    }
+    const product = await this.assertPoOpenForProduct(
+      poId,
+      productId,
+      'cập nhật phiên bản tài liệu',
+    );
     if (product.status === ProductStatus.CLOSED) {
       throw new BadRequestException(
         'Sản phẩm đã bị khóa, không thể cập nhật phiên bản mới.',
@@ -3705,16 +3772,16 @@ export class PurchaseOrdersService {
   }
 
   async saveProductOperationSteps(
+    poId: string,
     productId: string,
     dto: SaveProductOperationStepsDto,
     actor?: AuditActor,
   ) {
-    const product = await this.productRepo.findOne({
-      where: { id: productId },
-    });
-    if (!product) {
-      throw new NotFoundException(`Không tìm thấy sản phẩm #${productId}`);
-    }
+    const product = await this.assertPoOpenForProduct(
+      poId,
+      productId,
+      'chỉnh sửa bảng quy trình công đoạn',
+    );
 
     if (product.status === ProductStatus.CLOSED) {
       throw new BadRequestException(
@@ -3888,11 +3955,37 @@ export class PurchaseOrdersService {
    * link tải ảnh) vẫn dùng assertPoProductExists thẳng, không qua hàm này,
    * vì sản phẩm khóa vẫn được phép xem/tải về theo đúng banner cảnh báo bên FE.
    */
+  /** PO đã khóa/hủy thì mọi dữ liệu sản phẩm bên trong cũng đóng băng. Kiểm
+   * tra theo PO thật của sản phẩm, không tin riêng :id trên URL. */
+  private async assertPoOpenForProduct(
+    poId: string,
+    productId: string,
+    action: string,
+  ): Promise<PurchaseOrderProduct> {
+    const [product, po] = await Promise.all([
+      this.productRepo.findOne({
+        where: { id: productId, purchaseOrderId: poId },
+      }),
+      this.poRepo.findOne({ where: { id: poId } }),
+    ]);
+    if (!product || !po) {
+      throw new NotFoundException(
+        `Không tìm thấy sản phẩm #${productId} trong đơn hàng PO`,
+      );
+    }
+    this.checkPoNotLocked(po, action);
+    return product;
+  }
+
   private async assertPoProductEditable(
     poId: string,
     productId: string,
   ): Promise<PurchaseOrderProduct> {
-    const product = await this.assertPoProductExists(poId, productId);
+    const product = await this.assertPoOpenForProduct(
+      poId,
+      productId,
+      'chỉnh sửa đợt may mẫu',
+    );
     if (product.status === ProductStatus.CLOSED) {
       throw new BadRequestException(
         'Sản phẩm đã bị khóa, không thể chỉnh sửa đợt may mẫu.',
@@ -4004,17 +4097,17 @@ export class PurchaseOrdersService {
   }
 
   async createProductSampleRound(
+    poId: string,
     productId: string,
     dto: CreateProductSampleRoundDto,
     userId?: string,
     actor?: AuditActor,
   ) {
-    const product = await this.productRepo.findOne({
-      where: { id: productId },
-    });
-    if (!product) {
-      throw new NotFoundException(`Không tìm thấy sản phẩm #${productId}`);
-    }
+    const product = await this.assertPoOpenForProduct(
+      poId,
+      productId,
+      'chỉnh sửa đợt may mẫu',
+    );
     if (product.status === ProductStatus.CLOSED) {
       throw new BadRequestException(
         'Sản phẩm đã bị khóa, không thể chỉnh sửa đợt may mẫu.',
@@ -4351,25 +4444,93 @@ export class PurchaseOrdersService {
       }),
     ]);
 
+    // DB chỉ giữ object key (xem toStoredImageRef) — ký lại mỗi lần đọc,
+    // không thì FE nhận key trần và ảnh không hiển thị.
+    const sizeData = Array.isArray(doc.sizeData)
+      ? await Promise.all(
+          (doc.sizeData as any[]).map(async (item) =>
+            item &&
+            typeof item === 'object' &&
+            typeof item.imageUrl === 'string'
+              ? { ...item, imageUrl: await this.resolveImageRef(item.imageUrl) }
+              : item,
+          ),
+        )
+      : doc.sizeData;
+
+    const resolvedSections = await Promise.all(
+      sections.map(async (s) => ({
+        id: s.id,
+        sectionCode: s.sectionCode,
+        title: s.title,
+        content: s.content,
+        imageGroups: await Promise.all(
+          (s.imageGroups ?? []).map(async (group: any) => ({
+            ...group,
+            imageUrls: await Promise.all(
+              (group?.imageUrls ?? []).map((url: string) =>
+                this.resolveImageRef(url),
+              ),
+            ),
+          })),
+        ),
+        orderIndex: s.orderIndex,
+        isFixed: s.isFixed,
+      })),
+    );
+
+    // Liệt kê tường minh: FE spread lại sections/sizeRows vào payload lưu,
+    // cột nội bộ (productionDocumentId, rowVersion...) sẽ bị DTO từ chối.
     return {
-      ...doc,
-      sections,
-      sizeRows,
+      id: doc.id,
+      productId: doc.productId,
+      styleId: doc.styleId,
+      name: doc.name,
+      description: doc.description,
+      status: doc.status,
+      section1Description: doc.section1Description,
+      section1ImageUrl: await this.resolveImageRef(doc.section1ImageUrl),
+      section2Accessories: doc.section2Accessories,
+      section3Notes: doc.section3Notes,
+      section4CustomerFeedback: doc.section4CustomerFeedback,
+      sizeData,
+      sourceDocumentId: doc.sourceDocumentId,
+      copiedFromStyleId: doc.copiedFromStyleId,
+      copiedAt: doc.copiedAt,
+      createdAt: doc.createdAt,
+      updatedAt: doc.updatedAt,
+      sections: resolvedSections,
+      sizeRows: sizeRows.map((sr) => ({
+        id: sr.id,
+        sizeLabel: sr.sizeLabel,
+        measurementName: sr.measurementName,
+        measurementValue: sr.measurementValue,
+        tolerance: sr.tolerance,
+        orderIndex: sr.orderIndex,
+      })),
     };
   }
 
   async updateProductProductionDoc(
+    poId: string,
     productId: string,
-    dto: any,
+    dto: UpdateStyleProductionDocDto,
     userId?: string,
     actor?: AuditActor,
   ) {
+    const product = await this.assertPoOpenForProduct(
+      poId,
+      productId,
+      'chỉnh sửa tài liệu sản xuất',
+    );
+    if (product.status === ProductStatus.CLOSED) {
+      throw new BadRequestException(
+        'Sản phẩm đã bị khóa, không thể chỉnh sửa tài liệu sản xuất.',
+      );
+    }
     const existingDoc = await this.prodDocRepo.findOne({
       where: { productId },
     });
-    const product = existingDoc
-      ? null
-      : await this.productRepo.findOne({ where: { id: productId } });
 
     await this.dataSource.transaction(async (manager) => {
       const docRepo = manager.getRepository(ProductionDocument);
@@ -4382,7 +4543,7 @@ export class PurchaseOrdersService {
           docRepo.create({
             productId,
             styleId: null,
-            name: dto.name || `Tài liệu SX - ${product?.productCode || 'SP'}`,
+            name: dto.name || `Tài liệu SX - ${product.productCode || 'SP'}`,
             status: dto.status || ProductionDocStatus.DRAFT,
             createdBy: userId,
             createdAt: new Date(),
@@ -4401,14 +4562,15 @@ export class PurchaseOrdersService {
       if (dto.section1Description !== undefined)
         doc.section1Description = dto.section1Description;
       if (dto.section1ImageUrl !== undefined)
-        doc.section1ImageUrl = dto.section1ImageUrl;
+        doc.section1ImageUrl = this.toStoredImageRef(dto.section1ImageUrl);
       if (dto.section2Accessories !== undefined)
         doc.section2Accessories = dto.section2Accessories;
       if (dto.section3Notes !== undefined)
         doc.section3Notes = dto.section3Notes;
       if (dto.section4CustomerFeedback !== undefined)
         doc.section4CustomerFeedback = dto.section4CustomerFeedback;
-      if (dto.sizeData !== undefined) doc.sizeData = dto.sizeData;
+      if (dto.sizeData !== undefined)
+        doc.sizeData = this.toStoredSizeData(dto.sizeData) as any;
 
       doc.updatedBy = userId || (null as any);
       doc.updatedAt = new Date();
@@ -4429,14 +4591,14 @@ export class PurchaseOrdersService {
 
         let dynamicOrder = 5;
         const newSections = (dto.sections || [])
-          .filter((s: any) => !s.isFixed)
-          .map((s: any) =>
+          .filter((s) => !s.isFixed)
+          .map((s) =>
             sectionRepo.create({
               productionDocumentId: docId,
               sectionCode: s.sectionCode || `SEC_DYN_${dynamicOrder++}`,
               title: s.title ? s.title.trim() : '',
               content: s.content ? s.content.trim() : null,
-              imageGroups: s.imageGroups ?? [],
+              imageGroups: this.toStoredImageGroups(s.imageGroups),
               orderIndex: s.orderIndex ?? dynamicOrder,
               isFixed: false,
             }),
@@ -4464,19 +4626,18 @@ export class PurchaseOrdersService {
           await sizeRowRepo.remove(existingSizeRows);
         }
 
-        const newSizeRows: ProductionDocumentSizeRow[] = (
-          dto.sizeRows as any[]
-        ).map((sr: any, index: number) =>
-          sizeRowRepo.create({
-            productionDocumentId: docId,
-            sizeLabel: String(sr.sizeLabel || '').trim(),
-            measurementName: String(sr.measurementName || '').trim(),
-            measurementValue: sr.measurementValue
-              ? String(sr.measurementValue).trim()
-              : null,
-            tolerance: sr.tolerance ? String(sr.tolerance).trim() : null,
-            orderIndex: sr.orderIndex ?? index + 1,
-          }),
+        const newSizeRows: ProductionDocumentSizeRow[] = dto.sizeRows.map(
+          (sr, index) =>
+            sizeRowRepo.create({
+              productionDocumentId: docId,
+              sizeLabel: String(sr.sizeLabel || '').trim(),
+              measurementName: String(sr.measurementName || '').trim(),
+              measurementValue: sr.measurementValue
+                ? String(sr.measurementValue).trim()
+                : null,
+              tolerance: sr.tolerance ? String(sr.tolerance).trim() : null,
+              orderIndex: sr.orderIndex ?? index + 1,
+            }),
         );
         if (newSizeRows.length > 0) {
           await sizeRowRepo.save(newSizeRows);
@@ -4526,12 +4687,11 @@ export class PurchaseOrdersService {
     userId?: string,
     actor?: AuditActor,
   ) {
-    const product = await this.productRepo.findOne({
-      where: { id: productId, purchaseOrderId: poId },
-    });
-    if (!product) {
-      throw new NotFoundException(`Không tìm thấy sản phẩm #${productId}`);
-    }
+    const product = await this.assertPoOpenForProduct(
+      poId,
+      productId,
+      'khóa/mở khóa sản phẩm',
+    );
 
     // Đối với Product chỉ có 2 trạng thái: Đang Xử Lý (DRAFT) và Khóa (CLOSED)
     const normalizedStatus =

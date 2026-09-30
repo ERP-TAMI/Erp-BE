@@ -56,6 +56,7 @@ import { PurchaseOrderProduct } from './entities/PurchaseOrderProduct.entity';
 import { PurchaseOrderWriteAccessGuard } from './guards/purchase-order-write-access.guard';
 import { PurchaseOrderFullAccessGuard } from '../../common/guards/purchase-order-full-access.guard';
 import { AuditActor } from '../audit/audit-actor.type';
+import { UpdateStyleProductionDocDto } from '../production/dto/update-style-production-doc.dto';
 
 function auditActorFrom(req: any): AuditActor | undefined {
   const id = req?.user?.id || req?.user?.sub;
@@ -316,11 +317,13 @@ export class PurchaseOrdersController {
   @UseGuards(PurchaseOrderWriteAccessGuard)
   @ApiOperation({ summary: 'Lưu bảng công đoạn của sản phẩm' })
   async saveProductOperationSteps(
+    @Param('id', ParseUUIDPipe) id: string,
     @Param('productId', ParseUUIDPipe) productId: string,
     @Body() dto: SaveProductOperationStepsDto,
     @Req() req?: any,
   ) {
     return this.service.saveProductOperationSteps(
+      id,
       productId,
       dto,
       auditActorFrom(req),
@@ -339,12 +342,14 @@ export class PurchaseOrdersController {
   @UseGuards(PurchaseOrderWriteAccessGuard)
   @ApiOperation({ summary: 'Tạo đợt may mẫu mới cho sản phẩm' })
   async createProductSampleRound(
+    @Param('id', ParseUUIDPipe) id: string,
     @Param('productId', ParseUUIDPipe) productId: string,
     @Body() dto: CreateProductSampleRoundDto,
     @Req() req?: any,
   ) {
     const userId = req?.user?.id || req?.user?.sub;
     return this.service.createProductSampleRound(
+      id,
       productId,
       dto,
       userId,
@@ -467,12 +472,14 @@ export class PurchaseOrdersController {
     summary: 'Cập nhật tài liệu sản xuất tiếng Việt của sản phẩm',
   })
   async updateProductProductionDoc(
+    @Param('id', ParseUUIDPipe) id: string,
     @Param('productId', ParseUUIDPipe) productId: string,
-    @Body() dto: any,
+    @Body() dto: UpdateStyleProductionDocDto,
     @Req() req?: any,
   ) {
     const userId = req?.user?.id || req?.user?.sub;
     return this.service.updateProductProductionDoc(
+      id,
       productId,
       dto,
       userId,
