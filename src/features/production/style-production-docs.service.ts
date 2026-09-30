@@ -239,8 +239,9 @@ export class StyleProductionDocsService {
       );
     }
 
-    const section1ImageUrl =
-      dto.section1ImageUrl?.trim() || style.baseImageKey || null;
+    const section1ImageUrl = this.normalizeImageRef(
+      dto.section1ImageUrl?.trim() || style.baseImageKey || null,
+    );
     const section1Description =
       dto.section1Description?.trim() || style.description || null;
 
@@ -262,7 +263,7 @@ export class StyleProductionDocsService {
       section2Accessories,
       section3Notes,
       section4CustomerFeedback,
-      sizeData: dto.sizeData ?? null,
+      sizeData: this.normalizeSizeData(dto.sizeData) ?? null,
       createdBy: userId ?? null,
       updatedBy: userId ?? null,
     });
@@ -636,9 +637,9 @@ export class StyleProductionDocsService {
           ? dto.section1Description.trim()
           : null;
       if (dto.section1ImageUrl !== undefined)
-        doc.section1ImageUrl = dto.section1ImageUrl
-          ? dto.section1ImageUrl.trim()
-          : null;
+        doc.section1ImageUrl = this.normalizeImageRef(
+          dto.section1ImageUrl ? dto.section1ImageUrl.trim() : null,
+        );
       if (dto.section2Accessories !== undefined)
         doc.section2Accessories = dto.section2Accessories
           ? dto.section2Accessories.trim()
@@ -649,7 +650,8 @@ export class StyleProductionDocsService {
         doc.section4CustomerFeedback = dto.section4CustomerFeedback
           ? dto.section4CustomerFeedback.trim()
           : null;
-      if (dto.sizeData !== undefined) doc.sizeData = dto.sizeData;
+      if (dto.sizeData !== undefined)
+        doc.sizeData = this.normalizeSizeData(dto.sizeData);
 
       doc.updatedBy = userId ?? null;
       doc.rowVersion = Number(doc.rowVersion) + 1;
@@ -1578,6 +1580,47 @@ export class StyleProductionDocsService {
       return value;
     }
     return this.storage.getPresignedGetUrl(value);
+  }
+
+  /**
+   * The FE round-trips whatever `resolveMaybeKey` returned (a presigned GET
+   * URL) straight back into the save payload when the user edits a doc
+   * without touching its image — `section1ImageUrl`/`sizeData[].imageUrl`
+   * would otherwise get persisted (and audited) as a live, signed S3 URL
+   * carrying the AWS access key + a 1-hour-valid signature in its query
+   * string. Strip a presigned URL for our own bucket back down to the bare
+   * object key before it ever reaches the DB or the audit diff. A URL for
+   * some other host is left untouched (never fetched — only compared).
+   */
+  private normalizeImageRef(value: string | null | undefined): string | null {
+    if (!value) return null;
+    if (!value.startsWith('http://') && !value.startsWith('https://')) {
+      return value;
+    }
+    if (!this.storage.isTrustedObjectHost(value)) {
+      return value;
+    }
+    try {
+      return decodeURIComponent(new URL(value).pathname.replace(/^\/+/, ''));
+    } catch {
+      return value;
+    }
+  }
+
+  private normalizeSizeData(sizeData: unknown): unknown {
+    if (!Array.isArray(sizeData)) return sizeData;
+    return sizeData.map((item) =>
+      item &&
+      typeof item === 'object' &&
+      typeof (item as { imageUrl?: unknown }).imageUrl === 'string'
+        ? {
+            ...item,
+            imageUrl: this.normalizeImageRef(
+              (item as { imageUrl: string }).imageUrl,
+            ),
+          }
+        : item,
+    );
   }
 
   private async getImageBuffer(

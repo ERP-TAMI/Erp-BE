@@ -25,6 +25,7 @@ describe('StyleProductionDocsService', () => {
   let docRepoMock: any;
   let bomRepoMock: any;
   let bomLineRepoMock: any;
+  let storageMock: any;
 
   const mockStyle = {
     id: 'style-uuid-1',
@@ -142,7 +143,7 @@ describe('StyleProductionDocsService', () => {
         { provide: DataSource, useValue: dataSourceMock },
         {
           provide: STORAGE_SERVICE,
-          useValue: {
+          useValue: (storageMock = {
             getPresignedPutUrl: jest.fn(),
             getPresignedGetUrl: jest
               .fn()
@@ -152,7 +153,7 @@ describe('StyleProductionDocsService', () => {
             getObjectBuffer: jest.fn(),
             getObjectHead: jest.fn(),
             isTrustedObjectHost: jest.fn().mockReturnValue(false),
-          },
+          }),
         },
         {
           provide: AuditService,
@@ -211,6 +212,27 @@ describe('StyleProductionDocsService', () => {
         expect.objectContaining({ sizeData }),
       );
     });
+
+    it('strips a presigned GET URL for our own bucket back to the bare object key before saving', async () => {
+      prodDocRepoMock.findOne.mockResolvedValueOnce(null);
+      storageMock.isTrustedObjectHost.mockReturnValue(true);
+      const objectKey =
+        'styles/style-uuid-1/documents/production_doc_image/sketch.png';
+      const presignedUrl = `https://erp-tami-storage-dev.s3.us-east-1.amazonaws.com/${objectKey}?X-Amz-Credential=AKIA_FAKE&X-Amz-Signature=deadbeef`;
+
+      await service.createWithAutoFill('style-uuid-1', {
+        name: 'Tài liệu',
+        section1ImageUrl: presignedUrl,
+        sizeData: [{ imageUrl: presignedUrl }],
+      } as any);
+
+      expect(prodDocRepoMock.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          section1ImageUrl: objectKey,
+          sizeData: [{ imageUrl: objectKey }],
+        }),
+      );
+    });
   });
 
   describe('updateStatus', () => {
@@ -249,6 +271,36 @@ describe('StyleProductionDocsService', () => {
 
       expect(prodDocRepoMock.save).toHaveBeenCalledWith(
         expect.objectContaining({ sizeData }),
+      );
+    });
+
+    it('strips a presigned GET URL back to the bare object key instead of persisting the live signature', async () => {
+      prodDocRepoMock.findOne.mockResolvedValueOnce({ ...mockDoc });
+      storageMock.isTrustedObjectHost.mockReturnValue(true);
+      const objectKey =
+        'styles/style-uuid-1/documents/production_doc_image/sketch.png';
+      const presignedUrl = `https://erp-tami-storage-dev.s3.us-east-1.amazonaws.com/${objectKey}?X-Amz-Credential=AKIA_FAKE&X-Amz-Signature=deadbeef`;
+
+      await service.update('doc-uuid-1', {
+        section1ImageUrl: presignedUrl,
+      } as any);
+
+      expect(prodDocRepoMock.save).toHaveBeenCalledWith(
+        expect.objectContaining({ section1ImageUrl: objectKey }),
+      );
+    });
+
+    it('leaves a URL for a different host untouched (never fetched, only compared)', async () => {
+      prodDocRepoMock.findOne.mockResolvedValueOnce({ ...mockDoc });
+      storageMock.isTrustedObjectHost.mockReturnValue(false);
+      const externalUrl = 'https://cdn.example.com/image.png';
+
+      await service.update('doc-uuid-1', {
+        section1ImageUrl: externalUrl,
+      } as any);
+
+      expect(prodDocRepoMock.save).toHaveBeenCalledWith(
+        expect.objectContaining({ section1ImageUrl: externalUrl }),
       );
     });
   });
