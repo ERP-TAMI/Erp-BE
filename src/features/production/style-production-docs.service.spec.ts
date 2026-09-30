@@ -12,6 +12,7 @@ import { Bom } from '../boms/entities/Bom.entity';
 import { BomLine } from '../boms/entities/BomLine.entity';
 import { ProductionDocStatus } from '../../common/enums/database.enums';
 import { STORAGE_SERVICE } from '../storage/storage.interface';
+import { AuditService } from '../audit/audit.service';
 
 describe('StyleProductionDocsService', () => {
   let service: StyleProductionDocsService;
@@ -151,6 +152,12 @@ describe('StyleProductionDocsService', () => {
             getObjectBuffer: jest.fn(),
             getObjectHead: jest.fn(),
             isTrustedObjectHost: jest.fn().mockReturnValue(false),
+          },
+        },
+        {
+          provide: AuditService,
+          useValue: {
+            recordEntityChange: jest.fn().mockResolvedValue(undefined),
           },
         },
       ],

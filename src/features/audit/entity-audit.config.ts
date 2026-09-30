@@ -36,6 +36,19 @@ export const ENTITY_AUDIT_CONFIG: Record<string, EntityAuditConfig> = {
       images: 'Ảnh đính kèm',
     },
   },
+  ProductionDocument: {
+    fieldLabels: {
+      name: 'Tên tài liệu',
+      description: 'Mô tả',
+      status: 'Trạng thái',
+      section1Description: 'Mô tả hình dáng',
+      section1ImageUrl: 'Ảnh mô tả hình dáng',
+      section2Accessories: 'Phụ liệu',
+      section3Notes: 'Ghi chú',
+      section4CustomerFeedback: 'Phản hồi khách hàng',
+      sizeData: 'Bảng thông số kích thước',
+    },
+  },
 };
 
 export function getFieldLabel(

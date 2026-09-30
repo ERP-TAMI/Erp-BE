@@ -430,7 +430,11 @@ export class StyleSampleRoundsService {
             actorId: actor.id,
             actorRole: actor.roleCode,
             targetLabel: `Lần may mẫu #${round.roundNo}`,
-            eventType: AuditEventType.CREATED,
+            // Round đã tồn tại, đây chỉ là thêm 1 ảnh nữa vào — dùng
+            // DOCUMENT_VERSION_ADDED thay vì CREATED để không lẫn với sự
+            // kiện "tạo mới round" trên UI lịch sử (cùng icon/động từ nếu
+            // dùng chung CREATED sẽ rất khó phân biệt 2 việc khác nhau).
+            eventType: AuditEventType.DOCUMENT_VERSION_ADDED,
             changes: [
               { fieldName: 'images', oldValue: null, newValue: dto.fileName },
             ],

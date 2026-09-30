@@ -31,6 +31,24 @@ import {
   UpdateStyleProductionDocDto,
   CopyMode,
 } from './dto';
+import { AuditService } from '../audit/audit.service';
+import { AuditActor } from '../audit/audit-actor.type';
+import { diffEntity } from '../audit/entity-diff.util';
+import { AuditEventType } from '../../common/enums/database.enums';
+
+const AGGREGATE_TYPE = 'ProductionDocument';
+
+const TRACKED_FIELDS = [
+  'name',
+  'description',
+  'status',
+  'section1Description',
+  'section1ImageUrl',
+  'section2Accessories',
+  'section3Notes',
+  'section4CustomerFeedback',
+  'sizeData',
+] as const satisfies readonly (keyof ProductionDocument)[];
 
 export interface StyleProductionDocDetailResponse {
   id: string;
@@ -106,6 +124,7 @@ export class StyleProductionDocsService {
     @Inject(STORAGE_SERVICE)
     private readonly storage: StorageService,
     private readonly dataSource: DataSource,
+    private readonly auditService: AuditService,
   ) {}
 
   /**
@@ -206,6 +225,7 @@ export class StyleProductionDocsService {
     styleId: string,
     dto: CreateStyleProductionDocDto,
     userId?: string,
+    actor?: AuditActor,
   ): Promise<StyleProductionDocDetailResponse> {
     const style = await this.styleRepo.findOne({ where: { id: styleId } });
     if (!style) {
@@ -331,6 +351,19 @@ export class StyleProductionDocsService {
           userId,
         );
       }
+    }
+
+    if (actor) {
+      await this.auditService.recordEntityChange(this.dataSource.manager, {
+        aggregateType: AGGREGATE_TYPE,
+        aggregateId: savedDoc.id,
+        parentId: styleId,
+        actorId: actor.id,
+        actorRole: actor.roleCode,
+        targetLabel: savedDoc.name,
+        eventType: AuditEventType.CREATED,
+        changes: diffEntity(null, savedDoc, TRACKED_FIELDS),
+      });
     }
 
     return this.buildDetailResponse(savedDoc);
@@ -579,6 +612,7 @@ export class StyleProductionDocsService {
     docId: string,
     dto: UpdateStyleProductionDocDto,
     userId?: string,
+    actor?: AuditActor,
   ): Promise<StyleProductionDocDetailResponse> {
     const doc = await this.dataSource.transaction(async (manager) => {
       const prodDocRepo = manager.getRepository(ProductionDocument);
@@ -591,6 +625,7 @@ export class StyleProductionDocsService {
           `Không tìm thấy tài liệu sản xuất với ID: ${docId}`,
         );
       }
+      const before = { ...doc };
 
       if (dto.name !== undefined) doc.name = dto.name.trim();
       if (dto.description !== undefined)
@@ -619,6 +654,19 @@ export class StyleProductionDocsService {
       doc.updatedBy = userId ?? null;
       doc.rowVersion = Number(doc.rowVersion) + 1;
       await prodDocRepo.save(doc);
+
+      if (actor) {
+        await this.auditService.recordEntityChange(manager, {
+          aggregateType: AGGREGATE_TYPE,
+          aggregateId: doc.id,
+          parentId: doc.styleId ?? undefined,
+          actorId: actor.id,
+          actorRole: actor.roleCode,
+          targetLabel: doc.name,
+          eventType: AuditEventType.UPDATED,
+          changes: diffEntity(before, doc, TRACKED_FIELDS),
+        });
+      }
 
       const existingSections = await sectionRepo.find({
         where: { productionDocumentId: docId },
@@ -707,6 +755,7 @@ export class StyleProductionDocsService {
     docId: string,
     status: ProductionDocStatus,
     userId?: string,
+    actor?: AuditActor,
   ): Promise<StyleProductionDocDetailResponse> {
     const doc = await this.prodDocRepo.findOne({ where: { id: docId } });
     if (!doc) {
@@ -714,9 +763,26 @@ export class StyleProductionDocsService {
         `Không tìm thấy tài liệu sản xuất với ID: ${docId}`,
       );
     }
+    const before = { ...doc };
     doc.status = status;
     doc.updatedBy = userId ?? null;
-    await this.prodDocRepo.save(doc);
+
+    await this.dataSource.transaction(async (manager) => {
+      await manager.getRepository(ProductionDocument).save(doc);
+      if (actor) {
+        await this.auditService.recordEntityChange(manager, {
+          aggregateType: AGGREGATE_TYPE,
+          aggregateId: doc.id,
+          parentId: doc.styleId ?? undefined,
+          actorId: actor.id,
+          actorRole: actor.roleCode,
+          targetLabel: doc.name,
+          eventType: AuditEventType.STATUS_CHANGED,
+          changes: diffEntity(before, doc, ['status'] as const),
+        });
+      }
+    });
+
     return this.buildDetailResponse(doc);
   }
 
@@ -752,14 +818,29 @@ export class StyleProductionDocsService {
     }
   }
 
-  async remove(docId: string): Promise<void> {
+  async remove(docId: string, actor?: AuditActor): Promise<void> {
     const doc = await this.prodDocRepo.findOne({ where: { id: docId } });
     if (!doc) {
       throw new NotFoundException(
         `Không tìm thấy tài liệu sản xuất với ID: ${docId}`,
       );
     }
-    await this.prodDocRepo.remove(doc);
+
+    await this.dataSource.transaction(async (manager) => {
+      await manager.getRepository(ProductionDocument).remove(doc);
+      if (actor) {
+        await this.auditService.recordEntityChange(manager, {
+          aggregateType: AGGREGATE_TYPE,
+          aggregateId: doc.id,
+          parentId: doc.styleId ?? undefined,
+          actorId: actor.id,
+          actorRole: actor.roleCode,
+          targetLabel: doc.name,
+          eventType: AuditEventType.DELETED,
+          changes: [],
+        });
+      }
+    });
   }
 
   /**
