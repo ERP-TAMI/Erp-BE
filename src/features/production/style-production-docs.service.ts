@@ -316,7 +316,7 @@ export class StyleProductionDocsService {
               sectionCode: sDto.sectionCode || `SEC_DYN_${dynamicOrder}`,
               title: sDto.title.trim(),
               content: sDto.content?.trim() ?? null,
-              imageGroups: sDto.imageGroups ?? [],
+              imageGroups: this.normalizeSectionImageGroups(sDto.imageGroups),
               orderIndex: sDto.orderIndex ?? dynamicOrder,
               isFixed: false,
             }),
@@ -604,7 +604,7 @@ export class StyleProductionDocsService {
               sectionCode: s.sectionCode,
               title: s.title,
               content: s.content,
-              imageGroups: s.imageGroups,
+              imageGroups: this.normalizeSectionImageGroups(s.imageGroups),
               orderIndex: s.orderIndex,
               isFixed: false,
             }),
@@ -723,7 +723,7 @@ export class StyleProductionDocsService {
               sectionCode: s.sectionCode || `SEC_DYN_${dynamicOrder++}`,
               title: s.title.trim(),
               content: s.content?.trim() ?? null,
-              imageGroups: s.imageGroups ?? [],
+              imageGroups: this.normalizeSectionImageGroups(s.imageGroups),
               orderIndex: s.orderIndex ?? dynamicOrder,
               isFixed: false,
             }),
@@ -1615,6 +1615,22 @@ export class StyleProductionDocsService {
     } catch {
       return value;
     }
+  }
+
+  /** Cùng lý do với normalizeImageRef: ảnh trong mục bổ sung cũng được ký
+   * lại mỗi lần đọc và FE gửi nguyên link đó về khi lưu. */
+  private normalizeSectionImageGroups(imageGroups: unknown): any[] {
+    if (!Array.isArray(imageGroups)) return [];
+    return imageGroups.map((group) =>
+      group && typeof group === 'object' && Array.isArray(group.imageUrls)
+        ? {
+            ...group,
+            imageUrls: (group.imageUrls as unknown[]).map((url) =>
+              typeof url === 'string' ? this.normalizeImageRef(url) : url,
+            ),
+          }
+        : group,
+    );
   }
 
   private normalizeSizeData(sizeData: unknown): unknown {

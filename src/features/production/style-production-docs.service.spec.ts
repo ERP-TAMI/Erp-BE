@@ -233,6 +233,28 @@ describe('StyleProductionDocsService', () => {
         }),
       );
     });
+
+    it('strips presigned URLs inside section imageGroups when creating', async () => {
+      prodDocRepoMock.findOne.mockResolvedValueOnce(null);
+      storageMock.isTrustedObjectHost.mockReturnValue(true);
+      const objectKey =
+        'styles/style-uuid-1/documents/production_doc_image/sec.png';
+      const presignedUrl = `https://erp-tami-storage-dev.s3.us-east-1.amazonaws.com/${objectKey}?X-Amz-Credential=AKIA_FAKE&X-Amz-Signature=deadbeef`;
+
+      await service.createWithAutoFill('style-uuid-1', {
+        name: 'Tài liệu',
+        sections: [
+          { title: 'Mục 6', imageGroups: [{ imageUrls: [presignedUrl] }] },
+        ],
+      } as any);
+
+      expect(JSON.stringify(sectionRepoMock.save.mock.calls)).toContain(
+        objectKey,
+      );
+      expect(JSON.stringify(sectionRepoMock.save.mock.calls)).not.toContain(
+        'X-Amz-Signature',
+      );
+    });
   });
 
   describe('updateStatus', () => {
@@ -287,6 +309,33 @@ describe('StyleProductionDocsService', () => {
 
       expect(prodDocRepoMock.save).toHaveBeenCalledWith(
         expect.objectContaining({ section1ImageUrl: objectKey }),
+      );
+    });
+
+    it('strips presigned URLs inside section imageGroups too, not only section1/sizeData', async () => {
+      prodDocRepoMock.findOne.mockResolvedValueOnce({ ...mockDoc });
+      storageMock.isTrustedObjectHost.mockReturnValue(true);
+      const objectKey =
+        'styles/style-uuid-1/documents/production_doc_image/sec.png';
+      const presignedUrl = `https://erp-tami-storage-dev.s3.us-east-1.amazonaws.com/${objectKey}?X-Amz-Credential=AKIA_FAKE&X-Amz-Signature=deadbeef`;
+
+      await service.update('doc-uuid-1', {
+        sections: [
+          {
+            title: 'Mục 6',
+            imageGroups: [{ heading: 'Khối 1', imageUrls: [presignedUrl] }],
+          },
+        ],
+      } as any);
+
+      const savedSections = sectionRepoMock.save.mock.calls
+        .map((c: any[]) => c[0])
+        .find((arg: unknown) => Array.isArray(arg));
+      expect(savedSections[0].imageGroups).toEqual([
+        { heading: 'Khối 1', imageUrls: [objectKey] },
+      ]);
+      expect(JSON.stringify(sectionRepoMock.save.mock.calls)).not.toContain(
+        'X-Amz-Signature',
       );
     });
 

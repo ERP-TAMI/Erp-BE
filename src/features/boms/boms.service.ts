@@ -5,7 +5,13 @@ import {
   ConflictException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, In, Repository, SelectQueryBuilder } from 'typeorm';
+import {
+  DataSource,
+  EntityManager,
+  In,
+  Repository,
+  SelectQueryBuilder,
+} from 'typeorm';
 import { Bom } from './entities/Bom.entity';
 import { BomRevision } from './entities/BomRevision.entity';
 import { BomLine } from './entities/BomLine.entity';
@@ -59,7 +65,12 @@ import {
   assertRevisionDataReadyForForward,
   assertRevisionDataReadyForApprove,
 } from './boms.policy';
-import { BomRevisionStatus, BomType } from '../../common/enums/database.enums';
+import {
+  BomRevisionStatus,
+  BomType,
+  PoStatus,
+  ProductStatus,
+} from '../../common/enums/database.enums';
 import { stripHtmlTags } from '../../common/utils/sanitize-text.util';
 
 export interface PaginatedResult<T> {
@@ -129,6 +140,37 @@ export class BomsService {
   ): void {
     if (expectedRowVersion === undefined) return;
     this.assertExpectedRowVersion(currentRev, expectedRowVersion);
+  }
+
+  /** BOM của sản phẩm PO đóng băng theo sản phẩm: sản phẩm đã khóa, hoặc PO
+   * đã khóa/hủy, thì mọi thao tác ghi BOM đều bị chặn. BOM Mẫu Fit bỏ qua. */
+  private async assertPoProductBomWritable(
+    manager: EntityManager,
+    purchaseOrderProductId: string | null | undefined,
+  ): Promise<void> {
+    if (!purchaseOrderProductId) return;
+    const product = await manager.findOne(PurchaseOrderProduct, {
+      where: { id: purchaseOrderProductId },
+    });
+    if (!product) return;
+    if (product.status === ProductStatus.CLOSED) {
+      throw new BadRequestException(
+        'Sản phẩm đã bị khóa, không thể chỉnh sửa BOM.',
+      );
+    }
+    const po = await manager.findOne(PurchaseOrder, {
+      where: { id: product.purchaseOrderId },
+    });
+    if (po?.status === PoStatus.CLOSED) {
+      throw new BadRequestException(
+        'Đơn hàng PO đã khóa, không thể chỉnh sửa BOM.',
+      );
+    }
+    if (po?.status === PoStatus.CANCELLED) {
+      throw new BadRequestException(
+        'Đơn hàng PO đã hủy, không thể chỉnh sửa BOM.',
+      );
+    }
   }
 
   /**
@@ -912,6 +954,10 @@ export class BomsService {
               `Không tìm thấy sản phẩm trong đơn hàng với ID: ${purchaseOrderProductId}`,
             );
           }
+          await this.assertPoProductBomWritable(
+            manager,
+            purchaseOrderProductId,
+          );
 
           const po = await manager.findOne(PurchaseOrder, {
             where: { id: pop.purchaseOrderId },
@@ -1037,6 +1083,10 @@ export class BomsService {
       if (!bom) {
         throw new NotFoundException(`Không tìm thấy BOM với ID: ${id}`);
       }
+      await this.assertPoProductBomWritable(
+        manager,
+        bom.purchaseOrderProductId,
+      );
 
       let currentRev: BomRevision | null = null;
       if (bom.currentRevisionId) {
@@ -1095,6 +1145,10 @@ export class BomsService {
       if (!bom) {
         throw new NotFoundException(`Không tìm thấy BOM với ID: ${id}`);
       }
+      await this.assertPoProductBomWritable(
+        manager,
+        bom.purchaseOrderProductId,
+      );
 
       if (!bom.currentRevisionId) {
         throw new BadRequestException('BOM chưa có revision hiện tại.');
@@ -1182,6 +1236,10 @@ export class BomsService {
       if (!bom) {
         throw new NotFoundException(`Không tìm thấy BOM với ID: ${bomId}`);
       }
+      await this.assertPoProductBomWritable(
+        manager,
+        bom.purchaseOrderProductId,
+      );
 
       if (!bom.currentRevisionId) {
         throw new BadRequestException('BOM chưa có revision hiện tại.');
@@ -1331,6 +1389,10 @@ export class BomsService {
       if (!bom) {
         throw new NotFoundException(`Không tìm thấy BOM với ID: ${bomId}`);
       }
+      await this.assertPoProductBomWritable(
+        manager,
+        bom.purchaseOrderProductId,
+      );
 
       if (!bom.currentRevisionId) {
         throw new BadRequestException('BOM chưa có revision hiện tại.');
@@ -1458,6 +1520,10 @@ export class BomsService {
       if (!bom) {
         throw new NotFoundException(`Không tìm thấy BOM với ID: ${bomId}`);
       }
+      await this.assertPoProductBomWritable(
+        manager,
+        bom.purchaseOrderProductId,
+      );
 
       if (!bom.currentRevisionId) {
         throw new BadRequestException('BOM chưa có revision hiện tại.');
@@ -1540,6 +1606,10 @@ export class BomsService {
       if (!bom) {
         throw new NotFoundException(`Không tìm thấy BOM với ID: ${bomId}`);
       }
+      await this.assertPoProductBomWritable(
+        manager,
+        bom.purchaseOrderProductId,
+      );
 
       if (!bom.currentRevisionId) {
         throw new BadRequestException('BOM chưa có revision hiện tại.');
@@ -1673,6 +1743,10 @@ export class BomsService {
       if (!bom) {
         throw new NotFoundException(`Không tìm thấy BOM với ID: ${id}`);
       }
+      await this.assertPoProductBomWritable(
+        manager,
+        bom.purchaseOrderProductId,
+      );
 
       if (!bom.currentRevisionId) {
         throw new BadRequestException('BOM chưa có revision hiện tại.');
@@ -1747,6 +1821,10 @@ export class BomsService {
       if (!bom) {
         throw new NotFoundException(`Không tìm thấy BOM với ID: ${id}`);
       }
+      await this.assertPoProductBomWritable(
+        manager,
+        bom.purchaseOrderProductId,
+      );
 
       if (!bom.currentRevisionId) {
         throw new BadRequestException('BOM chưa có revision hiện tại.');
@@ -1828,6 +1906,10 @@ export class BomsService {
       if (!bom) {
         throw new NotFoundException(`Không tìm thấy BOM với ID: ${id}`);
       }
+      await this.assertPoProductBomWritable(
+        manager,
+        bom.purchaseOrderProductId,
+      );
 
       if (!bom.currentRevisionId) {
         throw new BadRequestException('BOM chưa có revision hiện tại.');
@@ -1909,6 +1991,10 @@ export class BomsService {
       if (!bom) {
         throw new NotFoundException(`Không tìm thấy BOM với ID: ${id}`);
       }
+      await this.assertPoProductBomWritable(
+        manager,
+        bom.purchaseOrderProductId,
+      );
 
       if (!bom.currentRevisionId) {
         throw new BadRequestException('BOM chưa có revision hiện tại.');
@@ -2377,6 +2463,10 @@ export class BomsService {
           `Không tìm thấy PO BOM với ID: ${targetBomId}`,
         );
       }
+      await this.assertPoProductBomWritable(
+        manager,
+        targetBom.purchaseOrderProductId,
+      );
 
       if (targetBom.bomType !== BomType.PO) {
         throw new BadRequestException(
