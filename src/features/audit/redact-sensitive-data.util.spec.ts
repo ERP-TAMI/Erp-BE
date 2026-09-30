@@ -23,6 +23,22 @@ describe('redactSensitiveData', () => {
     expect(result).toEqual([{ password: '[REDACTED]' }, { id: 1 }]);
   });
 
+  it('strips the signed query string from presigned S3 URLs anywhere in the payload', () => {
+    const signed =
+      'https://bucket.s3.amazonaws.com/styles/a/img.png?X-Amz-Credential=AKIA_FAKE&X-Amz-Signature=deadbeef';
+    const result = redactSensitiveData({
+      section1ImageUrl: signed,
+      sizeData: [{ imageUrl: signed }],
+    });
+
+    expect(result).toEqual({
+      section1ImageUrl: 'https://bucket.s3.amazonaws.com/styles/a/img.png',
+      sizeData: [
+        { imageUrl: 'https://bucket.s3.amazonaws.com/styles/a/img.png' },
+      ],
+    });
+  });
+
   it('passes through primitives and null/undefined untouched', () => {
     expect(redactSensitiveData(null)).toBeNull();
     expect(redactSensitiveData(undefined)).toBeUndefined();

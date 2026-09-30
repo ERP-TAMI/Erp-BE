@@ -277,7 +277,7 @@ describe('StyleOperationStepsService', () => {
       const [, input] = auditServiceMock.recordEntityChange.mock.calls[0];
       expect(input.eventType).toBe(AuditEventType.CREATED);
       expect(input.aggregateId).toBe(mockStyleId);
-      expect(input.reason).toContain('Tạo mới 2 công đoạn (Cắt, May)');
+      expect(input.reason).toBe('Tạo mới 2 công đoạn');
       expect(
         input.changes.some((c: any) => c.fieldName === 'Cắt::stepName'),
       ).toBe(true);
@@ -326,9 +326,9 @@ describe('StyleOperationStepsService', () => {
       expect(auditServiceMock.recordEntityChange).toHaveBeenCalledTimes(1);
       const [, input] = auditServiceMock.recordEntityChange.mock.calls[0];
       expect(input.eventType).toBe(AuditEventType.UPDATED);
-      expect(input.reason).toContain('Tạo mới 1 công đoạn (May cổ)');
-      expect(input.reason).toContain('Cập nhật 1 công đoạn (Cắt vải (đã sửa))');
-      expect(input.reason).toContain('Xoá 1 công đoạn (Ủi)');
+      expect(input.reason).toContain('Tạo mới 1 công đoạn');
+      expect(input.reason).toContain('Cập nhật 1 công đoạn');
+      expect(input.reason).toContain('Xoá 1 công đoạn');
     });
 
     it('records one DELETED event when the whole grid is cleared', async () => {
@@ -339,7 +339,7 @@ describe('StyleOperationStepsService', () => {
       expect(auditServiceMock.recordEntityChange).toHaveBeenCalledTimes(1);
       const [, input] = auditServiceMock.recordEntityChange.mock.calls[0];
       expect(input.eventType).toBe(AuditEventType.DELETED);
-      expect(input.reason).toContain('Xoá 1 công đoạn (Cắt vải)');
+      expect(input.reason).toContain('Xoá 1 công đoạn');
     });
 
     it('does not record any audit event when no actor is given', async () => {

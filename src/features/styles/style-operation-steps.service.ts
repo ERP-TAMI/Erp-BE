@@ -258,21 +258,17 @@ export class StyleOperationStepsService {
           ) {
             return;
           }
+          // Chỉ ghi số lượng — liệt kê tên thì 10+ công đoạn thành 1 dòng dài
+          // không đọc nổi; tên từng công đoạn đã có ở phần chi tiết khi mở ra.
           const reasonParts: string[] = [];
           if (createdLabels.length > 0) {
-            reasonParts.push(
-              `Tạo mới ${createdLabels.length} công đoạn (${createdLabels.join(', ')})`,
-            );
+            reasonParts.push(`Tạo mới ${createdLabels.length} công đoạn`);
           }
           if (updatedLabels.length > 0) {
-            reasonParts.push(
-              `Cập nhật ${updatedLabels.length} công đoạn (${updatedLabels.join(', ')})`,
-            );
+            reasonParts.push(`Cập nhật ${updatedLabels.length} công đoạn`);
           }
           if (deletedLabels.length > 0) {
-            reasonParts.push(
-              `Xoá ${deletedLabels.length} công đoạn (${deletedLabels.join(', ')})`,
-            );
+            reasonParts.push(`Xoá ${deletedLabels.length} công đoạn`);
           }
           const isPureCreation =
             createdLabels.length > 0 &&
