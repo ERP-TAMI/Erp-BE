@@ -8,7 +8,7 @@ export class AuditEventChange {
   @Column({ type: 'uuid', name: 'audit_event_id' })
   auditEventId: string;
 
-  @Column({ type: 'varchar', length: 150, name: 'field_name' })
+  @Column({ type: 'varchar', length: 300, name: 'field_name' })
   fieldName: string;
 
   @Column({ type: 'jsonb', nullable: true, name: 'old_value' })

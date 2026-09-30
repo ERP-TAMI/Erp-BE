@@ -354,17 +354,27 @@ export class StyleProductionDocsService {
       }
     }
 
+    // Các bước tạo phía trên đã commit riêng lẻ (không chung transaction), nên
+    // nếu ghi lịch sử lỗi mà ném ra thì người dùng thấy lỗi dù tài liệu đã
+    // được tạo, và bấm tạo lại sẽ bị báo "đã có tài liệu". Chỉ ghi log lỗi.
     if (actor) {
-      await this.auditService.recordEntityChange(this.dataSource.manager, {
-        aggregateType: AGGREGATE_TYPE,
-        aggregateId: savedDoc.id,
-        parentId: styleId,
-        actorId: actor.id,
-        actorRole: actor.roleCode,
-        targetLabel: savedDoc.name,
-        eventType: AuditEventType.CREATED,
-        changes: diffEntity(null, savedDoc, TRACKED_FIELDS),
-      });
+      try {
+        await this.auditService.recordEntityChange(this.dataSource.manager, {
+          aggregateType: AGGREGATE_TYPE,
+          aggregateId: savedDoc.id,
+          parentId: styleId,
+          actorId: actor.id,
+          actorRole: actor.roleCode,
+          targetLabel: savedDoc.name,
+          eventType: AuditEventType.CREATED,
+          changes: diffEntity(null, savedDoc, TRACKED_FIELDS),
+        });
+      } catch (error) {
+        this.logger.error(
+          `Không ghi được lịch sử tạo tài liệu sản xuất ${savedDoc.id}`,
+          (error as Error).stack,
+        );
+      }
     }
 
     return this.buildDetailResponse(savedDoc);

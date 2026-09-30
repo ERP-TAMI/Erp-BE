@@ -51,6 +51,16 @@ describe('classifyHttpRequest', () => {
     });
   });
 
+  it('does not treat prototype keys in the path as resources', () => {
+    const result = classifyHttpRequest(
+      'POST',
+      `/__proto__/${STYLE_ID}/constructor/toString`,
+      404,
+    );
+    expect(result.resource).toBeNull();
+    expect(result.ancestors).toEqual([]);
+  });
+
   it('recognises a self password change', () => {
     expect(
       classifyHttpRequest('PATCH', '/system/users/me/password', 200).action,

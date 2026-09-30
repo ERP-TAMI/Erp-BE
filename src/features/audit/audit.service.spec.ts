@@ -1,3 +1,4 @@
+import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { EntityManager, Repository } from 'typeorm';
 import { AuditEvent, AuditEventChange, HttpAuditLog } from './entities';
 import { AuditService } from './audit.service';
@@ -42,6 +43,8 @@ function buildAuditService() {
   );
   return { service, httpAuditLogs, auditEvents, auditEventChanges, users };
 }
+
+const STYLE_VIEWER = ['master_data.styles.view'];
 
 describe('AuditService', () => {
   it('records a user status transition with actor, target and reason', async () => {
@@ -129,6 +132,35 @@ describe('AuditService', () => {
       }),
     );
     expect(httpAuditLogs.save).toHaveBeenCalled();
+  });
+
+  it('trims client-controlled strings to their column length so an oversized value cannot drop the log row', async () => {
+    const { service, httpAuditLogs } = buildAuditService();
+
+    await service.recordHttpRequest({
+      occurredAt: new Date('2026-01-01T00:00:00.000Z'),
+      method: 'PATCH',
+      path: `/styles/${'x'.repeat(2000)}`,
+      statusCode: 200,
+      durationMs: 12,
+      actorUserId: null,
+      actorIdentifier: `${'a'.repeat(400)}@x.test`,
+      actorRole: null,
+      ipAddress: '127.0.0.1',
+      userAgent: 'U'.repeat(900),
+      requestId: null,
+      queryParams: null,
+      requestBody: null,
+      errorMessage: null,
+      action: 'update',
+      resourceType: 'styles',
+      resourceId: null,
+    });
+
+    const saved = (httpAuditLogs.create as jest.Mock).mock.calls[0][0];
+    expect(saved.path).toHaveLength(1000);
+    expect(saved.userAgent).toHaveLength(500);
+    expect(saved.actorIdentifier).toHaveLength(255);
   });
 
   it('describes each http log in plain terms: action, object type/name, and the login role looked up by email', async () => {
@@ -319,7 +351,7 @@ describe('AuditService', () => {
 
       const result = await service.findEntityHistory(
         { aggregateType: 'StyleOperationStep', aggregateId: 'step-1' },
-        [],
+        STYLE_VIEWER,
       );
 
       expect(result.items).toHaveLength(1);
@@ -361,7 +393,7 @@ describe('AuditService', () => {
 
       const result = await service.findEntityHistory(
         { aggregateType: 'StyleOperationStep', aggregateId: 'style-1' },
-        [],
+        STYLE_VIEWER,
       );
 
       expect(result.items[0].changes[0]).toMatchObject({
@@ -407,7 +439,7 @@ describe('AuditService', () => {
 
       const result = await service.findEntityHistory(
         { aggregateType: 'StyleOperationStep', parentId: 'style-1' },
-        [],
+        STYLE_VIEWER,
       );
 
       expect(result.items[0].changes.map((c) => c.fieldName)).toEqual([
@@ -450,7 +482,7 @@ describe('AuditService', () => {
 
       const result = await service.findEntityHistory(
         { aggregateType: 'StyleSampleRound', aggregateId: 'round-1' },
-        [],
+        STYLE_VIEWER,
       );
 
       expect(result.items[0].changes[0]).toMatchObject({
@@ -469,7 +501,7 @@ describe('AuditService', () => {
       const { service } = buildAuditService();
       const result = await service.findEntityHistory(
         { aggregateType: 'StyleOperationStep', aggregateId: 'step-1' },
-        [],
+        STYLE_VIEWER,
       );
       expect(result.items).toEqual([]);
       expect(result.total).toBe(0);
@@ -482,6 +514,35 @@ describe('AuditService', () => {
       ).rejects.toThrow();
     });
 
+    it('forbids reading history without the view permission for that data type', async () => {
+      const { service } = buildAuditService();
+      await expect(
+        service.findEntityHistory(
+          { aggregateType: 'StyleOperationStep', parentId: 'style-1' },
+          [],
+        ),
+      ).rejects.toThrow(ForbiddenException);
+      // User history needs user-management rights, not just style access.
+      await expect(
+        service.findEntityHistory(
+          { aggregateType: 'User', aggregateId: 'user-1' },
+          STYLE_VIEWER,
+        ),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('rejects an unknown aggregateType, including prototype keys', async () => {
+      const { service } = buildAuditService();
+      for (const aggregateType of ['Anything', '__proto__', 'constructor']) {
+        await expect(
+          service.findEntityHistory({ aggregateType, aggregateId: 'x' }, [
+            'master_data.styles.view',
+            'system.users.manage',
+          ]),
+        ).rejects.toThrow(BadRequestException);
+      }
+    });
+
     it('queries by parentId to fetch every child record under a parent', async () => {
       const { service, auditEvents } = buildAuditService();
       const qb = buildMockQueryBuilder([], 0);
@@ -489,7 +550,7 @@ describe('AuditService', () => {
 
       await service.findEntityHistory(
         { aggregateType: 'StyleOperationStep', parentId: 'style-1' },
-        [],
+        STYLE_VIEWER,
       );
 
       expect(qb.andWhere).toHaveBeenCalledWith('event.parentId = :parentId', {

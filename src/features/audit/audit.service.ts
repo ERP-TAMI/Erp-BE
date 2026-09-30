@@ -1,4 +1,8 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, In, Repository } from 'typeorm';
 import { AuditEventType } from '../../common/enums/database.enums';
@@ -10,6 +14,7 @@ import {
   canViewSensitiveFields,
   getFieldLabel,
   getFieldValueLabel,
+  getHistoryViewPermission,
   isHiddenField,
   isSensitiveField,
   splitBulkFieldName,
@@ -26,6 +31,14 @@ import {
 } from './http-audit-classifier';
 
 const SENSITIVE_MASK = '***';
+
+function fitColumn<T extends string | null>(value: T, maxLength: number): T {
+  return (
+    typeof value === 'string' && value.length > maxLength
+      ? value.slice(0, maxLength)
+      : value
+  ) as T;
+}
 
 /** Chỉ dịch khi giá trị là string (enum/mã nội bộ) — number/boolean/object
  * (VD sizeData, isGroup) giữ nguyên, FE tự format theo kiểu dữ liệu. */
@@ -160,7 +173,24 @@ export class AuditService {
   ) {}
 
   async recordHttpRequest(input: HttpAuditInput): Promise<void> {
-    await this.httpAuditLogs.save(this.httpAuditLogs.create(input));
+    // Cắt cho vừa độ dài cột: User-Agent/đường dẫn/email (lấy thẳng từ body
+    // khi đăng nhập) do client tự gửi — quá dài thì insert lỗi và thao tác đó
+    // biến mất khỏi nhật ký, tức là ai cũng tự giấu được hành động của mình.
+    await this.httpAuditLogs.save(
+      this.httpAuditLogs.create({
+        ...input,
+        method: fitColumn(input.method, 10),
+        path: fitColumn(input.path, 1000),
+        actorIdentifier: fitColumn(input.actorIdentifier, 255),
+        actorRole: fitColumn(input.actorRole, 30),
+        ipAddress: fitColumn(input.ipAddress, 64),
+        userAgent: fitColumn(input.userAgent, 500),
+        requestId: fitColumn(input.requestId, 100),
+        action: fitColumn(input.action, 40),
+        resourceType: fitColumn(input.resourceType, 40),
+        resourceId: fitColumn(input.resourceId, 64),
+      }),
+    );
   }
 
   async findHttpAuditLogs(
@@ -223,7 +253,11 @@ export class AuditService {
 
     const idsByType = new Map<string, Set<string>>();
     const addRef = (ref: ResourceRef | null | undefined) => {
-      if (!ref?.id || !RESOURCE_NAME_LOOKUPS[ref.type]) return;
+      if (
+        !ref?.id ||
+        !Object.prototype.hasOwnProperty.call(RESOURCE_NAME_LOOKUPS, ref.type)
+      )
+        return;
       if (!idsByType.has(ref.type)) idsByType.set(ref.type, new Set());
       idsByType.get(ref.type)!.add(ref.id);
     };
@@ -409,6 +443,15 @@ export class AuditService {
     if (!query.aggregateId && !query.parentId) {
       throw new BadRequestException(
         'Cần truyền aggregateId (1 bản ghi) hoặc parentId (mọi bản ghi con của 1 cha).',
+      );
+    }
+    const requiredPermission = getHistoryViewPermission(query.aggregateType);
+    if (!requiredPermission) {
+      throw new BadRequestException('Loại dữ liệu không hỗ trợ xem lịch sử.');
+    }
+    if (!requesterPermissions.includes(requiredPermission)) {
+      throw new ForbiddenException(
+        'Bạn không có quyền xem lịch sử dữ liệu này.',
       );
     }
 

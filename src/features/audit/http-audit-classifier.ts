@@ -171,7 +171,7 @@ export function classifyHttpRequest(
 
   for (let i = 0; i < segments.length; i++) {
     const segment = segments[i];
-    if (RESOURCE_LABELS[segment]) {
+    if (Object.prototype.hasOwnProperty.call(RESOURCE_LABELS, segment)) {
       const next = segments[i + 1];
       const id = next && UUID_RE.test(next) ? next : null;
       refs.push({ type: segment, id });
@@ -179,7 +179,9 @@ export function classifyHttpRequest(
       continue;
     }
     if (segment === 'me') isSelf = true;
-    if (KEYWORD_ACTIONS[segment]) keywordAction = KEYWORD_ACTIONS[segment];
+    if (Object.prototype.hasOwnProperty.call(KEYWORD_ACTIONS, segment)) {
+      keywordAction = KEYWORD_ACTIONS[segment];
+    }
   }
 
   if (isSelf && segments[segments.length - 1] === 'password') {

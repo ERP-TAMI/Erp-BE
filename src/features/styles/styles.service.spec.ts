@@ -75,6 +75,7 @@ describe('StylesService', () => {
     managerMock = {
       remove: jest.fn().mockResolvedValue(undefined),
       query: jest.fn().mockResolvedValue([]),
+      getRepository: jest.fn(() => repositoryMock),
     };
 
     dataSourceMock = {
@@ -283,6 +284,24 @@ describe('StylesService', () => {
       });
 
       expect(auditServiceMock.recordEntityChange).not.toHaveBeenCalled();
+    });
+
+    it('saves and records history in one transaction, so an audit failure fails the whole update', async () => {
+      repositoryMock.findOne.mockResolvedValue({ ...mockStyle });
+      auditServiceMock.recordEntityChange.mockRejectedValueOnce(
+        new Error('audit insert failed'),
+      );
+
+      await expect(
+        service.update(
+          '123e4567-e89b-12d3-a456-426614174000',
+          { styleName: 'Áo Polo Nam Mới' },
+          'user-1',
+          { id: 'user-1', roleCode: 'RD' },
+        ),
+      ).rejects.toThrow('audit insert failed');
+      expect(dataSourceMock.transaction).toHaveBeenCalled();
+      expect(managerMock.getRepository).toHaveBeenCalledWith(Style);
     });
 
     it('should throw BadRequestException if updating styleName to whitespace', async () => {

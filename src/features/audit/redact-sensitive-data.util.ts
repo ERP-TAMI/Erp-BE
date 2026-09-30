@@ -22,7 +22,10 @@ function stripPresignedQuery(value: string): string {
 }
 
 export function redactSensitiveData(value: unknown, depth = 0): unknown {
-  if (value === null || value === undefined || depth > 5) return value;
+  if (value === null || value === undefined) return value;
+  // Quá sâu thì không lọc tiếp được — thay bằng placeholder thay vì trả nguyên,
+  // không thì mật khẩu/link đã ký lồng sâu sẽ lọt vào nhật ký.
+  if (depth > 5) return '[TRUNCATED]';
 
   if (typeof value === 'string') return stripPresignedQuery(value);
 

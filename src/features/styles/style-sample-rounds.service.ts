@@ -512,8 +512,16 @@ export class StyleSampleRoundsService {
     }
 
     await this.dataSource.transaction(async (manager) => {
+      const version = actor
+        ? await manager
+            .getRepository(DocumentVersion)
+            .findOne({ where: { id: image.documentVersionId } })
+        : null;
       await manager.getRepository(StyleSampleImage).remove(image);
       if (actor) {
+        const fileName = version?.originalFileName ?? 'ảnh đính kèm';
+        // Xoá 1 ảnh trong lần may mẫu, không phải xoá cả lần may — phải ghi rõ
+        // lý do, không thì câu mặc định "Đã xoá bản ghi" gây hiểu nhầm.
         await this.auditService.recordEntityChange(manager, {
           aggregateType: AGGREGATE_TYPE,
           aggregateId: roundId,
@@ -522,8 +530,9 @@ export class StyleSampleRoundsService {
           actorRole: actor.roleCode,
           targetLabel: `Lần may mẫu #${round.roundNo}`,
           eventType: AuditEventType.DELETED,
+          reason: `Xoá ảnh ${fileName}`,
           changes: [
-            { fieldName: 'images', oldValue: 'ảnh đính kèm', newValue: null },
+            { fieldName: 'images', oldValue: fileName, newValue: null },
           ],
         });
       }

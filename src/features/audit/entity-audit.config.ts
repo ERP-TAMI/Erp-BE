@@ -148,6 +148,30 @@ export function getFieldValueLabel(
   );
 }
 
+const STYLE_VIEW_PERMISSION = 'master_data.styles.view';
+
+/** Quyền cần có để xem lịch sử từng loại dữ liệu — phải khớp quyền xem chính
+ * dữ liệu đó, không thì ai đăng nhập cũng đọc được lịch sử (kể cả tài khoản
+ * người dùng) chỉ bằng cách đoán aggregateType + id. Loại không có ở đây bị
+ * từ chối. */
+const HISTORY_VIEW_PERMISSIONS: Record<string, string> = {
+  Style: STYLE_VIEW_PERMISSION,
+  StyleOperationStep: STYLE_VIEW_PERMISSION,
+  StyleDocument: STYLE_VIEW_PERMISSION,
+  StyleSampleRound: STYLE_VIEW_PERMISSION,
+  ProductionDocument: STYLE_VIEW_PERMISSION,
+  User: 'system.users.manage',
+};
+
+export function getHistoryViewPermission(aggregateType: string): string | null {
+  return Object.prototype.hasOwnProperty.call(
+    HISTORY_VIEW_PERMISSIONS,
+    aggregateType,
+  )
+    ? HISTORY_VIEW_PERMISSIONS[aggregateType]
+    : null;
+}
+
 export function isHiddenField(
   aggregateType: string,
   fieldName: string,

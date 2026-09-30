@@ -266,21 +266,24 @@ export class StylesService {
     style.updatedBy = userId ?? null;
     style.rowVersion = Number(style.rowVersion) + 1;
 
-    const saved = await this.styleRepository.save(style);
-
-    if (actor) {
-      await this.auditService.recordEntityChange(this.dataSource.manager, {
-        aggregateType: AGGREGATE_TYPE,
-        aggregateId: saved.id,
-        actorId: actor.id,
-        actorRole: actor.roleCode,
-        targetLabel: saved.styleName,
-        eventType: AuditEventType.UPDATED,
-        changes: diffEntity(before, saved, TRACKED_FIELDS),
-      });
-    }
-
-    return saved;
+    // Lưu + ghi lịch sử trong cùng 1 transaction — nếu ghi lịch sử lỗi thì
+    // lần sửa cũng không được lưu, thay vì báo lỗi cho người dùng trong khi
+    // thay đổi thực ra đã vào DB.
+    return this.dataSource.transaction(async (manager) => {
+      const saved = await manager.getRepository(Style).save(style);
+      if (actor) {
+        await this.auditService.recordEntityChange(manager, {
+          aggregateType: AGGREGATE_TYPE,
+          aggregateId: saved.id,
+          actorId: actor.id,
+          actorRole: actor.roleCode,
+          targetLabel: saved.styleName,
+          eventType: AuditEventType.UPDATED,
+          changes: diffEntity(before, saved, TRACKED_FIELDS),
+        });
+      }
+      return saved;
+    });
   }
 
   async remove(id: string): Promise<void> {
