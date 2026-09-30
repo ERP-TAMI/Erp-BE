@@ -36,6 +36,7 @@ import {
   DocumentPurpose,
 } from '../../common/enums/database.enums';
 import { STORAGE_SERVICE, StorageService } from '../storage/storage.interface';
+import { Bom } from '../boms/entities/Bom.entity';
 import { AuditService } from '../audit/audit.service';
 
 describe('PurchaseOrdersService', () => {
@@ -2505,6 +2506,104 @@ describe('PurchaseOrdersService', () => {
       expect(doc).not.toHaveProperty('createdBy');
       expect(doc?.sections[0]).not.toHaveProperty('productionDocumentId');
       expect(doc?.sizeRows[0]).not.toHaveProperty('productionDocumentId');
+    });
+  });
+  describe('Xoá sản phẩm/PO đã có BOM và chống bấm đúp khi tạo đợt may mẫu', () => {
+    const txWithBom = (products: any[]) => {
+      const manager = {
+        findOne: jest
+          .fn()
+          .mockImplementation((entity: any) =>
+            Promise.resolve(
+              entity === Bom
+                ? { id: 'bom-1', purchaseOrderProductId: 'prod-1' }
+                : null,
+            ),
+          ),
+        find: jest.fn().mockResolvedValue(products),
+        delete: jest.fn(),
+      };
+      mockDataSource.transaction.mockImplementationOnce((cb: any) =>
+        cb(manager),
+      );
+      return manager;
+    };
+
+    it('chặn xoá sản phẩm đã có BOM với thông báo rõ ràng, không xoá gì', async () => {
+      mockProductRepo.findOne.mockResolvedValueOnce({
+        id: 'prod-1',
+        purchaseOrderId: 'po-1',
+        productCode: 'P-1',
+        status: ProductStatus.DRAFT,
+      });
+      const manager = txWithBom([]);
+
+      await expect(service.removeProduct('po-1', 'prod-1')).rejects.toThrow(
+        new ConflictException('Sản phẩm đã có BOM, không thể xóa.'),
+      );
+      expect(manager.delete).not.toHaveBeenCalled();
+    });
+
+    it('chặn xoá PO nháp khi có sản phẩm đã có BOM, nêu rõ mã sản phẩm', async () => {
+      mockPoRepo.findOne.mockResolvedValueOnce({
+        id: 'po-1',
+        poCode: 'PO-1',
+        status: PoStatus.DRAFT,
+      });
+      const manager = txWithBom([
+        { id: 'prod-0', productCode: 'P-0' },
+        { id: 'prod-1', productCode: 'P-1' },
+      ]);
+
+      await expect(service.remove('po-1')).rejects.toThrow(
+        'Sản phẩm P-1 đã có BOM, không thể xóa đơn hàng PO.',
+      );
+      expect(manager.delete).not.toHaveBeenCalled();
+    });
+
+    it('khoá dòng sản phẩm khi đánh số đợt may mẫu, để 2 request cùng lúc không trùng số', async () => {
+      mockProductRepo.findOne.mockResolvedValueOnce({
+        id: 'prod-1',
+        purchaseOrderId: 'po-1',
+        status: ProductStatus.DRAFT,
+      });
+      txSampleRoundRepoMock.count.mockResolvedValueOnce(2);
+      const manager = {
+        findOne: jest.fn().mockResolvedValue(null),
+        getRepository: jest
+          .fn()
+          .mockImplementation((entity: any) =>
+            entity === PurchaseOrderProductSampleRound
+              ? txSampleRoundRepoMock
+              : entity === PurchaseOrderProductSampleImage
+                ? txSampleImageRepoMock
+                : mockGenericRepo,
+          ),
+      };
+      mockDataSource.transaction.mockImplementationOnce((cb: any) =>
+        cb(manager),
+      );
+      const builder: any = {};
+      [
+        'innerJoin',
+        'where',
+        'andWhere',
+        'select',
+        'addSelect',
+        'orderBy',
+      ].forEach((m) => (builder[m] = jest.fn().mockReturnValue(builder)));
+      builder.getRawMany = jest.fn().mockResolvedValue([]);
+      mockGenericRepo.createQueryBuilder.mockReturnValueOnce(builder);
+
+      await service.createProductSampleRound('po-1', 'prod-1', {} as any);
+
+      expect(manager.findOne).toHaveBeenCalledWith(PurchaseOrderProduct, {
+        where: { id: 'prod-1' },
+        lock: { mode: 'pessimistic_write' },
+      });
+      expect(txSampleRoundRepoMock.create).toHaveBeenCalledWith(
+        expect.objectContaining({ roundNo: 3 }),
+      );
     });
   });
 });

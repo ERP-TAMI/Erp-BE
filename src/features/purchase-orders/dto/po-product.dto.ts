@@ -391,10 +391,6 @@ export class SampleRoundImageItemDto {
 
 export class CreateProductSampleRoundDto {
   @IsOptional()
-  @IsInt()
-  roundNo?: number;
-
-  @IsOptional()
   @IsDateString()
   sampleDate?: string;
 

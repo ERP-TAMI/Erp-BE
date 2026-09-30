@@ -50,6 +50,7 @@ import {
   ProductionDocumentImage,
 } from '../production/entities';
 import { UpdateStyleProductionDocDto } from '../production/dto/update-style-production-doc.dto';
+import { Bom } from '../boms/entities/Bom.entity';
 import { Document } from '../documents/entities/Document.entity';
 import { DocumentVersion } from '../documents/entities/DocumentVersion.entity';
 import { Customer } from '../master-data/entities/Customer.entity';
@@ -3223,6 +3224,14 @@ export class PurchaseOrdersService {
     }
 
     await this.dataSource.transaction(async (manager) => {
+      // boms.purchase_order_product_id là ON DELETE RESTRICT — BOM có thể đã
+      // duyệt và có giá thành, nên chặn rõ ràng thay vì để DB trả lỗi 500.
+      const bom = await manager.findOne(Bom, {
+        where: { purchaseOrderProductId: productId },
+      });
+      if (bom) {
+        throw new ConflictException('Sản phẩm đã có BOM, không thể xóa.');
+      }
       await this.deleteProductCascade(manager, productId);
       await this.recordAudit(manager, actor, {
         aggregateType: AUDIT_TYPE.PRODUCT,
@@ -3257,6 +3266,19 @@ export class PurchaseOrdersService {
       const products = await manager.find(PurchaseOrderProduct, {
         where: { purchaseOrderId: id },
       });
+      if (products.length > 0) {
+        const bom = await manager.findOne(Bom, {
+          where: { purchaseOrderProductId: In(products.map((p) => p.id)) },
+        });
+        if (bom) {
+          const owner = products.find(
+            (p) => p.id === bom.purchaseOrderProductId,
+          );
+          throw new ConflictException(
+            `Sản phẩm ${owner?.productCode ?? ''} đã có BOM, không thể xóa đơn hàng PO.`,
+          );
+        }
+      }
       for (const product of products) {
         await this.deleteProductCascade(manager, product.id);
       }
@@ -4115,11 +4137,18 @@ export class PurchaseOrdersService {
     }
 
     const savedRound = await this.dataSource.transaction(async (manager) => {
+      // Giống bên Mẫu Fit: 2 request cùng lúc (bấm đúp) đọc cùng count rồi
+      // cùng insert roundNo đó → đụng uq_product_sample_round. Khoá dòng sản
+      // phẩm để các request của cùng 1 sản phẩm chạy tuần tự.
+      await manager.findOne(PurchaseOrderProduct, {
+        where: { id: productId },
+        lock: { mode: 'pessimistic_write' },
+      });
       const roundRepo = manager.getRepository(PurchaseOrderProductSampleRound);
       const imageRepo = manager.getRepository(PurchaseOrderProductSampleImage);
 
       const currentCount = await roundRepo.count({ where: { productId } });
-      const roundNo = dto.roundNo || currentCount + 1;
+      const roundNo = currentCount + 1;
 
       const round = roundRepo.create({
         productId,
