@@ -9,6 +9,7 @@ import { Document } from '../documents/entities/Document.entity';
 import { DocumentVersion } from '../documents/entities/DocumentVersion.entity';
 import { DocumentPurpose } from '../../common/enums/database.enums';
 import { STORAGE_SERVICE, StorageService } from '../storage/storage.interface';
+import { AuditService } from '../audit/audit.service';
 
 function buildQueryBuilderMock(result: unknown) {
   const qb: Record<string, jest.Mock> = {
@@ -38,9 +39,14 @@ describe('StyleDocumentsService', () => {
     remove: jest.Mock;
   };
   let storageMock: jest.Mocked<StorageService>;
-  let docRepoMock: { create: jest.Mock; save: jest.Mock };
+  let docRepoMock: { create: jest.Mock; save: jest.Mock; findOne: jest.Mock };
   let versionRepoMock: { create: jest.Mock; save: jest.Mock };
-  let styleDocTxRepoMock: { create: jest.Mock; save: jest.Mock };
+  let styleDocTxRepoMock: {
+    create: jest.Mock;
+    save: jest.Mock;
+    remove: jest.Mock;
+  };
+  let auditServiceMock: { recordEntityChange: jest.Mock };
 
   const STYLE_ID = '8f3a1c2e-4b6a-4e1a-9c2d-1a2b3c4d5e6f';
 
@@ -55,6 +61,9 @@ describe('StyleDocumentsService', () => {
     docRepoMock = {
       create: jest.fn().mockImplementation((v) => v),
       save: jest.fn().mockImplementation((v) => ({ id: 'doc-1', ...v })),
+      findOne: jest
+        .fn()
+        .mockResolvedValue({ id: 'doc-1', title: 'tech-pack.pdf' }),
     };
     versionRepoMock = {
       create: jest.fn().mockImplementation((v) => v),
@@ -63,6 +72,10 @@ describe('StyleDocumentsService', () => {
     styleDocTxRepoMock = {
       create: jest.fn().mockImplementation((v) => v),
       save: jest.fn().mockResolvedValue(undefined),
+      remove: jest.fn().mockResolvedValue(undefined),
+    };
+    auditServiceMock = {
+      recordEntityChange: jest.fn().mockResolvedValue(undefined),
     };
 
     storageMock = {
@@ -98,8 +111,10 @@ describe('StyleDocumentsService', () => {
           provide: getRepositoryToken(StyleDocument),
           useValue: styleDocRepoMock,
         },
+        { provide: getRepositoryToken(Document), useValue: docRepoMock },
         { provide: STORAGE_SERVICE, useValue: storageMock },
         { provide: DataSource, useValue: dataSourceMock },
+        { provide: AuditService, useValue: auditServiceMock },
       ],
     }).compile();
 
@@ -294,7 +309,7 @@ describe('StyleDocumentsService', () => {
 
       await service.remove(STYLE_ID, 'doc-1');
 
-      expect(styleDocRepoMock.remove).toHaveBeenCalledWith({
+      expect(styleDocTxRepoMock.remove).toHaveBeenCalledWith({
         styleId: STYLE_ID,
         documentId: 'doc-1',
       });
@@ -306,7 +321,7 @@ describe('StyleDocumentsService', () => {
       await expect(service.remove(STYLE_ID, 'doc-1')).rejects.toThrow(
         NotFoundException,
       );
-      expect(styleDocRepoMock.remove).not.toHaveBeenCalled();
+      expect(styleDocTxRepoMock.remove).not.toHaveBeenCalled();
     });
   });
 });

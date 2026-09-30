@@ -45,26 +45,37 @@ describe('StyleSampleRoundsController', () => {
 
   it('resolves the caller id from req.user.id and forwards it to create', async () => {
     const dto = { feedback: 'ok' };
-    await controller.create(STYLE_ID, dto as any, { user: { id: 'user-1' } });
-    expect(service.create).toHaveBeenCalledWith(STYLE_ID, dto, 'user-1');
+    await controller.create(STYLE_ID, dto as any, {
+      user: { id: 'user-1', roleCode: 'RD' },
+    });
+    expect(service.create).toHaveBeenCalledWith(STYLE_ID, dto, 'user-1', {
+      id: 'user-1',
+      roleCode: 'RD',
+    });
   });
 
   it('falls back to req.user.sub when id is absent on create', async () => {
     const dto = { feedback: 'ok' };
-    await controller.create(STYLE_ID, dto as any, { user: { sub: 'user-2' } });
-    expect(service.create).toHaveBeenCalledWith(STYLE_ID, dto, 'user-2');
+    await controller.create(STYLE_ID, dto as any, {
+      user: { sub: 'user-2', roleCode: 'RD' },
+    });
+    expect(service.create).toHaveBeenCalledWith(STYLE_ID, dto, 'user-2', {
+      id: 'user-2',
+      roleCode: 'RD',
+    });
   });
 
   it('delegates update to the service with styleId, roundId and userId', async () => {
     const dto = { status: 'approved' };
     await controller.update(STYLE_ID, ROUND_ID, dto as any, {
-      user: { id: 'user-1' },
+      user: { id: 'user-1', roleCode: 'RD' },
     });
     expect(service.update).toHaveBeenCalledWith(
       STYLE_ID,
       ROUND_ID,
       dto,
       'user-1',
+      { id: 'user-1', roleCode: 'RD' },
     );
   });
 
@@ -82,22 +93,26 @@ describe('StyleSampleRoundsController', () => {
       sizeBytes: 1024,
     };
     await controller.confirmImage(STYLE_ID, ROUND_ID, dto as any, {
-      user: { id: 'user-1' },
+      user: { id: 'user-1', roleCode: 'RD' },
     });
     expect(service.confirmImage).toHaveBeenCalledWith(
       STYLE_ID,
       ROUND_ID,
       'user-1',
       dto,
+      { id: 'user-1', roleCode: 'RD' },
     );
   });
 
   it('delegates removeImage to the service', async () => {
-    await controller.removeImage(STYLE_ID, ROUND_ID, IMAGE_ID);
+    await controller.removeImage(STYLE_ID, ROUND_ID, IMAGE_ID, {
+      user: { id: 'user-1', roleCode: 'RD' },
+    });
     expect(service.removeImage).toHaveBeenCalledWith(
       STYLE_ID,
       ROUND_ID,
       IMAGE_ID,
+      { id: 'user-1', roleCode: 'RD' },
     );
   });
 

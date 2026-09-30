@@ -52,9 +52,14 @@ describe('StyleDocumentsController', () => {
       sizeBytes: 1024,
     };
 
-    await controller.confirm(STYLE_ID, dto, { user: { id: 'user-1' } });
+    await controller.confirm(STYLE_ID, dto, {
+      user: { id: 'user-1', roleCode: 'RD' },
+    });
 
-    expect(service.confirm).toHaveBeenCalledWith(STYLE_ID, 'user-1', dto);
+    expect(service.confirm).toHaveBeenCalledWith(STYLE_ID, 'user-1', dto, {
+      id: 'user-1',
+      roleCode: 'RD',
+    });
   });
 
   it('falls back to req.user.sub when id is absent', async () => {
@@ -65,9 +70,14 @@ describe('StyleDocumentsController', () => {
       sizeBytes: 1024,
     };
 
-    await controller.confirm(STYLE_ID, dto, { user: { sub: 'user-2' } });
+    await controller.confirm(STYLE_ID, dto, {
+      user: { sub: 'user-2', roleCode: 'RD' },
+    });
 
-    expect(service.confirm).toHaveBeenCalledWith(STYLE_ID, 'user-2', dto);
+    expect(service.confirm).toHaveBeenCalledWith(STYLE_ID, 'user-2', dto, {
+      id: 'user-2',
+      roleCode: 'RD',
+    });
   });
 
   it('lists documents for the given style', async () => {
@@ -94,7 +104,12 @@ describe('StyleDocumentsController', () => {
   });
 
   it('delegates remove to the service', async () => {
-    await controller.remove(STYLE_ID, DOCUMENT_ID);
-    expect(service.remove).toHaveBeenCalledWith(STYLE_ID, DOCUMENT_ID);
+    await controller.remove(STYLE_ID, DOCUMENT_ID, {
+      user: { id: 'user-1', roleCode: 'RD' },
+    });
+    expect(service.remove).toHaveBeenCalledWith(STYLE_ID, DOCUMENT_ID, {
+      id: 'user-1',
+      roleCode: 'RD',
+    });
   });
 });

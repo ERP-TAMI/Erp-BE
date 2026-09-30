@@ -8,7 +8,11 @@ import { JwtService } from '@nestjs/jwt';
 import { DataSource, Repository } from 'typeorm';
 import { User } from './entities/User.entity';
 import { UserSession } from './entities/UserSession.entity';
-import { RecordStatus } from '../../common/enums/database.enums';
+import {
+  AuditEventType,
+  RecordStatus,
+} from '../../common/enums/database.enums';
+import { AuditService } from '../audit/audit.service';
 import { ErrorCode } from '../../common/enums/error-code.enum';
 import { verifyPassword } from '../../common/security/password.util';
 import { generateRefreshToken, hashRefreshToken } from './refresh-token.util';
@@ -50,6 +54,7 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly notifications: NotificationsService,
     private readonly mail: SmtpMailService,
+    private readonly audit: AuditService,
   ) {}
 
   async login(
@@ -94,10 +99,20 @@ export class AuthService {
       });
     }
 
-    await this.userRepository.update(user.id, {
-      loginFailedCount: 0,
-      lockoutUntil: null,
-      lastLoginAt: new Date(),
+    await this.dataSource.transaction(async (manager) => {
+      await manager.getRepository(User).update(user.id, {
+        loginFailedCount: 0,
+        lockoutUntil: null,
+        lastLoginAt: new Date(),
+      });
+      await this.audit.recordUserChange(manager, {
+        actorId: user.id,
+        actorRole: roleInfo.roleCode,
+        targetId: user.id,
+        targetLabel: user.email,
+        eventType: AuditEventType.LOGIN,
+        changes: [],
+      });
     });
 
     return this.issueSession(user, roleInfo, meta);

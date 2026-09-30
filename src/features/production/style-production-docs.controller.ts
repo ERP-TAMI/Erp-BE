@@ -6,6 +6,7 @@ import {
   Delete,
   Param,
   Body,
+  Req,
   Res,
   ParseUUIDPipe,
   HttpCode,
@@ -54,8 +55,13 @@ export class StyleProductionDocsController {
   create(
     @Param('styleId', ParseUUIDPipe) styleId: string,
     @Body() dto: CreateStyleProductionDocDto,
+    @Req() req?: any,
   ) {
-    return this.service.createWithAutoFill(styleId, dto);
+    const userId = req?.user?.id || req?.user?.sub;
+    const actor = userId
+      ? { id: userId, roleCode: req?.user?.roleCode }
+      : undefined;
+    return this.service.createWithAutoFill(styleId, dto, userId, actor);
   }
 
   @Get(':docId')
@@ -67,16 +73,26 @@ export class StyleProductionDocsController {
   update(
     @Param('docId', ParseUUIDPipe) docId: string,
     @Body() dto: UpdateStyleProductionDocDto,
+    @Req() req?: any,
   ) {
-    return this.service.update(docId, dto);
+    const userId = req?.user?.id || req?.user?.sub;
+    const actor = userId
+      ? { id: userId, roleCode: req?.user?.roleCode }
+      : undefined;
+    return this.service.update(docId, dto, userId, actor);
   }
 
   @Patch(':docId/status')
   updateStatus(
     @Param('docId', ParseUUIDPipe) docId: string,
     @Body() dto: UpdateProductionDocStatusDto,
+    @Req() req?: any,
   ) {
-    return this.service.updateStatus(docId, dto.status);
+    const userId = req?.user?.id || req?.user?.sub;
+    const actor = userId
+      ? { id: userId, roleCode: req?.user?.roleCode }
+      : undefined;
+    return this.service.updateStatus(docId, dto.status, userId, actor);
   }
 
   @Post(':docId/resync')
@@ -124,7 +140,11 @@ export class StyleProductionDocsController {
 
   @Delete(':docId')
   @HttpCode(HttpStatus.NO_CONTENT)
-  remove(@Param('docId', ParseUUIDPipe) docId: string) {
-    return this.service.remove(docId);
+  remove(@Param('docId', ParseUUIDPipe) docId: string, @Req() req?: any) {
+    const userId = req?.user?.id || req?.user?.sub;
+    const actor = userId
+      ? { id: userId, roleCode: req?.user?.roleCode }
+      : undefined;
+    return this.service.remove(docId, actor);
   }
 }

@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, EntityManager, Repository } from 'typeorm';
 import { StyleOperationStep } from './entities/StyleOperationStep.entity';
 import { Style } from './entities/Style.entity';
 import {
@@ -12,6 +12,31 @@ import {
   UpdateStyleOperationStepDto,
   StyleOperationStepItemDto,
 } from './dto/style-operation-step.dto';
+import { AuditService } from '../audit/audit.service';
+import { diffEntity, EntityFieldChange } from '../audit/entity-diff.util';
+import { AuditActor } from '../audit/audit-actor.type';
+import { AuditEventType } from '../../common/enums/database.enums';
+
+export type { AuditActor };
+
+const AGGREGATE_TYPE = 'StyleOperationStep';
+
+// Không theo dõi stageId: chọn công đoạn từ danh mục chỉ để chép tên/mô tả/
+// thời gian vào dòng — liên kết danh mục trùng nội dung với "Tên công đoạn"
+// nên hiện trong lịch sử chỉ gây nhiễu.
+const TRACKED_FIELDS = [
+  'stepName',
+  'description',
+  'timePerPiece',
+  'ssv',
+  'targetTotal',
+  'note',
+  'orderIndex',
+  'isGroup',
+  'groupId',
+  'groupItems',
+  'parentStepId',
+] as const satisfies readonly (keyof StyleOperationStep)[];
 
 @Injectable()
 export class StyleOperationStepsService {
@@ -21,7 +46,80 @@ export class StyleOperationStepsService {
     @InjectRepository(Style)
     private readonly styleRepo: Repository<Style>,
     private readonly dataSource: DataSource,
+    private readonly auditService: AuditService,
   ) {}
+
+  /** groupId/parentStepId là khoá ngoại — hiện thẳng UUID trong lịch sử thay
+   * đổi thì không ai đọc hiểu được. Dịch (chốt tên ngay lúc ghi log, không
+   * tra cứu sống mỗi lần xem) sang tên thật của StageGroup/công đoạn cha
+   * trước khi lưu vào audit_event_changes. */
+  private async resolveFkValue(
+    manager: EntityManager,
+    fieldName: string,
+    value: unknown,
+  ): Promise<unknown> {
+    if (typeof value !== 'string') return value;
+    if (fieldName === 'groupId') {
+      const rows = await manager.query(
+        'SELECT group_name FROM stage_groups WHERE id = $1',
+        [value],
+      );
+      return rows[0]?.group_name ?? value;
+    }
+    if (fieldName === 'parentStepId') {
+      const rows = await manager.query(
+        'SELECT step_name FROM style_operation_steps WHERE id = $1',
+        [value],
+      );
+      return rows[0]?.step_name ?? value;
+    }
+    return value;
+  }
+
+  private async resolveFkChanges(
+    manager: EntityManager,
+    changes: EntityFieldChange[],
+  ): Promise<EntityFieldChange[]> {
+    return Promise.all(
+      changes.map(async (change) => ({
+        ...change,
+        oldValue: await this.resolveFkValue(
+          manager,
+          change.fieldName,
+          change.oldValue,
+        ),
+        newValue: await this.resolveFkValue(
+          manager,
+          change.fieldName,
+          change.newValue,
+        ),
+      })),
+    );
+  }
+
+  private async recordStepChange(
+    manager: EntityManager,
+    styleId: string,
+    step: StyleOperationStep,
+    eventType: AuditEventType,
+    before: Partial<StyleOperationStep> | null,
+    actor: AuditActor,
+  ): Promise<void> {
+    const changes = await this.resolveFkChanges(
+      manager,
+      diffEntity(before, step, TRACKED_FIELDS),
+    );
+    await this.auditService.recordEntityChange(manager, {
+      aggregateType: AGGREGATE_TYPE,
+      aggregateId: step.id,
+      parentId: styleId,
+      actorId: actor.id,
+      actorRole: actor.roleCode,
+      targetLabel: step.stepName,
+      eventType,
+      changes,
+    });
+  }
 
   async findByStyleId(styleId: string): Promise<StyleOperationStep[]> {
     await this.ensureStyleExists(styleId);
@@ -34,6 +132,7 @@ export class StyleOperationStepsService {
   async create(
     styleId: string,
     dto: CreateStyleOperationStepDto,
+    actor: AuditActor,
   ): Promise<StyleOperationStep> {
     await this.ensureStyleExists(styleId);
     if (dto.stageId) {
@@ -54,13 +153,25 @@ export class StyleOperationStepsService {
       groupId: dto.groupId ?? null,
       groupItems: dto.groupItems ?? null,
     });
-    return this.stepRepo.save(step);
+    return this.dataSource.transaction(async (manager) => {
+      const saved = await manager.getRepository(StyleOperationStep).save(step);
+      await this.recordStepChange(
+        manager,
+        styleId,
+        saved,
+        AuditEventType.CREATED,
+        null,
+        actor,
+      );
+      return saved;
+    });
   }
 
   async createMany(
     styleId: string,
     steps: StyleOperationStepItemDto[],
     as3bCmBaseDays?: number,
+    actor?: AuditActor,
   ): Promise<StyleOperationStep[]> {
     await this.ensureStyleExists(styleId);
 
@@ -71,6 +182,112 @@ export class StyleOperationStepsService {
       return await this.dataSource.transaction(async (manager) => {
         const stepRepo = manager.getRepository(StyleOperationStep);
         const styleRepo = manager.getRepository(Style);
+
+        // Snapshot trước khi xoá — dùng để so sánh field-level cho audit log,
+        // vì createMany luôn xoá-rồi-tạo-lại chứ không UPDATE tại chỗ.
+        const beforeSteps = await stepRepo.find({ where: { styleId } });
+        const beforeById = new Map(beforeSteps.map((s) => [s.id, s]));
+
+        // 1 lần bấm "Lưu" trên bảng công đoạn có thể đụng tới hàng chục dòng
+        // (tạo/sửa/xoá trộn lẫn) — trước đây mỗi dòng ghi 1 audit event riêng,
+        // khiến lịch sử vỡ vụn thành hàng chục dòng cho cùng 1 thao tác lưu.
+        // Gom lại thành đúng 1 event/lần lưu: field-name của mỗi thay đổi
+        // được gắn tiền tố "<tên công đoạn>::" để getFieldLabel() ghép thành
+        // nhãn dễ đọc (VD "Cắt vải — Tên công đoạn") mà vẫn phân biệt được
+        // dòng nào đổi gì khi mở rộng chi tiết.
+        const createdLabels: string[] = [];
+        const updatedLabels: string[] = [];
+        const deletedLabels: string[] = [];
+        const bulkChanges: EntityFieldChange[] = [];
+
+        // groupId/parentStepId là khoá ngoại — dịch (chốt tên ngay lúc ghi
+        // log) sang tên thật thay vì để lộ UUID ra lịch sử. Map thay vì tra
+        // cứu từng field/dòng vì 1 lần lưu có thể đụng hàng chục dòng.
+        const groupNameById = new Map<string, string>();
+        const stepNameById = new Map(
+          beforeSteps.map((s) => [s.id, s.stepName]),
+        );
+        const resolveFieldValue = (
+          fieldName: string,
+          value: unknown,
+        ): unknown => {
+          if (typeof value !== 'string') return value;
+          if (fieldName === 'groupId') return groupNameById.get(value) ?? value;
+          if (fieldName === 'parentStepId')
+            return stepNameById.get(value) ?? value;
+          return value;
+        };
+
+        const accumulate = (
+          after: StyleOperationStep,
+          before: StyleOperationStep | null,
+        ): void => {
+          const rowLabel = after.stepName || '(không tên)';
+          const fields = diffEntity(before, after, TRACKED_FIELDS);
+          if (!before) {
+            createdLabels.push(rowLabel);
+          } else if (fields.length > 0) {
+            updatedLabels.push(rowLabel);
+          }
+          for (const field of fields) {
+            bulkChanges.push({
+              fieldName: `${rowLabel}::${field.fieldName}`,
+              oldValue: resolveFieldValue(field.fieldName, field.oldValue),
+              newValue: resolveFieldValue(field.fieldName, field.newValue),
+            });
+          }
+        };
+
+        const accumulateDeleted = (before: StyleOperationStep): void => {
+          deletedLabels.push(before.stepName || '(không tên)');
+        };
+
+        const finalizeBulkAudit = async (): Promise<void> => {
+          if (!actor) return;
+          if (
+            createdLabels.length === 0 &&
+            updatedLabels.length === 0 &&
+            deletedLabels.length === 0
+          ) {
+            return;
+          }
+          // Chỉ ghi số lượng — liệt kê tên thì 10+ công đoạn thành 1 dòng dài
+          // không đọc nổi; tên từng công đoạn đã có ở phần chi tiết khi mở ra.
+          const reasonParts: string[] = [];
+          if (createdLabels.length > 0) {
+            reasonParts.push(`Tạo mới ${createdLabels.length} công đoạn`);
+          }
+          if (updatedLabels.length > 0) {
+            reasonParts.push(`Cập nhật ${updatedLabels.length} công đoạn`);
+          }
+          if (deletedLabels.length > 0) {
+            reasonParts.push(`Xoá ${deletedLabels.length} công đoạn`);
+          }
+          const isPureCreation =
+            createdLabels.length > 0 &&
+            updatedLabels.length === 0 &&
+            deletedLabels.length === 0;
+          const isPureDeletion =
+            deletedLabels.length > 0 &&
+            createdLabels.length === 0 &&
+            updatedLabels.length === 0;
+          const eventType = isPureCreation
+            ? AuditEventType.CREATED
+            : isPureDeletion
+              ? AuditEventType.DELETED
+              : AuditEventType.UPDATED;
+          await this.auditService.recordEntityChange(manager, {
+            aggregateType: AGGREGATE_TYPE,
+            aggregateId: styleId,
+            parentId: styleId,
+            actorId: actor.id,
+            actorRole: actor.roleCode,
+            targetLabel: 'Quy trình công đoạn',
+            eventType,
+            reason: reasonParts.join('; '),
+            changes: bulkChanges,
+          });
+        };
 
         if (as3bCmBaseDays && as3bCmBaseDays > 0) {
           await styleRepo.update(styleId, { as3bCmBaseDays });
@@ -86,7 +303,13 @@ export class StyleOperationStepsService {
           [styleId],
         );
 
-        if (!steps || steps.length === 0) return [];
+        if (!steps || steps.length === 0) {
+          for (const before of beforeSteps) {
+            accumulateDeleted(before);
+          }
+          await finalizeBulkAudit();
+          return [];
+        }
 
         const isUuid = (val?: string | null): boolean => {
           if (!val) return false;
@@ -102,8 +325,13 @@ export class StyleOperationStepsService {
         const stageRows = await manager.query('SELECT id FROM stages');
         stageRows.forEach((r: { id: string }) => validStageIds.add(r.id));
 
-        const groupRows = await manager.query('SELECT id FROM stage_groups');
-        groupRows.forEach((r: { id: string }) => validGroupIds.add(r.id));
+        const groupRows = await manager.query(
+          'SELECT id, group_name FROM stage_groups',
+        );
+        groupRows.forEach((r: { id: string; group_name: string }) => {
+          validGroupIds.add(r.id);
+          groupNameById.set(r.id, r.group_name);
+        });
 
         // Trước đây stageId/groupId không hợp lệ bị âm thầm set về null — người
         // dùng lưu xong tưởng đã gán đúng công đoạn/nhóm nhưng thực ra mất
@@ -189,6 +417,9 @@ export class StyleOperationStepsService {
 
           const saved = await stepRepo.save(entity);
           savedStepsMap.set(index, saved);
+          stepNameById.set(saved.id, saved.stepName);
+          const before = beforeById.get(saved.id) ?? null;
+          accumulate(saved, before);
 
           if (rawId) {
             tempIdToRealIdMap.set(rawId, saved.id);
@@ -241,6 +472,9 @@ export class StyleOperationStepsService {
 
           const saved = await stepRepo.save(entity);
           savedStepsMap.set(index, saved);
+          stepNameById.set(saved.id, saved.stepName);
+          const before = beforeById.get(saved.id) ?? null;
+          accumulate(saved, before);
 
           if (rawId) {
             tempIdToRealIdMap.set(rawId, saved.id);
@@ -249,7 +483,17 @@ export class StyleOperationStepsService {
           tempIdToRealIdMap.set(saved.id, saved.id);
         }
 
-        return steps.map((_, index) => savedStepsMap.get(index)!);
+        const afterSteps = steps.map((_, index) => savedStepsMap.get(index)!);
+        const afterIds = new Set(afterSteps.map((s) => s.id));
+        for (const before of beforeSteps) {
+          if (!afterIds.has(before.id)) {
+            accumulateDeleted(before);
+          }
+        }
+
+        await finalizeBulkAudit();
+
+        return afterSteps;
       });
     } catch (err: any) {
       console.error(
@@ -270,8 +514,10 @@ export class StyleOperationStepsService {
     styleId: string,
     stepId: string,
     dto: UpdateStyleOperationStepDto,
+    actor: AuditActor,
   ): Promise<StyleOperationStep> {
     const step = await this.findOwnedStep(styleId, stepId);
+    const before = { ...step };
 
     if (dto.stepName !== undefined) step.stepName = dto.stepName;
     if (dto.description !== undefined)
@@ -304,18 +550,60 @@ export class StyleOperationStepsService {
       step.stageId = dto.stageId ?? null;
     }
 
-    return this.stepRepo.save(step);
+    return this.dataSource.transaction(async (manager) => {
+      const saved = await manager.getRepository(StyleOperationStep).save(step);
+      await this.recordStepChange(
+        manager,
+        styleId,
+        saved,
+        AuditEventType.UPDATED,
+        before,
+        actor,
+      );
+      return saved;
+    });
   }
 
-  async remove(styleId: string, stepId: string): Promise<void> {
+  async remove(
+    styleId: string,
+    stepId: string,
+    actor: AuditActor,
+  ): Promise<void> {
     const step = await this.findOwnedStep(styleId, stepId);
 
-    // Nếu là nhóm công đoạn, xoá tất cả công đoạn con
-    if (step.isGroup) {
-      await this.stepRepo.delete({ parentStepId: step.id });
-    }
+    const recordDeleted = async (
+      manager: EntityManager,
+      deleted: StyleOperationStep,
+    ): Promise<void> => {
+      await this.auditService.recordEntityChange(manager, {
+        aggregateType: AGGREGATE_TYPE,
+        aggregateId: deleted.id,
+        parentId: styleId,
+        actorId: actor.id,
+        actorRole: actor.roleCode,
+        targetLabel: deleted.stepName,
+        eventType: AuditEventType.DELETED,
+        changes: [],
+      });
+    };
 
-    await this.stepRepo.remove(step);
+    await this.dataSource.transaction(async (manager) => {
+      const stepRepo = manager.getRepository(StyleOperationStep);
+
+      // Nếu là nhóm công đoạn, xoá tất cả công đoạn con
+      if (step.isGroup) {
+        const children = await stepRepo.find({
+          where: { parentStepId: step.id },
+        });
+        await stepRepo.delete({ parentStepId: step.id });
+        for (const child of children) {
+          await recordDeleted(manager, child);
+        }
+      }
+
+      await stepRepo.remove(step);
+      await recordDeleted(manager, step);
+    });
   }
 
   private async findOwnedStep(

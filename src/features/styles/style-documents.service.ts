@@ -37,6 +37,11 @@ import {
 } from '../storage/storage-key.util';
 import { PresignStyleDocumentDto } from './dto/presign-style-document.dto';
 import { ConfirmStyleDocumentDto } from './dto/confirm-style-document.dto';
+import { AuditService } from '../audit/audit.service';
+import { AuditActor } from '../audit/audit-actor.type';
+import { AuditEventType } from '../../common/enums/database.enums';
+
+const AGGREGATE_TYPE = 'StyleDocument';
 
 export interface PresignStyleDocumentResult {
   objectKey: string;
@@ -65,9 +70,12 @@ export class StyleDocumentsService {
     private readonly styleRepo: Repository<Style>,
     @InjectRepository(StyleDocument)
     private readonly styleDocRepo: Repository<StyleDocument>,
+    @InjectRepository(Document)
+    private readonly docRepo: Repository<Document>,
     @Inject(STORAGE_SERVICE)
     private readonly storage: StorageService,
     private readonly dataSource: DataSource,
+    private readonly auditService: AuditService,
   ) {}
 
   private async assertStyleExists(styleId: string): Promise<void> {
@@ -120,6 +128,7 @@ export class StyleDocumentsService {
     styleId: string,
     userId: string | undefined,
     dto: ConfirmStyleDocumentDto,
+    actor?: AuditActor,
   ): Promise<StyleDocumentListItem> {
     await this.assertStyleExists(styleId);
 
@@ -200,6 +209,26 @@ export class StyleDocumentsService {
           }),
         );
 
+        if (actor) {
+          await this.auditService.recordEntityChange(manager, {
+            aggregateType: AGGREGATE_TYPE,
+            aggregateId: doc.id,
+            parentId: styleId,
+            actorId: actor.id,
+            actorRole: actor.roleCode,
+            targetLabel: dto.fileName,
+            eventType: AuditEventType.CREATED,
+            changes: [
+              { fieldName: 'fileName', oldValue: null, newValue: dto.fileName },
+              {
+                fieldName: 'purpose',
+                oldValue: null,
+                newValue: DocumentPurpose.FIT_ATTACHMENT,
+              },
+            ],
+          });
+        }
+
         return {
           documentId: doc.id,
           fileName: dto.fileName,
@@ -275,7 +304,11 @@ export class StyleDocumentsService {
     return { url, expiresIn: PRESIGN_GET_EXPIRY_SECONDS };
   }
 
-  async remove(styleId: string, documentId: string): Promise<void> {
+  async remove(
+    styleId: string,
+    documentId: string,
+    actor?: AuditActor,
+  ): Promise<void> {
     const link = await this.styleDocRepo.findOne({
       where: {
         styleId,
@@ -286,6 +319,30 @@ export class StyleDocumentsService {
     if (!link) {
       throw new NotFoundException('Không tìm thấy tài liệu này trong mẫu Fit.');
     }
-    await this.styleDocRepo.remove(link);
+
+    const fileName = await this.resolveFileName(documentId);
+
+    await this.dataSource.transaction(async (manager) => {
+      await manager.getRepository(StyleDocument).remove(link);
+      if (actor) {
+        await this.auditService.recordEntityChange(manager, {
+          aggregateType: AGGREGATE_TYPE,
+          aggregateId: documentId,
+          parentId: styleId,
+          actorId: actor.id,
+          actorRole: actor.roleCode,
+          targetLabel: fileName,
+          eventType: AuditEventType.DELETED,
+          changes: [],
+        });
+      }
+    });
+  }
+
+  private async resolveFileName(
+    documentId: string,
+  ): Promise<string | undefined> {
+    const doc = await this.docRepo.findOne({ where: { id: documentId } });
+    return doc?.title;
   }
 }

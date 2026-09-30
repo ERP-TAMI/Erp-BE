@@ -5,12 +5,17 @@ import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { StyleOperationStepsService } from '../style-operation-steps.service';
 import { StyleOperationStep } from '../entities/StyleOperationStep.entity';
 import { Style } from '../entities/Style.entity';
+import { AuditService } from '../../audit/audit.service';
+import { AuditEventType } from '../../../common/enums/database.enums';
+
+const testActor = { id: 'actor-1', roleCode: 'RD' };
 
 describe('StyleOperationStepsService', () => {
   let service: StyleOperationStepsService;
   let stepRepoMock: any;
   let styleRepoMock: any;
   let dataSourceMock: any;
+  let auditServiceMock: jest.Mocked<Pick<AuditService, 'recordEntityChange'>>;
 
   const mockStyleId = '123e4567-e89b-12d3-a456-426614174000';
   const mockStepId = '987e6543-e89b-12d3-a456-426614174999';
@@ -76,6 +81,10 @@ describe('StyleOperationStepsService', () => {
       }),
     };
 
+    auditServiceMock = {
+      recordEntityChange: jest.fn().mockResolvedValue(undefined),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         StyleOperationStepsService,
@@ -90,6 +99,10 @@ describe('StyleOperationStepsService', () => {
         {
           provide: DataSource,
           useValue: dataSourceMock,
+        },
+        {
+          provide: AuditService,
+          useValue: auditServiceMock,
         },
       ],
     }).compile();
@@ -126,11 +139,15 @@ describe('StyleOperationStepsService', () => {
 
   describe('create', () => {
     it('should create a single operation step', async () => {
-      const result = await service.create(mockStyleId, {
-        stepName: 'May cổ áo',
-        timePerPiece: 20,
-        ssv: 20,
-      });
+      const result = await service.create(
+        mockStyleId,
+        {
+          stepName: 'May cổ áo',
+          timePerPiece: 20,
+          ssv: 20,
+        },
+        testActor,
+      );
 
       expect(result.stepName).toBe('May cổ áo');
       expect(result.styleId).toBe(mockStyleId);
@@ -140,17 +157,21 @@ describe('StyleOperationStepsService', () => {
     it('should throw NotFoundException if style does not exist', async () => {
       styleRepoMock.findOne.mockResolvedValue(null);
       await expect(
-        service.create('invalid-id', { stepName: 'Test' }),
+        service.create('invalid-id', { stepName: 'Test' }, testActor),
       ).rejects.toThrow(NotFoundException);
     });
 
     it('should throw BadRequestException if stageId does not exist', async () => {
       stepRepoMock.query.mockResolvedValue([]);
       await expect(
-        service.create(mockStyleId, {
-          stepName: 'Test',
-          stageId: 'non-existing-stage',
-        }),
+        service.create(
+          mockStyleId,
+          {
+            stepName: 'Test',
+            stageId: 'non-existing-stage',
+          },
+          testActor,
+        ),
       ).rejects.toThrow(BadRequestException);
     });
   });
@@ -162,7 +183,12 @@ describe('StyleOperationStepsService', () => {
         { stepName: 'May', timePerPiece: 25, ssv: 25, orderIndex: 1 },
       ];
 
-      const result = await service.createMany(mockStyleId, steps, 45);
+      const result = await service.createMany(
+        mockStyleId,
+        steps,
+        45,
+        testActor,
+      );
 
       expect(styleRepoMock.update).toHaveBeenCalledWith(mockStyleId, {
         as3bCmBaseDays: 45,
@@ -237,16 +263,138 @@ describe('StyleOperationStepsService', () => {
       ).rejects.toThrow(BadRequestException);
       expect(stepRepoMock.save).not.toHaveBeenCalled();
     });
+
+    it('records exactly one audit event for a multi-row save, not one per row', async () => {
+      stepRepoMock.find.mockResolvedValueOnce([]);
+      const steps = [
+        { stepName: 'Cắt', timePerPiece: 10, ssv: 10, orderIndex: 0 },
+        { stepName: 'May', timePerPiece: 25, ssv: 25, orderIndex: 1 },
+      ];
+
+      await service.createMany(mockStyleId, steps as any, undefined, testActor);
+
+      expect(auditServiceMock.recordEntityChange).toHaveBeenCalledTimes(1);
+      const [, input] = auditServiceMock.recordEntityChange.mock.calls[0];
+      expect(input.eventType).toBe(AuditEventType.CREATED);
+      expect(input.aggregateId).toBe(mockStyleId);
+      expect(input.reason).toBe('Tạo mới 2 công đoạn');
+      expect(
+        input.changes.some((c: any) => c.fieldName === 'Cắt::stepName'),
+      ).toBe(true);
+      expect(
+        input.changes.some((c: any) => c.fieldName === 'May::stepName'),
+      ).toBe(true);
+    });
+
+    it('records one event covering create + update + delete together when a save mixes all three', async () => {
+      const secondExistingStep: Partial<StyleOperationStep> = {
+        id: 'existing-step-2',
+        styleId: mockStyleId,
+        stepName: 'Ủi',
+        timePerPiece: 5,
+        ssv: 5,
+        targetTotal: 100,
+        orderIndex: 1,
+        isGroup: false,
+        parentStepId: null,
+      };
+      stepRepoMock.find.mockResolvedValueOnce([mockStep, secondExistingStep]);
+      // The shared save mock falls back to the same mockStepId for every
+      // entity that has no id of its own — fine for single-row tests, but
+      // here it would collapse the one genuinely-new row onto mockStepId
+      // and get misread as an update. Give each id-less entity its own id.
+      let newRowCounter = 0;
+      stepRepoMock.save.mockImplementation(async (entity: any) => ({
+        id: entity.id || `new-row-${newRowCounter++}`,
+        ...entity,
+      }));
+
+      const steps = [
+        {
+          id: mockStepId,
+          stepName: 'Cắt vải (đã sửa)',
+          timePerPiece: 20,
+          ssv: 20,
+          orderIndex: 0,
+        },
+        { stepName: 'May cổ', timePerPiece: 12, ssv: 12, orderIndex: 1 },
+        // "Ủi" (existing-step-2) is intentionally left out — it gets deleted.
+      ];
+
+      await service.createMany(mockStyleId, steps as any, undefined, testActor);
+
+      expect(auditServiceMock.recordEntityChange).toHaveBeenCalledTimes(1);
+      const [, input] = auditServiceMock.recordEntityChange.mock.calls[0];
+      expect(input.eventType).toBe(AuditEventType.UPDATED);
+      expect(input.reason).toContain('Tạo mới 1 công đoạn');
+      expect(input.reason).toContain('Cập nhật 1 công đoạn');
+      expect(input.reason).toContain('Xoá 1 công đoạn');
+    });
+
+    it('records one DELETED event when the whole grid is cleared', async () => {
+      const steps: any[] = [];
+
+      await service.createMany(mockStyleId, steps, undefined, testActor);
+
+      expect(auditServiceMock.recordEntityChange).toHaveBeenCalledTimes(1);
+      const [, input] = auditServiceMock.recordEntityChange.mock.calls[0];
+      expect(input.eventType).toBe(AuditEventType.DELETED);
+      expect(input.reason).toContain('Xoá 1 công đoạn');
+    });
+
+    it('does not record any audit event when no actor is given', async () => {
+      stepRepoMock.find.mockResolvedValueOnce([]);
+      const steps = [
+        { stepName: 'Cắt', timePerPiece: 10, ssv: 10, orderIndex: 0 },
+      ];
+
+      await service.createMany(mockStyleId, steps as any);
+
+      expect(auditServiceMock.recordEntityChange).not.toHaveBeenCalled();
+    });
+
+    it('does not record the catalog stage link in a bulk save (it only duplicates the step name)', async () => {
+      const STAGE_ID = '11111111-1111-1111-1111-111111111111';
+      stepRepoMock.find.mockResolvedValueOnce([]);
+      stepRepoMock.query.mockImplementation((sql: string) => {
+        if (sql.includes('FROM stages')) {
+          return Promise.resolve([{ id: STAGE_ID }]);
+        }
+        return Promise.resolve([]);
+      });
+
+      const steps = [
+        {
+          stepName: 'Cắt vải',
+          timePerPiece: 10,
+          ssv: 10,
+          orderIndex: 0,
+          stageId: STAGE_ID,
+        },
+      ];
+
+      await service.createMany(mockStyleId, steps as any, undefined, testActor);
+
+      const [, input] = auditServiceMock.recordEntityChange.mock.calls[0];
+      const fieldNames = input.changes.map((c: any) => c.fieldName);
+      expect(fieldNames).toContain('Cắt vải::stepName');
+      expect(fieldNames).not.toContain('Cắt vải::stageId');
+    });
   });
 
   describe('update', () => {
     it('should update step successfully', async () => {
       stepRepoMock.findOne.mockResolvedValue({ ...mockStep });
 
-      const updated = await service.update(mockStyleId, mockStepId, {
-        stepName: 'Cắt vải chuẩn',
-        timePerPiece: 18,
-      });
+      const updated = await service.update(
+        mockStyleId,
+        mockStepId,
+        {
+          stepName: 'Cắt vải chuẩn',
+          timePerPiece: 18,
+        },
+        testActor,
+      );
 
       expect(updated.stepName).toBe('Cắt vải chuẩn');
       expect(updated.timePerPiece).toBe(18);
@@ -256,7 +404,12 @@ describe('StyleOperationStepsService', () => {
     it('should throw NotFoundException if step does not exist', async () => {
       stepRepoMock.findOne.mockResolvedValue(null);
       await expect(
-        service.update(mockStyleId, 'non-existing-step', { stepName: 'Abc' }),
+        service.update(
+          mockStyleId,
+          'non-existing-step',
+          { stepName: 'Abc' },
+          testActor,
+        ),
       ).rejects.toThrow(NotFoundException);
     });
 
@@ -266,17 +419,43 @@ describe('StyleOperationStepsService', () => {
         styleId: 'some-other-style-id',
       });
       await expect(
-        service.update(mockStyleId, mockStepId, { stepName: 'Abc' }),
+        service.update(mockStyleId, mockStepId, { stepName: 'Abc' }, testActor),
       ).rejects.toThrow(NotFoundException);
+    });
+
+    it('does not record a change to the catalog stage link', async () => {
+      const STAGE_ID = '11111111-1111-1111-1111-111111111111';
+      stepRepoMock.findOne.mockResolvedValueOnce({
+        ...mockStep,
+        stageId: null,
+      });
+      stepRepoMock.query.mockResolvedValue([{ '?column?': 1 }]);
+
+      await service.update(
+        mockStyleId,
+        mockStepId,
+        { stageId: STAGE_ID },
+        testActor,
+      );
+
+      const [, input] = auditServiceMock.recordEntityChange.mock.calls[0];
+      expect(input.changes.map((c: any) => c.fieldName)).not.toContain(
+        'stageId',
+      );
     });
 
     it('should throw BadRequestException if stageId does not exist', async () => {
       stepRepoMock.findOne.mockResolvedValue({ ...mockStep });
       stepRepoMock.query.mockResolvedValue([]);
       await expect(
-        service.update(mockStyleId, mockStepId, {
-          stageId: 'non-existing-stage',
-        }),
+        service.update(
+          mockStyleId,
+          mockStepId,
+          {
+            stageId: 'non-existing-stage',
+          },
+          testActor,
+        ),
       ).rejects.toThrow(BadRequestException);
     });
 
@@ -285,9 +464,14 @@ describe('StyleOperationStepsService', () => {
         .mockResolvedValueOnce({ ...mockStep }) // findOwnedStep
         .mockResolvedValueOnce(null); // parent lookup
       await expect(
-        service.update(mockStyleId, mockStepId, {
-          parentStepId: 'non-existing-parent',
-        }),
+        service.update(
+          mockStyleId,
+          mockStepId,
+          {
+            parentStepId: 'non-existing-parent',
+          },
+          testActor,
+        ),
       ).rejects.toThrow(BadRequestException);
     });
   });
@@ -296,7 +480,7 @@ describe('StyleOperationStepsService', () => {
     it('should remove a single step', async () => {
       stepRepoMock.findOne.mockResolvedValue({ ...mockStep, isGroup: false });
 
-      await service.remove(mockStyleId, mockStepId);
+      await service.remove(mockStyleId, mockStepId, testActor);
 
       expect(stepRepoMock.remove).toHaveBeenCalled();
     });
@@ -304,7 +488,7 @@ describe('StyleOperationStepsService', () => {
     it('should cascade delete children when removing a group step', async () => {
       stepRepoMock.findOne.mockResolvedValue({ ...mockStep, isGroup: true });
 
-      await service.remove(mockStyleId, mockStepId);
+      await service.remove(mockStyleId, mockStepId, testActor);
 
       expect(stepRepoMock.delete).toHaveBeenCalledWith({
         parentStepId: mockStepId,
@@ -315,7 +499,7 @@ describe('StyleOperationStepsService', () => {
     it('should throw NotFoundException if step to remove does not exist', async () => {
       stepRepoMock.findOne.mockResolvedValue(null);
       await expect(
-        service.remove(mockStyleId, 'non-existing-step'),
+        service.remove(mockStyleId, 'non-existing-step', testActor),
       ).rejects.toThrow(NotFoundException);
     });
 
@@ -324,9 +508,9 @@ describe('StyleOperationStepsService', () => {
         ...mockStep,
         styleId: 'some-other-style-id',
       });
-      await expect(service.remove(mockStyleId, mockStepId)).rejects.toThrow(
-        NotFoundException,
-      );
+      await expect(
+        service.remove(mockStyleId, mockStepId, testActor),
+      ).rejects.toThrow(NotFoundException);
     });
   });
 });

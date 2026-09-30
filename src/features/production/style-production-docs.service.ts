@@ -31,6 +31,24 @@ import {
   UpdateStyleProductionDocDto,
   CopyMode,
 } from './dto';
+import { AuditService } from '../audit/audit.service';
+import { AuditActor } from '../audit/audit-actor.type';
+import { diffEntity } from '../audit/entity-diff.util';
+import { AuditEventType } from '../../common/enums/database.enums';
+
+const AGGREGATE_TYPE = 'ProductionDocument';
+
+const TRACKED_FIELDS = [
+  'name',
+  'description',
+  'status',
+  'section1Description',
+  'section1ImageUrl',
+  'section2Accessories',
+  'section3Notes',
+  'section4CustomerFeedback',
+  'sizeData',
+] as const satisfies readonly (keyof ProductionDocument)[];
 
 export interface StyleProductionDocDetailResponse {
   id: string;
@@ -106,6 +124,7 @@ export class StyleProductionDocsService {
     @Inject(STORAGE_SERVICE)
     private readonly storage: StorageService,
     private readonly dataSource: DataSource,
+    private readonly auditService: AuditService,
   ) {}
 
   /**
@@ -206,6 +225,7 @@ export class StyleProductionDocsService {
     styleId: string,
     dto: CreateStyleProductionDocDto,
     userId?: string,
+    actor?: AuditActor,
   ): Promise<StyleProductionDocDetailResponse> {
     const style = await this.styleRepo.findOne({ where: { id: styleId } });
     if (!style) {
@@ -219,8 +239,9 @@ export class StyleProductionDocsService {
       );
     }
 
-    const section1ImageUrl =
-      dto.section1ImageUrl?.trim() || style.baseImageKey || null;
+    const section1ImageUrl = this.normalizeImageRef(
+      dto.section1ImageUrl?.trim() || style.baseImageKey || null,
+    );
     const section1Description =
       dto.section1Description?.trim() || style.description || null;
 
@@ -242,7 +263,7 @@ export class StyleProductionDocsService {
       section2Accessories,
       section3Notes,
       section4CustomerFeedback,
-      sizeData: dto.sizeData ?? null,
+      sizeData: this.normalizeSizeData(dto.sizeData) ?? null,
       createdBy: userId ?? null,
       updatedBy: userId ?? null,
     });
@@ -329,6 +350,29 @@ export class StyleProductionDocsService {
           docId,
           DocumentPurpose.PRODUCTION_DOC,
           userId,
+        );
+      }
+    }
+
+    // Các bước tạo phía trên đã commit riêng lẻ (không chung transaction), nên
+    // nếu ghi lịch sử lỗi mà ném ra thì người dùng thấy lỗi dù tài liệu đã
+    // được tạo, và bấm tạo lại sẽ bị báo "đã có tài liệu". Chỉ ghi log lỗi.
+    if (actor) {
+      try {
+        await this.auditService.recordEntityChange(this.dataSource.manager, {
+          aggregateType: AGGREGATE_TYPE,
+          aggregateId: savedDoc.id,
+          parentId: styleId,
+          actorId: actor.id,
+          actorRole: actor.roleCode,
+          targetLabel: savedDoc.name,
+          eventType: AuditEventType.CREATED,
+          changes: diffEntity(null, savedDoc, TRACKED_FIELDS),
+        });
+      } catch (error) {
+        this.logger.error(
+          `Không ghi được lịch sử tạo tài liệu sản xuất ${savedDoc.id}`,
+          (error as Error).stack,
         );
       }
     }
@@ -579,6 +623,7 @@ export class StyleProductionDocsService {
     docId: string,
     dto: UpdateStyleProductionDocDto,
     userId?: string,
+    actor?: AuditActor,
   ): Promise<StyleProductionDocDetailResponse> {
     const doc = await this.dataSource.transaction(async (manager) => {
       const prodDocRepo = manager.getRepository(ProductionDocument);
@@ -591,6 +636,7 @@ export class StyleProductionDocsService {
           `Không tìm thấy tài liệu sản xuất với ID: ${docId}`,
         );
       }
+      const before = { ...doc };
 
       if (dto.name !== undefined) doc.name = dto.name.trim();
       if (dto.description !== undefined)
@@ -601,9 +647,9 @@ export class StyleProductionDocsService {
           ? dto.section1Description.trim()
           : null;
       if (dto.section1ImageUrl !== undefined)
-        doc.section1ImageUrl = dto.section1ImageUrl
-          ? dto.section1ImageUrl.trim()
-          : null;
+        doc.section1ImageUrl = this.normalizeImageRef(
+          dto.section1ImageUrl ? dto.section1ImageUrl.trim() : null,
+        );
       if (dto.section2Accessories !== undefined)
         doc.section2Accessories = dto.section2Accessories
           ? dto.section2Accessories.trim()
@@ -614,11 +660,25 @@ export class StyleProductionDocsService {
         doc.section4CustomerFeedback = dto.section4CustomerFeedback
           ? dto.section4CustomerFeedback.trim()
           : null;
-      if (dto.sizeData !== undefined) doc.sizeData = dto.sizeData;
+      if (dto.sizeData !== undefined)
+        doc.sizeData = this.normalizeSizeData(dto.sizeData);
 
       doc.updatedBy = userId ?? null;
       doc.rowVersion = Number(doc.rowVersion) + 1;
       await prodDocRepo.save(doc);
+
+      if (actor) {
+        await this.auditService.recordEntityChange(manager, {
+          aggregateType: AGGREGATE_TYPE,
+          aggregateId: doc.id,
+          parentId: doc.styleId ?? undefined,
+          actorId: actor.id,
+          actorRole: actor.roleCode,
+          targetLabel: doc.name,
+          eventType: AuditEventType.UPDATED,
+          changes: diffEntity(before, doc, TRACKED_FIELDS),
+        });
+      }
 
       const existingSections = await sectionRepo.find({
         where: { productionDocumentId: docId },
@@ -707,6 +767,7 @@ export class StyleProductionDocsService {
     docId: string,
     status: ProductionDocStatus,
     userId?: string,
+    actor?: AuditActor,
   ): Promise<StyleProductionDocDetailResponse> {
     const doc = await this.prodDocRepo.findOne({ where: { id: docId } });
     if (!doc) {
@@ -714,9 +775,26 @@ export class StyleProductionDocsService {
         `Không tìm thấy tài liệu sản xuất với ID: ${docId}`,
       );
     }
+    const before = { ...doc };
     doc.status = status;
     doc.updatedBy = userId ?? null;
-    await this.prodDocRepo.save(doc);
+
+    await this.dataSource.transaction(async (manager) => {
+      await manager.getRepository(ProductionDocument).save(doc);
+      if (actor) {
+        await this.auditService.recordEntityChange(manager, {
+          aggregateType: AGGREGATE_TYPE,
+          aggregateId: doc.id,
+          parentId: doc.styleId ?? undefined,
+          actorId: actor.id,
+          actorRole: actor.roleCode,
+          targetLabel: doc.name,
+          eventType: AuditEventType.STATUS_CHANGED,
+          changes: diffEntity(before, doc, ['status'] as const),
+        });
+      }
+    });
+
     return this.buildDetailResponse(doc);
   }
 
@@ -752,14 +830,29 @@ export class StyleProductionDocsService {
     }
   }
 
-  async remove(docId: string): Promise<void> {
+  async remove(docId: string, actor?: AuditActor): Promise<void> {
     const doc = await this.prodDocRepo.findOne({ where: { id: docId } });
     if (!doc) {
       throw new NotFoundException(
         `Không tìm thấy tài liệu sản xuất với ID: ${docId}`,
       );
     }
-    await this.prodDocRepo.remove(doc);
+
+    await this.dataSource.transaction(async (manager) => {
+      await manager.getRepository(ProductionDocument).remove(doc);
+      if (actor) {
+        await this.auditService.recordEntityChange(manager, {
+          aggregateType: AGGREGATE_TYPE,
+          aggregateId: doc.id,
+          parentId: doc.styleId ?? undefined,
+          actorId: actor.id,
+          actorRole: actor.roleCode,
+          targetLabel: doc.name,
+          eventType: AuditEventType.DELETED,
+          changes: [],
+        });
+      }
+    });
   }
 
   /**
@@ -1497,6 +1590,47 @@ export class StyleProductionDocsService {
       return value;
     }
     return this.storage.getPresignedGetUrl(value);
+  }
+
+  /**
+   * The FE round-trips whatever `resolveMaybeKey` returned (a presigned GET
+   * URL) straight back into the save payload when the user edits a doc
+   * without touching its image — `section1ImageUrl`/`sizeData[].imageUrl`
+   * would otherwise get persisted (and audited) as a live, signed S3 URL
+   * carrying the AWS access key + a 1-hour-valid signature in its query
+   * string. Strip a presigned URL for our own bucket back down to the bare
+   * object key before it ever reaches the DB or the audit diff. A URL for
+   * some other host is left untouched (never fetched — only compared).
+   */
+  private normalizeImageRef(value: string | null | undefined): string | null {
+    if (!value) return null;
+    if (!value.startsWith('http://') && !value.startsWith('https://')) {
+      return value;
+    }
+    if (!this.storage.isTrustedObjectHost(value)) {
+      return value;
+    }
+    try {
+      return decodeURIComponent(new URL(value).pathname.replace(/^\/+/, ''));
+    } catch {
+      return value;
+    }
+  }
+
+  private normalizeSizeData(sizeData: unknown): unknown {
+    if (!Array.isArray(sizeData)) return sizeData;
+    return sizeData.map((item) =>
+      item &&
+      typeof item === 'object' &&
+      typeof (item as { imageUrl?: unknown }).imageUrl === 'string'
+        ? {
+            ...item,
+            imageUrl: this.normalizeImageRef(
+              (item as { imageUrl: string }).imageUrl,
+            ),
+          }
+        : item,
+    );
   }
 
   private async getImageBuffer(

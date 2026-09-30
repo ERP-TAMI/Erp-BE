@@ -10,6 +10,7 @@ import { Document } from '../documents/entities/Document.entity';
 import { DocumentVersion } from '../documents/entities/DocumentVersion.entity';
 import { SampleStatus } from '../../common/enums/database.enums';
 import { STORAGE_SERVICE, StorageService } from '../storage/storage.interface';
+import { AuditService } from '../audit/audit.service';
 
 function buildQueryBuilderMock(result: unknown) {
   const qb: Record<string, jest.Mock> = {
@@ -60,8 +61,14 @@ describe('StyleSampleRoundsService', () => {
   let storageMock: jest.Mocked<StorageService>;
   let docRepoMock: { create: jest.Mock; save: jest.Mock };
   let versionRepoMock: { create: jest.Mock; save: jest.Mock };
-  let txImageRepoMock: { create: jest.Mock; save: jest.Mock; count: jest.Mock };
+  let txImageRepoMock: {
+    create: jest.Mock;
+    save: jest.Mock;
+    count: jest.Mock;
+    remove: jest.Mock;
+  };
   let styleFindOneMock: jest.Mock;
+  let auditServiceMock: { recordEntityChange: jest.Mock };
 
   const STYLE_ID = '8f3a1c2e-4b6a-4e1a-9c2d-1a2b3c4d5e6f';
   const ROUND_ID = 'a1b2c3d4-4b6a-4e1a-9c2d-1a2b3c4d5e6f';
@@ -93,6 +100,7 @@ describe('StyleSampleRoundsService', () => {
       create: jest.fn().mockImplementation((v) => v),
       save: jest.fn().mockImplementation((v) => ({ id: 'image-1', ...v })),
       count: jest.fn().mockResolvedValue(0),
+      remove: jest.fn().mockResolvedValue(undefined),
     };
 
     storageMock = {
@@ -107,6 +115,9 @@ describe('StyleSampleRoundsService', () => {
     };
 
     styleFindOneMock = jest.fn().mockResolvedValue({ id: STYLE_ID });
+    auditServiceMock = {
+      recordEntityChange: jest.fn().mockResolvedValue(undefined),
+    };
 
     const dataSourceMock = {
       transaction: jest.fn().mockImplementation((cb: any) => {
@@ -138,6 +149,7 @@ describe('StyleSampleRoundsService', () => {
         },
         { provide: STORAGE_SERVICE, useValue: storageMock },
         { provide: DataSource, useValue: dataSourceMock },
+        { provide: AuditService, useValue: auditServiceMock },
       ],
     }).compile();
 
@@ -375,7 +387,7 @@ describe('StyleSampleRoundsService', () => {
 
       await service.removeImage(STYLE_ID, ROUND_ID, 'image-1');
 
-      expect(imageRepoMock.remove).toHaveBeenCalledWith({
+      expect(txImageRepoMock.remove).toHaveBeenCalledWith({
         id: 'image-1',
         sampleRoundId: ROUND_ID,
       });
@@ -387,7 +399,7 @@ describe('StyleSampleRoundsService', () => {
       await expect(
         service.removeImage(STYLE_ID, ROUND_ID, 'image-1'),
       ).rejects.toThrow(NotFoundException);
-      expect(imageRepoMock.remove).not.toHaveBeenCalled();
+      expect(txImageRepoMock.remove).not.toHaveBeenCalled();
     });
   });
 
