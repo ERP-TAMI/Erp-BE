@@ -13,6 +13,7 @@ import { DraftBomFamilie } from '../draft-boms/entities/DraftBomFamilie.entity';
 import { PurchaseOrderProduct } from '../purchase-orders/entities/PurchaseOrderProduct.entity';
 import { StyleStatus } from '../../common/enums/database.enums';
 import { STORAGE_SERVICE } from '../storage/storage.interface';
+import { AuditService } from '../audit/audit.service';
 
 describe('StylesService', () => {
   let service: StylesService;
@@ -23,6 +24,7 @@ describe('StylesService', () => {
   let dataSourceMock: any;
   let managerMock: any;
   let storageMock: any;
+  let auditServiceMock: any;
   const STYLE_ID = '123e4567-e89b-12d3-a456-426614174000';
 
   const mockStyle: Partial<Style> = {
@@ -79,6 +81,11 @@ describe('StylesService', () => {
       transaction: jest
         .fn()
         .mockImplementation(async (cb: any) => cb(managerMock)),
+      manager: managerMock,
+    };
+
+    auditServiceMock = {
+      recordEntityChange: jest.fn().mockResolvedValue(undefined),
     };
 
     storageMock = {
@@ -118,6 +125,10 @@ describe('StylesService', () => {
         {
           provide: DataSource,
           useValue: dataSourceMock,
+        },
+        {
+          provide: AuditService,
+          useValue: auditServiceMock,
         },
       ],
     }).compile();
@@ -232,6 +243,46 @@ describe('StylesService', () => {
 
       expect(updated.styleName).toBe('Áo Polo Nam Mới');
       expect(updated.status).toBe(StyleStatus.ACTIVE);
+    });
+
+    it('records an audit event with the field-level diff when an actor is given', async () => {
+      repositoryMock.findOne.mockResolvedValue({ ...mockStyle });
+      const actor = { id: 'user-1', roleCode: 'RD' };
+
+      await service.update(
+        '123e4567-e89b-12d3-a456-426614174000',
+        { styleName: 'Áo Polo Nam Mới', status: StyleStatus.ACTIVE },
+        'user-1',
+        actor,
+      );
+
+      expect(auditServiceMock.recordEntityChange).toHaveBeenCalledWith(
+        managerMock,
+        expect.objectContaining({
+          aggregateType: 'Style',
+          aggregateId: '123e4567-e89b-12d3-a456-426614174000',
+          actorId: 'user-1',
+          actorRole: 'RD',
+          eventType: 'updated',
+          changes: expect.arrayContaining([
+            expect.objectContaining({
+              fieldName: 'styleName',
+              oldValue: 'Áo Polo Nam',
+              newValue: 'Áo Polo Nam Mới',
+            }),
+          ]),
+        }),
+      );
+    });
+
+    it('does not record any audit event when no actor is given', async () => {
+      repositoryMock.findOne.mockResolvedValue({ ...mockStyle });
+
+      await service.update('123e4567-e89b-12d3-a456-426614174000', {
+        styleName: 'Áo Polo Nam Mới',
+      });
+
+      expect(auditServiceMock.recordEntityChange).not.toHaveBeenCalled();
     });
 
     it('should throw BadRequestException if updating styleName to whitespace', async () => {

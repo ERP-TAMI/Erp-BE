@@ -19,6 +19,21 @@ import {
   isObjectKeyInScope,
 } from '../storage/storage-key.util';
 import { DEFAULT_MAX_UPLOAD_SIZE_BYTES } from '../../common/utils/file-validation';
+import { AuditService } from '../audit/audit.service';
+import { diffEntity } from '../audit/entity-diff.util';
+import { AuditActor } from '../audit/audit-actor.type';
+import { AuditEventType } from '../../common/enums/database.enums';
+
+const AGGREGATE_TYPE = 'Style';
+
+const TRACKED_FIELDS = [
+  'styleCode',
+  'styleName',
+  'description',
+  'category',
+  'baseImageKey',
+  'status',
+] as const satisfies readonly (keyof Style)[];
 
 export interface PaginatedResult<T> {
   data: T[];
@@ -44,6 +59,7 @@ export class StylesService {
     @Inject(STORAGE_SERVICE)
     private readonly storage: StorageService,
     private readonly dataSource: DataSource,
+    private readonly auditService: AuditService,
   ) {}
 
   // baseImageKey stores an S3 object key, never a URL — a presigned URL
@@ -201,8 +217,10 @@ export class StylesService {
     id: string,
     dto: UpdateStyleDto,
     userId?: string,
+    actor?: AuditActor,
   ): Promise<Style> {
     const style = await this.findOne(id);
+    const before = { ...style };
 
     if (dto.styleCode !== undefined) {
       const codeClean = dto.styleCode.trim();
@@ -248,7 +266,21 @@ export class StylesService {
     style.updatedBy = userId ?? null;
     style.rowVersion = Number(style.rowVersion) + 1;
 
-    return this.styleRepository.save(style);
+    const saved = await this.styleRepository.save(style);
+
+    if (actor) {
+      await this.auditService.recordEntityChange(this.dataSource.manager, {
+        aggregateType: AGGREGATE_TYPE,
+        aggregateId: saved.id,
+        actorId: actor.id,
+        actorRole: actor.roleCode,
+        targetLabel: saved.styleName,
+        eventType: AuditEventType.UPDATED,
+        changes: diffEntity(before, saved, TRACKED_FIELDS),
+      });
+    }
+
+    return saved;
   }
 
   async remove(id: string): Promise<void> {

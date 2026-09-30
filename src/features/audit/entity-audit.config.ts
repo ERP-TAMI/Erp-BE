@@ -10,6 +10,22 @@ export type EntityAuditConfig = {
 };
 
 export const ENTITY_AUDIT_CONFIG: Record<string, EntityAuditConfig> = {
+  Style: {
+    fieldLabels: {
+      styleCode: 'Mã mẫu',
+      styleName: 'Tên mẫu',
+      description: 'Mô tả đặc điểm',
+      category: 'Dòng sản phẩm',
+      baseImageKey: 'Ảnh mẫu',
+      status: 'Trạng thái',
+    },
+    fieldValueLabels: {
+      status: {
+        draft: 'Nháp',
+        active: 'Hoạt động',
+      },
+    },
+  },
   StyleOperationStep: {
     fieldLabels: {
       stepName: 'Tên công đoạn',

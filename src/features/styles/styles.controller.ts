@@ -112,7 +112,10 @@ export class StylesController {
     @Req() req?: any,
   ): Promise<StyleResponseDto> {
     const userId = req?.user?.id || req?.user?.sub;
-    const style = await this.stylesService.update(id, dto, userId);
+    const actor = userId
+      ? { id: userId, roleCode: req?.user?.roleCode }
+      : undefined;
+    const style = await this.stylesService.update(id, dto, userId, actor);
     const resolved = await this.stylesService.withResolvedBaseImage(style);
     return StyleResponseDto.fromEntity(resolved);
   }
