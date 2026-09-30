@@ -4,7 +4,7 @@ import { Request } from 'express';
 import { Auth } from '../../common/decorators/auth.decorator';
 import {
   AuditService,
-  EntityHistoryEvent,
+  PaginatedEntityHistory,
   PaginatedHttpAuditLogs,
 } from './audit.service';
 import { QueryHttpAuditLogsDto } from './dto/query-http-audit-logs.dto';
@@ -37,11 +37,7 @@ export class AuditController {
   findEntityHistory(
     @Query() query: QueryEntityHistoryDto,
     @Req() req: AuthenticatedRequest,
-  ): Promise<EntityHistoryEvent[]> {
-    return this.auditService.findEntityHistory(
-      query.aggregateType,
-      query.aggregateId,
-      req.user.permissions,
-    );
+  ): Promise<PaginatedEntityHistory> {
+    return this.auditService.findEntityHistory(query, req.user.permissions);
   }
 }

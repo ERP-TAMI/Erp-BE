@@ -1,9 +1,10 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, In, Repository } from 'typeorm';
 import { AuditEventType } from '../../common/enums/database.enums';
 import { AuditEvent, AuditEventChange, HttpAuditLog } from './entities';
 import { QueryHttpAuditLogsDto } from './dto/query-http-audit-logs.dto';
+import { QueryEntityHistoryDto } from './dto/query-entity-history.dto';
 import { EntityFieldChange } from './entity-diff.util';
 import {
   canViewSensitiveFields,
@@ -93,6 +94,14 @@ export type EntityHistoryEvent = {
   targetLabel: string | null;
   reason: string | null;
   changes: EntityHistoryChange[];
+};
+
+export type PaginatedEntityHistory = {
+  items: EntityHistoryEvent[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
 };
 
 @Injectable()
@@ -246,15 +255,56 @@ export class AuditService {
   }
 
   async findEntityHistory(
-    aggregateType: string,
-    aggregateId: string,
+    query: QueryEntityHistoryDto,
     requesterPermissions: string[],
-  ): Promise<EntityHistoryEvent[]> {
-    const events = await this.auditEvents.find({
-      where: { aggregateType, aggregateId },
-      order: { occurredAt: 'DESC' },
-    });
-    if (events.length === 0) return [];
+  ): Promise<PaginatedEntityHistory> {
+    if (!query.aggregateId && !query.parentId) {
+      throw new BadRequestException(
+        'Cần truyền aggregateId (1 bản ghi) hoặc parentId (mọi bản ghi con của 1 cha).',
+      );
+    }
+
+    const page = Math.max(1, query.page ?? 1);
+    const limit = Math.max(1, Math.min(100, query.limit ?? 20));
+    const skip = (page - 1) * limit;
+
+    const qb = this.auditEvents
+      .createQueryBuilder('event')
+      .where('event.aggregateType = :aggregateType', {
+        aggregateType: query.aggregateType,
+      });
+    if (query.aggregateId) {
+      qb.andWhere('event.aggregateId = :aggregateId', {
+        aggregateId: query.aggregateId,
+      });
+    }
+    if (query.parentId) {
+      qb.andWhere('event.parentId = :parentId', { parentId: query.parentId });
+    }
+    if (query.search) {
+      qb.andWhere('event.targetLabel ILIKE :search', {
+        search: `%${query.search}%`,
+      });
+    }
+    if (query.from) {
+      qb.andWhere('event.occurredAt >= :from', { from: new Date(query.from) });
+    }
+    if (query.to) {
+      qb.andWhere('event.occurredAt <= :to', { to: new Date(query.to) });
+    }
+    qb.orderBy('event.occurredAt', 'DESC').addOrderBy('event.id', 'DESC');
+    qb.skip(skip).take(limit);
+
+    const [events, total] = await qb.getManyAndCount();
+    if (events.length === 0) {
+      return {
+        items: [],
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit) || 0,
+      };
+    }
 
     const changes = await this.auditEventChanges.find({
       where: { auditEventId: In(events.map((event) => event.id)) },
@@ -267,7 +317,7 @@ export class AuditService {
     }
 
     const canViewSensitive = canViewSensitiveFields(
-      aggregateType,
+      query.aggregateType,
       requesterPermissions,
     );
 
@@ -289,7 +339,7 @@ export class AuditService {
       actors.map((actor) => [actor.id, actor.fullName || actor.email]),
     );
 
-    return events.map((event) => ({
+    const items = events.map((event) => ({
       id: event.id,
       occurredAt: event.occurredAt,
       eventType: event.eventType,
@@ -301,16 +351,27 @@ export class AuditService {
       targetLabel: event.targetLabel,
       reason: event.reason,
       changes: (changesByEvent.get(event.id) ?? []).map((change) => {
-        const sensitive = isSensitiveField(aggregateType, change.fieldName);
+        const sensitive = isSensitiveField(
+          query.aggregateType,
+          change.fieldName,
+        );
         const masked = sensitive && !canViewSensitive;
         return {
           fieldName: change.fieldName,
-          fieldLabel: getFieldLabel(aggregateType, change.fieldName),
+          fieldLabel: getFieldLabel(query.aggregateType, change.fieldName),
           oldValue: masked ? SENSITIVE_MASK : change.oldValue,
           newValue: masked ? SENSITIVE_MASK : change.newValue,
         };
       }),
     }));
+
+    return {
+      items,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit) || 0,
+    };
   }
 
   private buildDefaultReason(

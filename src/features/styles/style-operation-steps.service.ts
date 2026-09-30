@@ -14,9 +14,10 @@ import {
 } from './dto/style-operation-step.dto';
 import { AuditService } from '../audit/audit.service';
 import { diffEntity } from '../audit/entity-diff.util';
+import { AuditActor } from '../audit/audit-actor.type';
 import { AuditEventType } from '../../common/enums/database.enums';
 
-export type AuditActor = { id: string; roleCode: string };
+export type { AuditActor };
 
 const AGGREGATE_TYPE = 'StyleOperationStep';
 

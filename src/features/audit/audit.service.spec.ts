@@ -12,10 +12,21 @@ function buildHttpAuditLogRepository(): jest.Mocked<Repository<HttpAuditLog>> {
   } as unknown as jest.Mocked<Repository<HttpAuditLog>>;
 }
 
+function buildMockQueryBuilder(rows: unknown[], total: number) {
+  const qb: Record<string, jest.Mock> = {};
+  const chain = ['where', 'andWhere', 'orderBy', 'addOrderBy', 'skip', 'take'];
+  for (const method of chain) {
+    qb[method] = jest.fn().mockReturnValue(qb);
+  }
+  qb.getManyAndCount = jest.fn().mockResolvedValue([rows, total]);
+  return qb;
+}
+
 function buildAuditService() {
   const httpAuditLogs = buildHttpAuditLogRepository();
   const auditEvents = {
     find: jest.fn().mockResolvedValue([]),
+    createQueryBuilder: jest.fn(() => buildMockQueryBuilder([], 0)),
   } as unknown as jest.Mocked<Repository<AuditEvent>>;
   const auditEventChanges = {
     find: jest.fn().mockResolvedValue([]),
@@ -207,17 +218,22 @@ describe('AuditService', () => {
   describe('findEntityHistory', () => {
     it('joins events with their field changes and resolves a human-readable label', async () => {
       const { service, auditEvents, auditEventChanges } = buildAuditService();
-      (auditEvents.find as jest.Mock).mockResolvedValue([
-        {
-          id: 'event-1',
-          occurredAt: new Date('2026-01-01T00:00:00.000Z'),
-          eventType: AuditEventType.UPDATED,
-          actorUserId: 'actor-1',
-          actorRole: 'RD',
-          targetLabel: 'Cắt',
-          reason: 'Cập nhật: Tên công đoạn',
-        },
-      ]);
+      (auditEvents.createQueryBuilder as jest.Mock).mockReturnValue(
+        buildMockQueryBuilder(
+          [
+            {
+              id: 'event-1',
+              occurredAt: new Date('2026-01-01T00:00:00.000Z'),
+              eventType: AuditEventType.UPDATED,
+              actorUserId: 'actor-1',
+              actorRole: 'RD',
+              targetLabel: 'Cắt',
+              reason: 'Cập nhật: Tên công đoạn',
+            },
+          ],
+          1,
+        ),
+      );
       (auditEventChanges.find as jest.Mock).mockResolvedValue([
         {
           auditEventId: 'event-1',
@@ -228,13 +244,13 @@ describe('AuditService', () => {
       ]);
 
       const result = await service.findEntityHistory(
-        'StyleOperationStep',
-        'step-1',
+        { aggregateType: 'StyleOperationStep', aggregateId: 'step-1' },
         [],
       );
 
-      expect(result).toHaveLength(1);
-      expect(result[0].changes[0]).toMatchObject({
+      expect(result.items).toHaveLength(1);
+      expect(result.total).toBe(1);
+      expect(result.items[0].changes[0]).toMatchObject({
         fieldName: 'stepName',
         fieldLabel: 'Tên công đoạn',
         oldValue: 'Cắt',
@@ -242,14 +258,36 @@ describe('AuditService', () => {
       });
     });
 
-    it('returns an empty list when there are no events', async () => {
+    it('returns an empty page when there are no events', async () => {
       const { service } = buildAuditService();
       const result = await service.findEntityHistory(
-        'StyleOperationStep',
-        'step-1',
+        { aggregateType: 'StyleOperationStep', aggregateId: 'step-1' },
         [],
       );
-      expect(result).toEqual([]);
+      expect(result.items).toEqual([]);
+      expect(result.total).toBe(0);
+    });
+
+    it('rejects when neither aggregateId nor parentId is given', async () => {
+      const { service } = buildAuditService();
+      await expect(
+        service.findEntityHistory({ aggregateType: 'StyleOperationStep' }, []),
+      ).rejects.toThrow();
+    });
+
+    it('queries by parentId to fetch every child record under a parent', async () => {
+      const { service, auditEvents } = buildAuditService();
+      const qb = buildMockQueryBuilder([], 0);
+      (auditEvents.createQueryBuilder as jest.Mock).mockReturnValue(qb);
+
+      await service.findEntityHistory(
+        { aggregateType: 'StyleOperationStep', parentId: 'style-1' },
+        [],
+      );
+
+      expect(qb.andWhere).toHaveBeenCalledWith('event.parentId = :parentId', {
+        parentId: 'style-1',
+      });
     });
   });
 });

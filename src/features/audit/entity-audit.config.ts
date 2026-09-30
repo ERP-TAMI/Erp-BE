@@ -22,6 +22,20 @@ export const ENTITY_AUDIT_CONFIG: Record<string, EntityAuditConfig> = {
       parentStepId: 'Công đoạn cha',
     },
   },
+  StyleDocument: {
+    fieldLabels: {
+      fileName: 'Tên tệp',
+      purpose: 'Mục đích',
+    },
+  },
+  StyleSampleRound: {
+    fieldLabels: {
+      sampleDate: 'Ngày may mẫu',
+      feedback: 'Phản hồi',
+      status: 'Trạng thái',
+      images: 'Ảnh đính kèm',
+    },
+  },
 };
 
 export function getFieldLabel(

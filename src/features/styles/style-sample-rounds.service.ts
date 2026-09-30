@@ -31,6 +31,17 @@ import {
   PresignStyleSampleImageDto,
   ConfirmStyleSampleImageDto,
 } from './dto/style-sample-round.dto';
+import { AuditService } from '../audit/audit.service';
+import { AuditActor } from '../audit/audit-actor.type';
+import { diffEntity } from '../audit/entity-diff.util';
+import { AuditEventType } from '../../common/enums/database.enums';
+
+const AGGREGATE_TYPE = 'StyleSampleRound';
+const TRACKED_FIELDS = [
+  'sampleDate',
+  'feedback',
+  'status',
+] as const satisfies readonly (keyof StyleSampleRound)[];
 
 const SAMPLE_IMAGE_ALLOWLIST: Record<string, string[]> = {
   '.png': ['image/png'],
@@ -96,6 +107,7 @@ export class StyleSampleRoundsService {
     @Inject(STORAGE_SERVICE)
     private readonly storage: StorageService,
     private readonly dataSource: DataSource,
+    private readonly auditService: AuditService,
   ) {}
 
   private async assertStyleExists(styleId: string): Promise<void> {
@@ -200,6 +212,7 @@ export class StyleSampleRoundsService {
     styleId: string,
     dto: CreateStyleSampleRoundDto,
     userId?: string,
+    actor?: AuditActor,
   ): Promise<StyleSampleRoundItem> {
     const status = dto.status || SampleStatus.WORKING;
     const isReviewed = status !== SampleStatus.WORKING;
@@ -232,7 +245,22 @@ export class StyleSampleRoundsService {
         reviewedBy: isReviewed ? userId : null,
         reviewedAt: isReviewed ? new Date() : null,
       });
-      return roundRepo.save(round);
+      const savedRound = await roundRepo.save(round);
+
+      if (actor) {
+        await this.auditService.recordEntityChange(manager, {
+          aggregateType: AGGREGATE_TYPE,
+          aggregateId: savedRound.id,
+          parentId: styleId,
+          actorId: actor.id,
+          actorRole: actor.roleCode,
+          targetLabel: `Lần may mẫu #${savedRound.roundNo}`,
+          eventType: AuditEventType.CREATED,
+          changes: diffEntity(null, savedRound, TRACKED_FIELDS),
+        });
+      }
+
+      return savedRound;
     });
 
     return this.toItem(saved, []);
@@ -243,9 +271,11 @@ export class StyleSampleRoundsService {
     roundId: string,
     dto: UpdateStyleSampleRoundDto,
     userId?: string,
+    actor?: AuditActor,
   ): Promise<StyleSampleRoundItem> {
     await this.assertStyleExists(styleId);
     const round = await this.findRoundOrThrow(styleId, roundId);
+    const before = { ...round };
 
     if (dto.sampleDate !== undefined) {
       round.sampleDate = new Date(dto.sampleDate);
@@ -264,7 +294,26 @@ export class StyleSampleRoundsService {
       }
     }
 
-    const saved = await this.roundRepo.save(round);
+    const saved = await this.dataSource.transaction(async (manager) => {
+      const savedRound = await manager
+        .getRepository(StyleSampleRound)
+        .save(round);
+      if (actor) {
+        const changes = diffEntity(before, savedRound, TRACKED_FIELDS);
+        await this.auditService.recordEntityChange(manager, {
+          aggregateType: AGGREGATE_TYPE,
+          aggregateId: savedRound.id,
+          parentId: styleId,
+          actorId: actor.id,
+          actorRole: actor.roleCode,
+          targetLabel: `Lần may mẫu #${savedRound.roundNo}`,
+          eventType: AuditEventType.UPDATED,
+          changes,
+        });
+      }
+      return savedRound;
+    });
+
     const imagesMap = await this.mapImagesByRound([roundId]);
     return this.toItem(saved, imagesMap.get(roundId) || []);
   }
@@ -298,9 +347,10 @@ export class StyleSampleRoundsService {
     roundId: string,
     userId: string | undefined,
     dto: ConfirmStyleSampleImageDto,
+    actor?: AuditActor,
   ): Promise<StyleSampleImageItem> {
     await this.assertStyleExists(styleId);
-    await this.findRoundOrThrow(styleId, roundId);
+    const round = await this.findRoundOrThrow(styleId, roundId);
 
     if (
       !isObjectKeyInScope(
@@ -372,6 +422,21 @@ export class StyleSampleRoundsService {
           }),
         );
 
+        if (actor) {
+          await this.auditService.recordEntityChange(manager, {
+            aggregateType: AGGREGATE_TYPE,
+            aggregateId: roundId,
+            parentId: styleId,
+            actorId: actor.id,
+            actorRole: actor.roleCode,
+            targetLabel: `Lần may mẫu #${round.roundNo}`,
+            eventType: AuditEventType.CREATED,
+            changes: [
+              { fieldName: 'images', oldValue: null, newValue: dto.fileName },
+            ],
+          });
+        }
+
         const url = await this.storage.getPresignedGetUrl(
           dto.objectKey,
           PRESIGN_GET_EXPIRY_SECONDS,
@@ -430,9 +495,10 @@ export class StyleSampleRoundsService {
     styleId: string,
     roundId: string,
     imageId: string,
+    actor?: AuditActor,
   ): Promise<void> {
     await this.assertStyleExists(styleId);
-    await this.findRoundOrThrow(styleId, roundId);
+    const round = await this.findRoundOrThrow(styleId, roundId);
 
     const image = await this.imageRepo.findOne({
       where: { id: imageId, sampleRoundId: roundId },
@@ -440,6 +506,23 @@ export class StyleSampleRoundsService {
     if (!image) {
       throw new NotFoundException(`Không tìm thấy ảnh #${imageId}`);
     }
-    await this.imageRepo.remove(image);
+
+    await this.dataSource.transaction(async (manager) => {
+      await manager.getRepository(StyleSampleImage).remove(image);
+      if (actor) {
+        await this.auditService.recordEntityChange(manager, {
+          aggregateType: AGGREGATE_TYPE,
+          aggregateId: roundId,
+          parentId: styleId,
+          actorId: actor.id,
+          actorRole: actor.roleCode,
+          targetLabel: `Lần may mẫu #${round.roundNo}`,
+          eventType: AuditEventType.DELETED,
+          changes: [
+            { fieldName: 'images', oldValue: 'ảnh đính kèm', newValue: null },
+          ],
+        });
+      }
+    });
   }
 }

@@ -56,7 +56,10 @@ export class StyleSampleRoundsController {
     @Req() req?: any,
   ): Promise<StyleSampleRoundItem> {
     const userId = req?.user?.id || req?.user?.sub;
-    return this.service.create(styleId, dto, userId);
+    const actor = userId
+      ? { id: userId, roleCode: req?.user?.roleCode }
+      : undefined;
+    return this.service.create(styleId, dto, userId, actor);
   }
 
   @Patch(':roundId')
@@ -69,7 +72,10 @@ export class StyleSampleRoundsController {
     @Req() req?: any,
   ): Promise<StyleSampleRoundItem> {
     const userId = req?.user?.id || req?.user?.sub;
-    return this.service.update(styleId, roundId, dto, userId);
+    const actor = userId
+      ? { id: userId, roleCode: req?.user?.roleCode }
+      : undefined;
+    return this.service.update(styleId, roundId, dto, userId, actor);
   }
 
   @Post(':roundId/images/presign')
@@ -94,7 +100,10 @@ export class StyleSampleRoundsController {
     @Req() req?: any,
   ): Promise<StyleSampleImageItem> {
     const userId = req?.user?.id || req?.user?.sub;
-    return this.service.confirmImage(styleId, roundId, userId, dto);
+    const actor = userId
+      ? { id: userId, roleCode: req?.user?.roleCode }
+      : undefined;
+    return this.service.confirmImage(styleId, roundId, userId, dto, actor);
   }
 
   @Get(':roundId/images/:imageId/download-url')
@@ -115,7 +124,12 @@ export class StyleSampleRoundsController {
     @Param('styleId', ParseUUIDPipe) styleId: string,
     @Param('roundId', ParseUUIDPipe) roundId: string,
     @Param('imageId', ParseUUIDPipe) imageId: string,
+    @Req() req?: any,
   ): Promise<void> {
-    return this.service.removeImage(styleId, roundId, imageId);
+    const userId = req?.user?.id || req?.user?.sub;
+    const actor = userId
+      ? { id: userId, roleCode: req?.user?.roleCode }
+      : undefined;
+    return this.service.removeImage(styleId, roundId, imageId, actor);
   }
 }

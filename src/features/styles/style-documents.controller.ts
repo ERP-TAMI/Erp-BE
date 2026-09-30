@@ -55,7 +55,10 @@ export class StyleDocumentsController {
     @Req() req?: any,
   ): Promise<StyleDocumentListItem> {
     const userId = req?.user?.id || req?.user?.sub;
-    return this.service.confirm(styleId, userId, dto);
+    const actor = userId
+      ? { id: userId, roleCode: req?.user?.roleCode }
+      : undefined;
+    return this.service.confirm(styleId, userId, dto, actor);
   }
 
   @Get()
@@ -83,7 +86,12 @@ export class StyleDocumentsController {
   async remove(
     @Param('styleId', ParseUUIDPipe) styleId: string,
     @Param('documentId', ParseUUIDPipe) documentId: string,
+    @Req() req?: any,
   ): Promise<void> {
-    return this.service.remove(styleId, documentId);
+    const userId = req?.user?.id || req?.user?.sub;
+    const actor = userId
+      ? { id: userId, roleCode: req?.user?.roleCode }
+      : undefined;
+    return this.service.remove(styleId, documentId, actor);
   }
 }
