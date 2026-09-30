@@ -258,6 +258,56 @@ describe('AuditService', () => {
       });
     });
 
+    it('translates a known enum value to its Vietnamese label, but leaves unknown values as-is', async () => {
+      const { service, auditEvents, auditEventChanges } = buildAuditService();
+      (auditEvents.createQueryBuilder as jest.Mock).mockReturnValue(
+        buildMockQueryBuilder(
+          [
+            {
+              id: 'event-1',
+              occurredAt: new Date('2026-01-01T00:00:00.000Z'),
+              eventType: AuditEventType.STATUS_CHANGED,
+              actorUserId: 'actor-1',
+              actorRole: 'RD',
+              targetLabel: 'Lần may mẫu #1',
+              reason: 'Đổi trạng thái: Trạng thái',
+            },
+          ],
+          1,
+        ),
+      );
+      (auditEventChanges.find as jest.Mock).mockResolvedValue([
+        {
+          auditEventId: 'event-1',
+          fieldName: 'status',
+          oldValue: 'working',
+          newValue: 'approved',
+        },
+        {
+          auditEventId: 'event-1',
+          fieldName: 'feedback',
+          oldValue: null,
+          newValue: 'Đạt yêu cầu',
+        },
+      ]);
+
+      const result = await service.findEntityHistory(
+        { aggregateType: 'StyleSampleRound', aggregateId: 'round-1' },
+        [],
+      );
+
+      expect(result.items[0].changes[0]).toMatchObject({
+        fieldName: 'status',
+        oldValue: 'Đang may',
+        newValue: 'Đã duyệt',
+      });
+      // "feedback" không có bảng ánh xạ giá trị — giữ nguyên chuỗi gốc.
+      expect(result.items[0].changes[1]).toMatchObject({
+        fieldName: 'feedback',
+        newValue: 'Đạt yêu cầu',
+      });
+    });
+
     it('returns an empty page when there are no events', async () => {
       const { service } = buildAuditService();
       const result = await service.findEntityHistory(

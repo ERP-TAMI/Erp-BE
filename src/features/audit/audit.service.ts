@@ -9,11 +9,23 @@ import { EntityFieldChange } from './entity-diff.util';
 import {
   canViewSensitiveFields,
   getFieldLabel,
+  getFieldValueLabel,
   isSensitiveField,
 } from './entity-audit.config';
 import { User } from '../auth/entities/User.entity';
 
 const SENSITIVE_MASK = '***';
+
+/** Chỉ dịch khi giá trị là string (enum/mã nội bộ) — number/boolean/object
+ * (VD sizeData, isGroup) giữ nguyên, FE tự format theo kiểu dữ liệu. */
+function translateFieldValue(
+  aggregateType: string,
+  fieldName: string,
+  value: unknown,
+): unknown {
+  if (typeof value !== 'string') return value;
+  return getFieldValueLabel(aggregateType, fieldName, value);
+}
 
 const REASON_REQUIRED_EVENT_TYPES = new Set<AuditEventType>([
   AuditEventType.UPDATED,
@@ -359,8 +371,20 @@ export class AuditService {
         return {
           fieldName: change.fieldName,
           fieldLabel: getFieldLabel(query.aggregateType, change.fieldName),
-          oldValue: masked ? SENSITIVE_MASK : change.oldValue,
-          newValue: masked ? SENSITIVE_MASK : change.newValue,
+          oldValue: masked
+            ? SENSITIVE_MASK
+            : translateFieldValue(
+                query.aggregateType,
+                change.fieldName,
+                change.oldValue,
+              ),
+          newValue: masked
+            ? SENSITIVE_MASK
+            : translateFieldValue(
+                query.aggregateType,
+                change.fieldName,
+                change.newValue,
+              ),
         };
       }),
     }));
