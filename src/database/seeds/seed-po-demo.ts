@@ -180,24 +180,6 @@ async function upsertSize(
   );
 }
 
-async function ensureCreatedHistory(
-  manager: EntityManager,
-  productId: string,
-): Promise<void> {
-  const existing = await manager.query(
-    `SELECT id FROM purchase_order_product_status_history WHERE product_id = $1 LIMIT 1`,
-    [productId],
-  );
-  if (existing.length > 0) return;
-
-  await manager.query(
-    `INSERT INTO purchase_order_product_status_history
-       (product_id, new_status, action, reason)
-     VALUES ($1, 'in_review'::product_status, 'created', 'Seed demo data')`,
-    [productId],
-  );
-}
-
 export async function seedPoDemo(manager: EntityManager): Promise<void> {
   const poId = await upsertPo(manager, PO_DEMO_SEED);
 
@@ -212,8 +194,6 @@ export async function seedPoDemo(manager: EntityManager): Promise<void> {
         await upsertSize(manager, colorId, colorSeed.sizes[sIdx], sIdx);
       }
     }
-
-    await ensureCreatedHistory(manager, productId);
   }
 }
 

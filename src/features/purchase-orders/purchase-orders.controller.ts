@@ -53,9 +53,14 @@ import {
 } from './dto';
 import { PurchaseOrder } from './entities/PurchaseOrder.entity';
 import { PurchaseOrderProduct } from './entities/PurchaseOrderProduct.entity';
-import { PurchaseOrderStatusHistory } from './entities/PurchaseOrderStatusHistory.entity';
 import { PurchaseOrderWriteAccessGuard } from './guards/purchase-order-write-access.guard';
 import { PurchaseOrderFullAccessGuard } from '../../common/guards/purchase-order-full-access.guard';
+import { AuditActor } from '../audit/audit-actor.type';
+
+function auditActorFrom(req: any): AuditActor | undefined {
+  const id = req?.user?.id || req?.user?.sub;
+  return id ? { id, roleCode: req?.user?.roleCode } : undefined;
+}
 
 @ApiTags('purchase-orders')
 @ApiBearerAuth()
@@ -80,7 +85,7 @@ export class PurchaseOrdersController {
     @Req() req?: any,
   ): Promise<PurchaseOrderDetailResponse> {
     const userId = req?.user?.id || req?.user?.sub;
-    return this.service.create(dto, userId);
+    return this.service.create(dto, userId, auditActorFrom(req));
   }
 
   @Get()
@@ -105,7 +110,7 @@ export class PurchaseOrdersController {
   @ApiOperation({
     summary: 'Lấy thông tin chung của đơn hàng PO theo ID',
     description:
-      'Chỉ trả thông tin chung kèm productsCount/documentsCount. Danh sách sản phẩm, tài liệu và lịch sử lấy qua :id/products, :id/documents, :id/history.',
+      'Chỉ trả thông tin chung kèm productsCount/documentsCount. Danh sách sản phẩm và tài liệu lấy qua :id/products, :id/documents; lịch sử lấy qua GET /audit/history.',
   })
   @ApiResponse({ status: 200, description: 'Thông tin chung của đơn hàng PO' })
   @ApiResponse({ status: 404, description: 'Không tìm thấy PO' })
@@ -140,7 +145,7 @@ export class PurchaseOrdersController {
     @Req() req?: any,
   ): Promise<PurchaseOrderDetailResponse> {
     const userId = req?.user?.id || req?.user?.sub;
-    return this.service.update(id, dto, userId);
+    return this.service.update(id, dto, userId, auditActorFrom(req));
   }
 
   @Delete(':id')
@@ -153,8 +158,11 @@ export class PurchaseOrdersController {
     description: 'PO không ở trạng thái Nháp, không thể xóa',
   })
   @ApiResponse({ status: 404, description: 'Không tìm thấy PO' })
-  async remove(@Param('id', ParseUUIDPipe) id: string): Promise<void> {
-    return this.service.remove(id);
+  async remove(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() req?: any,
+  ): Promise<void> {
+    return this.service.remove(id, auditActorFrom(req));
   }
 
   @Patch(':id/status')
@@ -171,7 +179,7 @@ export class PurchaseOrdersController {
     @Req() req?: any,
   ): Promise<PurchaseOrderDetailResponse> {
     const userId = req?.user?.id || req?.user?.sub;
-    return this.service.updateStatus(id, dto, userId);
+    return this.service.updateStatus(id, dto, userId, auditActorFrom(req));
   }
 
   // ─── PO Products / Lines Endpoints ──────────────────────────────────────────
@@ -204,7 +212,7 @@ export class PurchaseOrdersController {
     @Req() req?: any,
   ): Promise<PurchaseOrderProduct> {
     const userId = req?.user?.id || req?.user?.sub;
-    return this.service.addProduct(id, dto, userId);
+    return this.service.addProduct(id, dto, userId, auditActorFrom(req));
   }
 
   @Get(':id/products/:productId')
@@ -231,7 +239,13 @@ export class PurchaseOrdersController {
     @Req() req?: any,
   ): Promise<PurchaseOrderProduct> {
     const userId = req?.user?.id || req?.user?.sub;
-    return this.service.updateProduct(id, productId, dto, userId);
+    return this.service.updateProduct(
+      id,
+      productId,
+      dto,
+      userId,
+      auditActorFrom(req),
+    );
   }
 
   @Delete(':id/products/:productId')
@@ -244,8 +258,9 @@ export class PurchaseOrdersController {
   async removeProduct(
     @Param('id', ParseUUIDPipe) id: string,
     @Param('productId', ParseUUIDPipe) productId: string,
+    @Req() req?: any,
   ): Promise<void> {
-    return this.service.removeProduct(id, productId);
+    return this.service.removeProduct(id, productId, auditActorFrom(req));
   }
 
   @Patch(':id/products/:productId/status')
@@ -265,6 +280,7 @@ export class PurchaseOrdersController {
       body.status,
       body.reason,
       userId,
+      auditActorFrom(req),
     );
   }
 
@@ -286,8 +302,11 @@ export class PurchaseOrdersController {
     @Body() dto: SaveProductOperationStepsDto,
     @Req() req?: any,
   ) {
-    const userId = req?.user?.id || req?.user?.sub;
-    return this.service.saveProductOperationSteps(productId, dto, userId);
+    return this.service.saveProductOperationSteps(
+      productId,
+      dto,
+      auditActorFrom(req),
+    );
   }
 
   @Get(':id/products/:productId/sample-rounds')
@@ -307,7 +326,12 @@ export class PurchaseOrdersController {
     @Req() req?: any,
   ) {
     const userId = req?.user?.id || req?.user?.sub;
-    return this.service.createProductSampleRound(productId, dto, userId);
+    return this.service.createProductSampleRound(
+      productId,
+      dto,
+      userId,
+      auditActorFrom(req),
+    );
   }
 
   @Patch(':id/products/:productId/sample-rounds/:roundId')
@@ -327,6 +351,7 @@ export class PurchaseOrdersController {
       roundId,
       dto,
       userId,
+      auditActorFrom(req),
     );
   }
 
@@ -367,6 +392,7 @@ export class PurchaseOrdersController {
       roundId,
       userId,
       dto,
+      auditActorFrom(req),
     );
   }
 
@@ -398,12 +424,14 @@ export class PurchaseOrdersController {
     @Param('productId', ParseUUIDPipe) productId: string,
     @Param('roundId', ParseUUIDPipe) roundId: string,
     @Param('imageId', ParseUUIDPipe) imageId: string,
+    @Req() req?: any,
   ) {
     return this.service.removeProductSampleImage(
       poId,
       productId,
       roundId,
       imageId,
+      auditActorFrom(req),
     );
   }
 
@@ -426,7 +454,12 @@ export class PurchaseOrdersController {
     @Req() req?: any,
   ) {
     const userId = req?.user?.id || req?.user?.sub;
-    return this.service.updateProductProductionDoc(productId, dto, userId);
+    return this.service.updateProductProductionDoc(
+      productId,
+      dto,
+      userId,
+      auditActorFrom(req),
+    );
   }
 
   @Patch(':id/products/:productId/documents/:documentId/purpose')
@@ -439,12 +472,14 @@ export class PurchaseOrdersController {
     @Param('productId', ParseUUIDPipe) productId: string,
     @Param('documentId', ParseUUIDPipe) documentId: string,
     @Body('purpose') purpose: string,
+    @Req() req?: any,
   ) {
     return this.service.updateProductDocumentPurpose(
       id,
       productId,
       documentId,
       purpose as DocumentPurpose,
+      auditActorFrom(req),
     );
   }
 
@@ -456,8 +491,14 @@ export class PurchaseOrdersController {
     @Param('id', ParseUUIDPipe) id: string,
     @Param('productId', ParseUUIDPipe) productId: string,
     @Param('documentId', ParseUUIDPipe) documentId: string,
+    @Req() req?: any,
   ) {
-    return this.service.unlinkProductDocument(id, productId, documentId);
+    return this.service.unlinkProductDocument(
+      id,
+      productId,
+      documentId,
+      auditActorFrom(req),
+    );
   }
 
   @Post(':id/products/:productId/documents/presign')
@@ -502,7 +543,13 @@ export class PurchaseOrdersController {
     @Req() req?: any,
   ) {
     const userId = req?.user?.id || req?.user?.sub;
-    return this.service.confirmProductDocument(id, productId, userId, dto);
+    return this.service.confirmProductDocument(
+      id,
+      productId,
+      userId,
+      dto,
+      auditActorFrom(req),
+    );
   }
 
   @Post(':id/products/:productId/documents/:documentId/versions/confirm')
@@ -534,6 +581,7 @@ export class PurchaseOrdersController {
       documentId,
       userId,
       dto,
+      auditActorFrom(req),
     );
   }
 
@@ -562,19 +610,11 @@ export class PurchaseOrdersController {
       documentId,
       userId,
       targetPurpose,
+      auditActorFrom(req),
     );
   }
 
-  // ─── Documents & History Endpoints ──────────────────────────────────────────
-
-  @Get(':id/history')
-  @ApiOperation({ summary: 'Xem nhật ký thay đổi trạng thái PO' })
-  @ApiResponse({ status: 200, description: 'Lịch sử thay đổi trạng thái PO' })
-  async findHistory(
-    @Param('id', ParseUUIDPipe) id: string,
-  ): Promise<PurchaseOrderStatusHistory[]> {
-    return this.service.findHistory(id);
-  }
+  // ─── Documents Endpoints ────────────────────────────────────────────────────
 
   @Post(':id/documents')
   @UseGuards(PurchaseOrderWriteAccessGuard)
@@ -587,7 +627,7 @@ export class PurchaseOrdersController {
     @Req() req?: any,
   ): Promise<PurchaseOrderDetailResponse> {
     const userId = req?.user?.id || req?.user?.sub;
-    return this.service.linkDocument(id, dto, userId);
+    return this.service.linkDocument(id, dto, userId, auditActorFrom(req));
   }
 
   @Patch(':id/documents/:documentId')
@@ -611,6 +651,7 @@ export class PurchaseOrdersController {
       documentId,
       dto.purpose,
       userId,
+      auditActorFrom(req),
     );
   }
 
@@ -622,8 +663,9 @@ export class PurchaseOrdersController {
   async unlinkDocument(
     @Param('id', ParseUUIDPipe) id: string,
     @Param('documentId', ParseUUIDPipe) documentId: string,
+    @Req() req?: any,
   ): Promise<void> {
-    return this.service.unlinkDocument(id, documentId);
+    return this.service.unlinkDocument(id, documentId, auditActorFrom(req));
   }
 
   @Post(':id/documents/presign')
@@ -658,7 +700,7 @@ export class PurchaseOrdersController {
     @Req() req?: any,
   ) {
     const userId = req?.user?.id || req?.user?.sub;
-    return this.service.confirmDocument(id, userId, dto);
+    return this.service.confirmDocument(id, userId, dto, auditActorFrom(req));
   }
 
   @Get(':id/documents/:documentId/preview')

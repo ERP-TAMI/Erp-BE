@@ -7,6 +7,7 @@ import { Document } from '../documents/entities/Document.entity';
 import { DocumentVersion } from '../documents/entities/DocumentVersion.entity';
 import { Customer } from '../master-data/entities/Customer.entity';
 import { StorageModule } from '../storage/storage.module';
+import { AuditModule } from '../audit/audit.module';
 import { PurchaseOrdersController } from './purchase-orders.controller';
 import { PurchaseOrdersService } from './purchase-orders.service';
 import { PurchaseOrderWriteAccessGuard } from './guards/purchase-order-write-access.guard';
@@ -23,6 +24,7 @@ import { PurchaseOrderFullAccessGuard } from '../../common/guards/purchase-order
       Customer,
     ]),
     StorageModule,
+    AuditModule,
   ],
   controllers: [PurchaseOrdersController],
   providers: [

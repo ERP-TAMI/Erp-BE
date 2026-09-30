@@ -15,6 +15,7 @@ import {
   getFieldLabel,
   getFieldValueLabel,
   getHistoryViewPermission,
+  isHistoryViewSupported,
   isHiddenField,
   isSensitiveField,
   splitBulkFieldName,
@@ -445,11 +446,14 @@ export class AuditService {
         'Cần truyền aggregateId (1 bản ghi) hoặc parentId (mọi bản ghi con của 1 cha).',
       );
     }
-    const requiredPermission = getHistoryViewPermission(query.aggregateType);
-    if (!requiredPermission) {
+    if (!isHistoryViewSupported(query.aggregateType)) {
       throw new BadRequestException('Loại dữ liệu không hỗ trợ xem lịch sử.');
     }
-    if (!requesterPermissions.includes(requiredPermission)) {
+    const requiredPermission = getHistoryViewPermission(query.aggregateType);
+    if (
+      requiredPermission &&
+      !requesterPermissions.includes(requiredPermission)
+    ) {
       throw new ForbiddenException(
         'Bạn không có quyền xem lịch sử dữ liệu này.',
       );
@@ -594,9 +598,17 @@ export class AuditService {
     eventType: AuditEventType,
     changes: EntityFieldChange[],
   ): string {
-    const labels = changes.map((change) =>
-      getFieldLabel(aggregateType, change.fieldName),
-    );
+    const labels = [
+      ...new Set(
+        changes.map((change) =>
+          getFieldLabel(
+            aggregateType,
+            splitBulkFieldName(change.fieldName)?.realFieldName ??
+              change.fieldName,
+          ),
+        ),
+      ),
+    ];
     if (eventType === AuditEventType.DELETED) return 'Đã xoá bản ghi';
     if (eventType === AuditEventType.STATUS_CHANGED) {
       return labels.length

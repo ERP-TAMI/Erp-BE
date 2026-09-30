@@ -26,7 +26,6 @@ import {
   isDuplicateStorageKeyError,
 } from '../storage/storage-key.util';
 import { PurchaseOrder } from './entities/PurchaseOrder.entity';
-import { PurchaseOrderStatusHistory } from './entities/PurchaseOrderStatusHistory.entity';
 import { PurchaseOrderDocument } from './entities/PurchaseOrderDocument.entity';
 import { PurchaseOrderProduct } from './entities/PurchaseOrderProduct.entity';
 import {
@@ -34,7 +33,6 @@ import {
   PurchaseOrderProductSampleRound,
   PurchaseOrderProductSampleImage,
   PurchaseOrderProductDocument,
-  PurchaseOrderProductStatusHistory,
   PurchaseOrderProductColor,
   PurchaseOrderProductColorSize,
 } from './entities';
@@ -55,6 +53,7 @@ import { Document } from '../documents/entities/Document.entity';
 import { DocumentVersion } from '../documents/entities/DocumentVersion.entity';
 import { Customer } from '../master-data/entities/Customer.entity';
 import {
+  AuditEventType,
   DocumentPurpose,
   PoStatus,
   ProductStatus,
@@ -81,6 +80,9 @@ import {
   PresignPoDocumentDto,
   ConfirmPoDocumentDto,
 } from './dto';
+import { AuditService, EntityAuditInput } from '../audit/audit.service';
+import { AuditActor } from '../audit/audit-actor.type';
+import { diffEntity, EntityFieldChange } from '../audit/entity-diff.util';
 
 export const ALLOWED_PO_MIME_BY_EXTENSION: Record<string, string[]> = {
   '.pdf': ['application/pdf'],
@@ -220,14 +222,124 @@ function toYmdString(val: string | Date): string {
   return String(val).slice(0, 10);
 }
 
+const AUDIT_TYPE = {
+  PO: 'PurchaseOrder',
+  PO_DOCUMENT: 'PurchaseOrderDocument',
+  PRODUCT: 'PurchaseOrderProduct',
+  PRODUCT_STEPS: 'PurchaseOrderProductOperationStep',
+  PRODUCT_SAMPLE_ROUND: 'PurchaseOrderProductSampleRound',
+  PRODUCT_PRODUCTION_DOC: 'PurchaseOrderProductionDocument',
+  PRODUCT_DOCUMENT: 'PurchaseOrderProductDocument',
+} as const;
+
+const PO_AUDIT_FIELDS = [
+  'poCode',
+  'customerPoCode',
+  'customerNameSnapshot',
+  'receivedDate',
+  'deadline',
+  'note',
+  'status',
+  'cancellationReason',
+];
+const PRODUCT_AUDIT_FIELDS = [
+  'productCode',
+  'productName',
+  'category',
+  'materialNote',
+  'deadline',
+  'as3bCmBaseDays',
+  'structureImageVersionId',
+  'status',
+];
+const SAMPLE_ROUND_AUDIT_FIELDS = ['sampleDate', 'feedback', 'status'];
+const STEP_AUDIT_FIELDS = [
+  'stepName',
+  'description',
+  'timePerPiece',
+  'ssv',
+  'targetTotal',
+  'note',
+  'orderIndex',
+  'isGroup',
+  'parentStepId',
+];
+const PRODUCTION_DOC_AUDIT_FIELDS = [
+  'name',
+  'description',
+  'status',
+  'section1Description',
+  'section1ImageUrl',
+  'section2Accessories',
+  'section3Notes',
+  'section4CustomerFeedback',
+  'sizeData',
+];
+const AUDIT_DATE_FIELDS = new Set(['receivedDate', 'deadline', 'sampleDate']);
+const AUDIT_NUMERIC_FIELDS = new Set([
+  'timePerPiece',
+  'ssv',
+  'targetTotal',
+  'orderIndex',
+  'as3bCmBaseDays',
+]);
+
+type AuditSnapshot = Record<string, unknown>;
+
+/** Cột date/numeric đọc từ DB về là chuỗi, còn giá trị vừa gán là Date/number —
+ * so thẳng thì lần lưu nào cũng "đổi". Chuẩn hoá trước khi diff. */
+function auditSnapshot(
+  entity: object | null | undefined,
+  fields: readonly string[],
+): AuditSnapshot | null {
+  if (!entity) return null;
+  const source = entity as Record<string, unknown>;
+  const snapshot: AuditSnapshot = {};
+  for (const field of fields) {
+    const value = source[field];
+    if (value === null || value === undefined || value === '') {
+      snapshot[field] = null;
+    } else if (AUDIT_DATE_FIELDS.has(field)) {
+      snapshot[field] = toYmdString(value as string | Date);
+    } else if (AUDIT_NUMERIC_FIELDS.has(field)) {
+      snapshot[field] = Number(value);
+    } else {
+      snapshot[field] = value;
+    }
+  }
+  return snapshot;
+}
+
+function auditDiff(
+  before: object | null,
+  after: object,
+  fields: readonly string[],
+): EntityFieldChange[] {
+  return diffEntity(
+    auditSnapshot(before, fields),
+    auditSnapshot(after, fields) as AuditSnapshot,
+    fields,
+  );
+}
+
+function productAuditLabel(product: PurchaseOrderProduct): string {
+  return `${product.productCode} - ${product.productName}`;
+}
+
+function formatColorSizes(
+  sizes: Array<{ sizeLabel: string; quantity: number | string }>,
+): string {
+  return sizes.length === 0
+    ? '(không có size)'
+    : sizes.map((s) => `${s.sizeLabel}: ${Number(s.quantity)}`).join(' · ');
+}
+
 @Injectable()
 export class PurchaseOrdersService {
   constructor(
     private readonly dataSource: DataSource,
     @InjectRepository(PurchaseOrder)
     private readonly poRepo: Repository<PurchaseOrder>,
-    @InjectRepository(PurchaseOrderStatusHistory)
-    private readonly historyRepo: Repository<PurchaseOrderStatusHistory>,
     @InjectRepository(PurchaseOrderDocument)
     private readonly poDocRepo: Repository<PurchaseOrderDocument>,
     @InjectRepository(PurchaseOrderProduct)
@@ -240,8 +352,6 @@ export class PurchaseOrdersService {
     private readonly productSampleImageRepo: Repository<PurchaseOrderProductSampleImage>,
     @InjectRepository(PurchaseOrderProductDocument)
     private readonly productDocRepo: Repository<PurchaseOrderProductDocument>,
-    @InjectRepository(PurchaseOrderProductStatusHistory)
-    private readonly productHistoryRepo: Repository<PurchaseOrderProductStatusHistory>,
     @InjectRepository(PurchaseOrderProductColor)
     private readonly productColorRepo: Repository<PurchaseOrderProductColor>,
     @InjectRepository(PurchaseOrderProductColorSize)
@@ -272,11 +382,59 @@ export class PurchaseOrdersService {
     private readonly customerRepo: Repository<Customer>,
     @Inject(STORAGE_SERVICE)
     private readonly storage: StorageService,
+    private readonly auditService: AuditService,
   ) {}
+
+  private async recordAudit(
+    manager: EntityManager,
+    actor: AuditActor | undefined,
+    input: Omit<EntityAuditInput, 'actorId' | 'actorRole'>,
+  ): Promise<void> {
+    if (!actor) return;
+    await this.auditService.recordEntityChange(manager, {
+      ...input,
+      actorId: actor.id,
+      actorRole: actor.roleCode,
+    });
+  }
+
+  /** Giống normalizeImageRef bên Mẫu Fit: không để link S3 có chữ ký (chứa
+   * access key) lọt vào lịch sử — chỉ áp cho giá trị ghi audit. */
+  private toAuditImageRef(value: unknown): unknown {
+    if (typeof value !== 'string' || !/^https?:\/\//.test(value)) return value;
+    if (!this.storage.isTrustedObjectHost(value)) return value;
+    try {
+      return decodeURIComponent(new URL(value).pathname.replace(/^\/+/, ''));
+    } catch {
+      return value;
+    }
+  }
+
+  private productionDocAuditSnapshot(
+    doc: ProductionDocument | null,
+  ): AuditSnapshot | null {
+    const snapshot = auditSnapshot(doc, PRODUCTION_DOC_AUDIT_FIELDS);
+    if (!snapshot) return null;
+    snapshot.section1ImageUrl = this.toAuditImageRef(snapshot.section1ImageUrl);
+    if (Array.isArray(snapshot.sizeData)) {
+      snapshot.sizeData = (snapshot.sizeData as unknown[]).map((item) =>
+        item && typeof item === 'object' && 'imageUrl' in item
+          ? {
+              ...item,
+              imageUrl: this.toAuditImageRef(
+                (item as { imageUrl: unknown }).imageUrl,
+              ),
+            }
+          : item,
+      );
+    }
+    return snapshot;
+  }
 
   async create(
     dto: CreatePurchaseOrderDto,
     userId?: string,
+    actor?: AuditActor,
   ): Promise<PurchaseOrderDetailResponse> {
     const existing = await this.poRepo.findOne({
       where: { poCode: dto.poCode },
@@ -338,20 +496,17 @@ export class PurchaseOrdersService {
       updatedAt: now,
     });
 
-    const savedPo = (await this.poRepo.save(
-      poEntity,
-    )) as unknown as PurchaseOrder;
-
-    const historyRecord = this.historyRepo.create({
-      purchaseOrderId: savedPo.id,
-      oldStatus: null,
-      newStatus: PoStatus.DRAFT,
-      action: 'Khởi tạo PO',
-      reason: 'Tạo mới đơn hàng PO',
-      changedBy: userId || null,
-      changedAt: now,
+    const savedPo = await this.dataSource.transaction(async (manager) => {
+      const saved = await manager.save(PurchaseOrder, poEntity);
+      await this.recordAudit(manager, actor, {
+        aggregateType: AUDIT_TYPE.PO,
+        aggregateId: saved.id,
+        targetLabel: saved.poCode,
+        eventType: AuditEventType.CREATED,
+        changes: auditDiff(null, saved, PO_AUDIT_FIELDS),
+      });
+      return saved;
     });
-    await this.historyRepo.save(historyRecord);
 
     return this.findOne(savedPo.id);
   }
@@ -639,6 +794,7 @@ export class PurchaseOrdersService {
     id: string,
     dto: UpdatePurchaseOrderDto,
     userId?: string,
+    actor?: AuditActor,
   ): Promise<PurchaseOrderDetailResponse> {
     const po = await this.poRepo.findOne({ where: { id } });
     if (!po) {
@@ -646,6 +802,7 @@ export class PurchaseOrdersService {
     }
 
     this.checkPoNotLocked(po, 'chỉnh sửa thông tin');
+    const before = { ...po };
 
     if (dto.deadline !== undefined && !dto.deadline) {
       throw new BadRequestException(
@@ -700,7 +857,16 @@ export class PurchaseOrdersService {
     po.updatedBy = userId || null;
     po.updatedAt = new Date();
 
-    await this.poRepo.save(po);
+    await this.dataSource.transaction(async (manager) => {
+      await manager.save(PurchaseOrder, po);
+      await this.recordAudit(manager, actor, {
+        aggregateType: AUDIT_TYPE.PO,
+        aggregateId: po.id,
+        targetLabel: po.poCode,
+        eventType: AuditEventType.UPDATED,
+        changes: auditDiff(before, po, PO_AUDIT_FIELDS),
+      });
+    });
 
     return this.findOne(id);
   }
@@ -709,11 +875,13 @@ export class PurchaseOrdersService {
     id: string,
     dto: UpdatePoStatusDto,
     userId?: string,
+    actor?: AuditActor,
   ): Promise<PurchaseOrderDetailResponse> {
     const po = await this.poRepo.findOne({ where: { id } });
     if (!po) {
       throw new NotFoundException(`Không tìm thấy đơn hàng PO với ID: ${id}`);
     }
+    const before = { ...po };
 
     const currentStatus = po.status;
     const newStatus = dto.status;
@@ -762,8 +930,6 @@ export class PurchaseOrdersService {
       po.cancellationReason = dto.reason?.trim() || null;
     }
 
-    await this.poRepo.save(po);
-
     const actionText =
       newStatus === PoStatus.PENDING_RD
         ? 'Chuyển sang Chờ R&D'
@@ -772,27 +938,35 @@ export class PurchaseOrdersService {
           : newStatus === PoStatus.CLOSED
             ? 'Khóa PO'
             : 'Hủy đơn hàng PO';
+    const reason = dto.reason?.trim();
 
-    const history = this.historyRepo.create({
-      purchaseOrderId: id,
-      oldStatus: currentStatus,
-      newStatus: newStatus,
-      action: actionText,
-      reason: dto.reason?.trim() || null,
-      changedBy: userId || null,
-      changedAt: now,
+    await this.dataSource.transaction(async (manager) => {
+      await manager.save(PurchaseOrder, po);
+      await this.recordAudit(manager, actor, {
+        aggregateType: AUDIT_TYPE.PO,
+        aggregateId: po.id,
+        targetLabel: po.poCode,
+        eventType: AuditEventType.STATUS_CHANGED,
+        reason: reason ? `${actionText}: ${reason}` : actionText,
+        changes: auditDiff(before, po, PO_AUDIT_FIELDS),
+      });
     });
-    await this.historyRepo.save(history);
 
     return this.findOne(id);
   }
 
   // ─── Documents Management ──────────────────────────────────────────────────
 
+  private async documentAuditLabel(documentId: string): Promise<string> {
+    const doc = await this.docRepo.findOne({ where: { id: documentId } });
+    return doc?.title || 'Tài liệu';
+  }
+
   async linkDocument(
     poId: string,
     dto: LinkPoDocumentDto,
     userId?: string,
+    actor?: AuditActor,
   ): Promise<PurchaseOrderDetailResponse> {
     const po = await this.poRepo.findOne({ where: { id: poId } });
     if (!po) {
@@ -804,21 +978,53 @@ export class PurchaseOrdersService {
     const existingLink = await this.poDocRepo.findOne({
       where: { purchaseOrderId: poId, documentId: dto.documentId },
     });
+    const targetLabel = await this.documentAuditLabel(dto.documentId);
 
-    if (existingLink) {
-      existingLink.purpose = dto.purpose;
-      if (userId) existingLink.linkedBy = userId;
-      await this.poDocRepo.save(existingLink);
-    } else {
-      const link = this.poDocRepo.create({
-        purchaseOrderId: poId,
-        documentId: dto.documentId,
-        purpose: dto.purpose,
-        linkedBy: userId || null,
-        linkedAt: new Date(),
-      });
-      await this.poDocRepo.save(link);
-    }
+    await this.dataSource.transaction(async (manager) => {
+      if (existingLink) {
+        const oldPurpose = existingLink.purpose;
+        existingLink.purpose = dto.purpose;
+        if (userId) existingLink.linkedBy = userId;
+        await manager.save(PurchaseOrderDocument, existingLink);
+        await this.recordAudit(manager, actor, {
+          aggregateType: AUDIT_TYPE.PO_DOCUMENT,
+          aggregateId: dto.documentId,
+          parentId: poId,
+          targetLabel,
+          eventType: AuditEventType.UPDATED,
+          changes:
+            oldPurpose === dto.purpose
+              ? []
+              : [
+                  {
+                    fieldName: 'purpose',
+                    oldValue: oldPurpose,
+                    newValue: dto.purpose,
+                  },
+                ],
+        });
+      } else {
+        const link = this.poDocRepo.create({
+          purchaseOrderId: poId,
+          documentId: dto.documentId,
+          purpose: dto.purpose,
+          linkedBy: userId || null,
+          linkedAt: new Date(),
+        });
+        await manager.save(PurchaseOrderDocument, link);
+        await this.recordAudit(manager, actor, {
+          aggregateType: AUDIT_TYPE.PO_DOCUMENT,
+          aggregateId: dto.documentId,
+          parentId: poId,
+          targetLabel,
+          eventType: AuditEventType.CREATED,
+          changes: [
+            { fieldName: 'fileName', oldValue: null, newValue: targetLabel },
+            { fieldName: 'purpose', oldValue: null, newValue: dto.purpose },
+          ],
+        });
+      }
+    });
 
     return this.findOne(poId);
   }
@@ -828,6 +1034,7 @@ export class PurchaseOrdersService {
     documentId: string,
     purpose: DocumentPurpose,
     userId?: string,
+    actor?: AuditActor,
   ): Promise<PurchaseOrderDetailResponse> {
     const po = await this.poRepo.findOne({ where: { id: poId } });
     if (!po) {
@@ -846,14 +1053,40 @@ export class PurchaseOrdersService {
       );
     }
 
+    const oldPurpose = existingLink.purpose;
     existingLink.purpose = purpose;
     if (userId) existingLink.linkedBy = userId;
-    await this.poDocRepo.save(existingLink);
+    const targetLabel = await this.documentAuditLabel(documentId);
+
+    await this.dataSource.transaction(async (manager) => {
+      await manager.save(PurchaseOrderDocument, existingLink);
+      await this.recordAudit(manager, actor, {
+        aggregateType: AUDIT_TYPE.PO_DOCUMENT,
+        aggregateId: documentId,
+        parentId: poId,
+        targetLabel,
+        eventType: AuditEventType.UPDATED,
+        changes:
+          oldPurpose === purpose
+            ? []
+            : [
+                {
+                  fieldName: 'purpose',
+                  oldValue: oldPurpose,
+                  newValue: purpose,
+                },
+              ],
+      });
+    });
 
     return this.findOne(poId);
   }
 
-  async unlinkDocument(poId: string, documentId: string): Promise<void> {
+  async unlinkDocument(
+    poId: string,
+    documentId: string,
+    actor?: AuditActor,
+  ): Promise<void> {
     const po = await this.poRepo.findOne({ where: { id: poId } });
     if (!po) {
       throw new NotFoundException(`Không tìm thấy đơn hàng PO với ID: ${poId}`);
@@ -863,17 +1096,20 @@ export class PurchaseOrdersService {
     const existingLink = await this.poDocRepo.findOne({
       where: { purchaseOrderId: poId, documentId },
     });
+    if (!existingLink) return;
 
-    if (existingLink) {
-      await this.poDocRepo.remove(existingLink);
-    }
-  }
-
-  async findHistory(poId: string): Promise<PurchaseOrderStatusHistory[]> {
-    await this.findOne(poId);
-    return this.historyRepo.find({
-      where: { purchaseOrderId: poId },
-      order: { changedAt: 'DESC' },
+    const targetLabel = await this.documentAuditLabel(documentId);
+    await this.dataSource.transaction(async (manager) => {
+      await manager.remove(PurchaseOrderDocument, existingLink);
+      await this.recordAudit(manager, actor, {
+        aggregateType: AUDIT_TYPE.PO_DOCUMENT,
+        aggregateId: documentId,
+        parentId: poId,
+        targetLabel,
+        eventType: AuditEventType.DELETED,
+        reason: `Gỡ tài liệu ${targetLabel}`,
+        changes: [],
+      });
     });
   }
 
@@ -1185,6 +1421,7 @@ export class PurchaseOrdersService {
     poId: string,
     userId: string | undefined,
     dto: ConfirmPoDocumentDto,
+    actor?: AuditActor,
   ): Promise<{
     documentId: string;
     documentCode: string | null;
@@ -1263,6 +1500,18 @@ export class PurchaseOrdersService {
             linkedAt: now,
           }),
         );
+
+        await this.recordAudit(manager, actor, {
+          aggregateType: AUDIT_TYPE.PO_DOCUMENT,
+          aggregateId: doc.id,
+          parentId: poId,
+          targetLabel: dto.fileName,
+          eventType: AuditEventType.CREATED,
+          changes: [
+            { fieldName: 'fileName', oldValue: null, newValue: dto.fileName },
+            { fieldName: 'purpose', oldValue: null, newValue: dto.purpose },
+          ],
+        });
 
         return {
           documentId: doc.id,
@@ -2048,42 +2297,31 @@ export class PurchaseOrdersService {
       );
     }
 
-    const [
-      sourceStyle,
-      steps,
-      sampleRounds,
-      prodDoc,
-      productDocs,
-      history,
-      rawColors,
-    ] = await Promise.all([
-      product.sourceStyleId
-        ? this.styleRepo.findOne({ where: { id: product.sourceStyleId } })
-        : Promise.resolve(null),
-      this.productStepRepo.find({
-        where: { productId },
-        order: { orderIndex: 'ASC' },
-      }),
-      this.productSampleRoundRepo.find({
-        where: { productId },
-        order: { roundNo: 'ASC' },
-      }),
-      this.prodDocRepo.findOne({
-        where: { productId },
-      }),
-      this.productDocRepo.find({
-        where: { productId },
-        order: { linkedAt: 'DESC' },
-      }),
-      this.productHistoryRepo.find({
-        where: { productId },
-        order: { changedAt: 'DESC' },
-      }),
-      this.productColorRepo.find({
-        where: { productId },
-        order: { orderIndex: 'ASC' },
-      }),
-    ]);
+    const [sourceStyle, steps, sampleRounds, prodDoc, productDocs, rawColors] =
+      await Promise.all([
+        product.sourceStyleId
+          ? this.styleRepo.findOne({ where: { id: product.sourceStyleId } })
+          : Promise.resolve(null),
+        this.productStepRepo.find({
+          where: { productId },
+          order: { orderIndex: 'ASC' },
+        }),
+        this.productSampleRoundRepo.find({
+          where: { productId },
+          order: { roundNo: 'ASC' },
+        }),
+        this.prodDocRepo.findOne({
+          where: { productId },
+        }),
+        this.productDocRepo.find({
+          where: { productId },
+          order: { linkedAt: 'DESC' },
+        }),
+        this.productColorRepo.find({
+          where: { productId },
+          order: { orderIndex: 'ASC' },
+        }),
+      ]);
 
     // Lấy thông tin tài liệu đính kèm Product kèm theo toàn bộ phiên bản
     let docsWithInfo: any[] = [];
@@ -2241,7 +2479,6 @@ export class PurchaseOrdersService {
       sampleRounds,
       productionDocument: prodDoc,
       documents: docsWithInfo,
-      statusHistory: history,
     };
   }
 
@@ -2253,6 +2490,7 @@ export class PurchaseOrdersService {
     poId: string,
     dto: CreatePoProductDto,
     userId?: string,
+    actor?: AuditActor,
   ): Promise<PurchaseOrderProduct> {
     const po = await this.poRepo.findOne({ where: { id: poId } });
     if (!po) {
@@ -2640,18 +2878,24 @@ export class PurchaseOrdersService {
         }
       }
 
-      // 3. Ghi log lịch sử khởi tạo
-      const historyLog = new PurchaseOrderProductStatusHistory();
-      historyLog.productId = savedProduct.id;
-      historyLog.oldStatus = undefined as any;
-      historyLog.newStatus = ProductStatus.DRAFT;
-      historyLog.action = sourceStyleId ? 'imported_from_fit' : 'created';
-      historyLog.reason = sourceStyleId
-        ? `Import độc lập từ Mẫu Fit ${sourceStyle?.styleCode || ''} - ${sourceStyle?.styleName || ''}`
-        : 'Tạo mới sản phẩm thủ công';
-      historyLog.changedBy = userId || (null as any);
-      historyLog.changedAt = new Date();
-      await manager.save(PurchaseOrderProductStatusHistory, historyLog);
+      await this.recordAudit(manager, actor, {
+        aggregateType: AUDIT_TYPE.PRODUCT,
+        aggregateId: savedProduct.id,
+        parentId: poId,
+        targetLabel: productAuditLabel(savedProduct),
+        eventType: AuditEventType.CREATED,
+        reason: sourceStyle
+          ? `Import từ Mẫu Fit ${sourceStyle.styleCode} - ${sourceStyle.styleName}`
+          : undefined,
+        changes: [
+          ...auditDiff(null, savedProduct, PRODUCT_AUDIT_FIELDS),
+          ...(dto.colors ?? []).map((color) => ({
+            fieldName: `${color.colorName.trim()}::sizes`,
+            oldValue: null,
+            newValue: formatColorSizes(color.sizes ?? []),
+          })),
+        ],
+      });
 
       return savedProduct;
     });
@@ -2665,6 +2909,7 @@ export class PurchaseOrdersService {
     productId: string,
     dto: UpdatePoProductDto,
     userId?: string,
+    actor?: AuditActor,
   ): Promise<PurchaseOrderProduct> {
     const product = await this.productRepo.findOne({
       where: { id: productId, purchaseOrderId: poId },
@@ -2678,6 +2923,7 @@ export class PurchaseOrdersService {
         'Sản phẩm đang ở trạng thái Khóa. Vui lòng mở khóa trước khi chỉnh sửa.',
       );
     }
+    const before = { ...product };
 
     if (dto.productCode && dto.productCode.trim() !== product.productCode) {
       const newCode = dto.productCode.trim();
@@ -2709,103 +2955,151 @@ export class PurchaseOrdersService {
     product.updatedBy = userId || product.updatedBy;
     product.updatedAt = new Date();
 
-    const saved = await this.productRepo.save(product);
+    const incomingColors =
+      dto.colors === undefined
+        ? undefined
+        : Array.isArray(dto.colors)
+          ? dto.colors
+          : [];
+    if (incomingColors) this.validateColorsBusinessRules(incomingColors);
 
-    // Cập nhật lại màu sắc và bảng phân bổ size nếu được truyền lên.
-    //
-    // QUAN TRỌNG: đây là upsert-theo-id, không phải xóa hết rồi tạo lại —
-    // xóa-rồi-tạo-lại sẽ đổi id của MỌI màu mỗi lần lưu. Màu vẫn còn trong
-    // dto (dù đổi tên) phải giữ nguyên id cũ bằng cách UPDATE tại chỗ; chỉ
-    // những màu bị người dùng xóa hẳn mới bị xóa thật.
-    if (dto.colors !== undefined) {
-      const incomingColors = Array.isArray(dto.colors) ? dto.colors : [];
-      this.validateColorsBusinessRules(incomingColors);
+    return this.dataSource.transaction(async (manager) => {
+      const saved = await manager.save(PurchaseOrderProduct, product);
+      const sizeChanges = incomingColors
+        ? await this.replaceProductColors(manager, productId, incomingColors)
+        : [];
+      await this.recordAudit(manager, actor, {
+        aggregateType: AUDIT_TYPE.PRODUCT,
+        aggregateId: productId,
+        parentId: poId,
+        targetLabel: productAuditLabel(product),
+        eventType: AuditEventType.UPDATED,
+        reason: dto.reason || undefined,
+        changes: [
+          ...auditDiff(before, product, PRODUCT_AUDIT_FIELDS),
+          ...sizeChanges,
+        ],
+      });
+      return saved;
+    });
+  }
 
-      await this.dataSource.transaction(async (manager) => {
-        try {
-          const existingColors = await manager.find(PurchaseOrderProductColor, {
-            where: { productId },
+  /**
+   * Upsert-theo-id, không phải xóa hết rồi tạo lại — xóa-rồi-tạo-lại sẽ đổi
+   * id của MỌI màu mỗi lần lưu. Màu vẫn còn trong dto (dù đổi tên) giữ
+   * nguyên id cũ; chỉ màu bị xóa hẳn mới bị xóa thật. Trả về thay đổi size
+   * theo từng màu để ghi lịch sử.
+   */
+  private async replaceProductColors(
+    manager: EntityManager,
+    productId: string,
+    incomingColors: ProductColorItemDto[],
+  ): Promise<EntityFieldChange[]> {
+    try {
+      const existingColors = await manager.find(PurchaseOrderProductColor, {
+        where: { productId },
+      });
+      const existingSizes =
+        existingColors.length === 0
+          ? []
+          : await manager.find(PurchaseOrderProductColorSize, {
+              where: { productColorId: In(existingColors.map((c) => c.id)) },
+              order: { orderIndex: 'ASC' },
+            });
+      const oldSizesByColorId = new Map(
+        existingColors.map((c) => [
+          c.id,
+          formatColorSizes(
+            existingSizes.filter((s) => s.productColorId === c.id),
+          ),
+        ]),
+      );
+      const existingById = new Map(existingColors.map((c) => [c.id, c]));
+      const keptIds = new Set<string>();
+      const changes: EntityFieldChange[] = [];
+
+      for (let cIdx = 0; cIdx < incomingColors.length; cIdx++) {
+        const cDto = incomingColors[cIdx];
+        const colorName = cDto.colorName.trim();
+        const existing = cDto.id ? existingById.get(cDto.id) : undefined;
+        const oldName = existing?.colorName;
+
+        let savedColor: PurchaseOrderProductColor;
+        if (existing) {
+          existing.colorName = colorName;
+          existing.orderIndex = cIdx;
+          savedColor = await manager.save(PurchaseOrderProductColor, existing);
+        } else {
+          const newColor = manager.create(PurchaseOrderProductColor, {
+            productId,
+            colorName,
+            orderIndex: cIdx,
           });
-          const existingById = new Map(existingColors.map((c) => [c.id, c]));
-          const keptIds = new Set<string>();
-
-          for (let cIdx = 0; cIdx < incomingColors.length; cIdx++) {
-            const cDto = incomingColors[cIdx];
-            const colorName = cDto.colorName.trim();
-            const existing = cDto.id ? existingById.get(cDto.id) : undefined;
-
-            let savedColor: PurchaseOrderProductColor;
-            if (existing) {
-              existing.colorName = colorName;
-              existing.orderIndex = cIdx;
-              savedColor = await manager.save(
-                PurchaseOrderProductColor,
-                existing,
-              );
-            } else {
-              const newColor = manager.create(PurchaseOrderProductColor, {
-                productId,
-                colorName,
-                orderIndex: cIdx,
-              });
-              savedColor = await manager.save(
-                PurchaseOrderProductColor,
-                newColor,
-              );
-            }
-            keptIds.add(savedColor.id);
-
-            // Chưa có bảng nào tham chiếu id của từng size — thay hết cho
-            // gọn là an toàn, chỉ id của MÀU mới cần giữ ổn định.
-            await manager.delete(PurchaseOrderProductColorSize, {
-              productColorId: savedColor.id,
-            });
-            const sizesDto = cDto.sizes || [];
-            if (sizesDto.length > 0) {
-              const sizeEntities = sizesDto.map((sDto, sIdx) =>
-                manager.create(PurchaseOrderProductColorSize, {
-                  productColorId: savedColor.id,
-                  sizeLabel: sDto.sizeLabel.trim(),
-                  quantity: sDto.quantity,
-                  orderIndex: sIdx,
-                }),
-              );
-              await manager.save(PurchaseOrderProductColorSize, sizeEntities);
-            }
-          }
-
-          const removedIds = existingColors
-            .map((c) => c.id)
-            .filter((id) => !keptIds.has(id));
-          if (removedIds.length > 0) {
-            await manager.delete(PurchaseOrderProductColorSize, {
-              productColorId: In(removedIds),
-            });
-            await manager.delete(PurchaseOrderProductColor, {
-              id: In(removedIds),
-            });
-          }
-        } catch (error) {
-          this.rethrowColorConstraintViolation(error);
+          savedColor = await manager.save(PurchaseOrderProductColor, newColor);
         }
-      });
-    }
+        keptIds.add(savedColor.id);
 
-    // Ghi log cập nhật nếu có lý do
-    if (dto.reason) {
-      const log = this.productHistoryRepo.create({
-        productId,
-        oldStatus: product.status,
-        newStatus: product.status,
-        action: 'updated',
-        reason: dto.reason,
-        changedBy: userId,
-        changedAt: new Date(),
-      });
-      await this.productHistoryRepo.save(log);
-    }
+        // Chưa có bảng nào tham chiếu id của từng size — thay hết cho
+        // gọn là an toàn, chỉ id của MÀU mới cần giữ ổn định.
+        await manager.delete(PurchaseOrderProductColorSize, {
+          productColorId: savedColor.id,
+        });
+        const sizesDto = cDto.sizes || [];
+        if (sizesDto.length > 0) {
+          const sizeEntities = sizesDto.map((sDto, sIdx) =>
+            manager.create(PurchaseOrderProductColorSize, {
+              productColorId: savedColor.id,
+              sizeLabel: sDto.sizeLabel.trim(),
+              quantity: sDto.quantity,
+              orderIndex: sIdx,
+            }),
+          );
+          await manager.save(PurchaseOrderProductColorSize, sizeEntities);
+        }
 
-    return saved;
+        const oldSizes = existing
+          ? (oldSizesByColorId.get(existing.id) ?? null)
+          : null;
+        const newSizes = formatColorSizes(
+          sizesDto.map((s) => ({ ...s, sizeLabel: s.sizeLabel.trim() })),
+        );
+        if (oldName !== undefined && oldName !== colorName) {
+          changes.push({
+            fieldName: `${colorName}::colorName`,
+            oldValue: oldName,
+            newValue: colorName,
+          });
+        }
+        if (oldSizes !== newSizes) {
+          changes.push({
+            fieldName: `${colorName}::sizes`,
+            oldValue: oldSizes,
+            newValue: newSizes,
+          });
+        }
+      }
+
+      const removedColors = existingColors.filter((c) => !keptIds.has(c.id));
+      if (removedColors.length > 0) {
+        const removedIds = removedColors.map((c) => c.id);
+        await manager.delete(PurchaseOrderProductColorSize, {
+          productColorId: In(removedIds),
+        });
+        await manager.delete(PurchaseOrderProductColor, {
+          id: In(removedIds),
+        });
+        for (const color of removedColors) {
+          changes.push({
+            fieldName: `${color.colorName}::sizes`,
+            oldValue: oldSizesByColorId.get(color.id) ?? null,
+            newValue: null,
+          });
+        }
+      }
+      return changes;
+    } catch (error) {
+      this.rethrowColorConstraintViolation(error);
+    }
   }
 
   /**
@@ -2848,9 +3142,6 @@ export class PurchaseOrdersService {
     // 4. Xóa tài liệu đính kèm Product
     await manager.delete(PurchaseOrderProductDocument, { productId });
 
-    // 5. Xóa lịch sử trạng thái
-    await manager.delete(PurchaseOrderProductStatusHistory, { productId });
-
     // 5.5. Xóa màu sắc & sizes của Product
     const colorsToDelete = await manager.find(PurchaseOrderProductColor, {
       where: { productId },
@@ -2867,7 +3158,11 @@ export class PurchaseOrdersService {
     await manager.delete(PurchaseOrderProduct, { id: productId });
   }
 
-  async removeProduct(poId: string, productId: string): Promise<void> {
+  async removeProduct(
+    poId: string,
+    productId: string,
+    actor?: AuditActor,
+  ): Promise<void> {
     const product = await this.productRepo.findOne({
       where: { id: productId, purchaseOrderId: poId },
     });
@@ -2883,6 +3178,14 @@ export class PurchaseOrdersService {
 
     await this.dataSource.transaction(async (manager) => {
       await this.deleteProductCascade(manager, productId);
+      await this.recordAudit(manager, actor, {
+        aggregateType: AUDIT_TYPE.PRODUCT,
+        aggregateId: productId,
+        parentId: poId,
+        targetLabel: productAuditLabel(product),
+        eventType: AuditEventType.DELETED,
+        changes: [],
+      });
     });
   }
 
@@ -2892,7 +3195,7 @@ export class PurchaseOrdersService {
    * đưa vào xử lý/khóa/hủy thì dùng luồng Hủy (updateStatus) để giữ lại lịch
    * sử thay vì xóa cứng.
    */
-  async remove(id: string): Promise<void> {
+  async remove(id: string, actor?: AuditActor): Promise<void> {
     const po = await this.poRepo.findOne({ where: { id } });
     if (!po) {
       throw new NotFoundException(`Không tìm thấy đơn hàng PO với ID: ${id}`);
@@ -2913,10 +3216,14 @@ export class PurchaseOrdersService {
       }
 
       await manager.delete(PurchaseOrderDocument, { purchaseOrderId: id });
-      await manager.delete(PurchaseOrderStatusHistory, {
-        purchaseOrderId: id,
-      });
       await manager.delete(PurchaseOrder, { id });
+      await this.recordAudit(manager, actor, {
+        aggregateType: AUDIT_TYPE.PO,
+        aggregateId: id,
+        targetLabel: po.poCode,
+        eventType: AuditEventType.DELETED,
+        changes: [],
+      });
     });
   }
 
@@ -2929,6 +3236,7 @@ export class PurchaseOrdersService {
     documentId: string,
     userId?: string,
     targetPurpose?: DocumentPurpose,
+    actor?: AuditActor,
   ) {
     const poDoc = await this.poDocRepo.findOne({
       where: { purchaseOrderId: poId, documentId },
@@ -2945,23 +3253,59 @@ export class PurchaseOrdersService {
     const existing = await this.productDocRepo.findOne({
       where: { productId, documentId },
     });
-    if (existing) {
-      if (targetPurpose && existing.purpose !== targetPurpose) {
-        existing.purpose = targetPurpose;
-        return await this.productDocRepo.save(existing);
-      }
+    if (existing && (!targetPurpose || existing.purpose === targetPurpose)) {
       return existing;
     }
 
-    const link = this.productDocRepo.create({
-      productId,
-      documentId,
-      sourcePoDocument: true,
-      purpose: purposeToUse,
-      linkedBy: userId,
-      linkedAt: new Date(),
+    const targetLabel = await this.documentAuditLabel(documentId);
+    return this.dataSource.transaction(async (manager) => {
+      if (existing && targetPurpose) {
+        const oldPurpose = existing.purpose;
+        existing.purpose = targetPurpose;
+        const saved = await manager.save(
+          PurchaseOrderProductDocument,
+          existing,
+        );
+        await this.recordAudit(manager, actor, {
+          aggregateType: AUDIT_TYPE.PRODUCT_DOCUMENT,
+          aggregateId: documentId,
+          parentId: productId,
+          targetLabel,
+          eventType: AuditEventType.UPDATED,
+          changes: [
+            {
+              fieldName: 'purpose',
+              oldValue: oldPurpose,
+              newValue: targetPurpose,
+            },
+          ],
+        });
+        return saved;
+      }
+
+      const link = this.productDocRepo.create({
+        productId,
+        documentId,
+        sourcePoDocument: true,
+        purpose: purposeToUse,
+        linkedBy: userId,
+        linkedAt: new Date(),
+      });
+      const saved = await manager.save(PurchaseOrderProductDocument, link);
+      await this.recordAudit(manager, actor, {
+        aggregateType: AUDIT_TYPE.PRODUCT_DOCUMENT,
+        aggregateId: documentId,
+        parentId: productId,
+        targetLabel,
+        eventType: AuditEventType.CREATED,
+        reason: 'Gán từ kho tài liệu PO',
+        changes: [
+          { fieldName: 'fileName', oldValue: null, newValue: targetLabel },
+          { fieldName: 'purpose', oldValue: null, newValue: purposeToUse },
+        ],
+      });
+      return saved;
     });
-    return await this.productDocRepo.save(link);
   }
 
   /**
@@ -2972,6 +3316,7 @@ export class PurchaseOrdersService {
     productId: string,
     documentId: string,
     purpose: DocumentPurpose,
+    actor?: AuditActor,
   ) {
     const existing = await this.productDocRepo.findOne({
       where: { productId, documentId },
@@ -2979,8 +3324,30 @@ export class PurchaseOrdersService {
     if (!existing) {
       throw new NotFoundException('Tài liệu chưa được gán vào sản phẩm này.');
     }
+    const oldPurpose = existing.purpose;
     existing.purpose = purpose;
-    return await this.productDocRepo.save(existing);
+    const targetLabel = await this.documentAuditLabel(documentId);
+    return this.dataSource.transaction(async (manager) => {
+      const saved = await manager.save(PurchaseOrderProductDocument, existing);
+      await this.recordAudit(manager, actor, {
+        aggregateType: AUDIT_TYPE.PRODUCT_DOCUMENT,
+        aggregateId: documentId,
+        parentId: productId,
+        targetLabel,
+        eventType: AuditEventType.UPDATED,
+        changes:
+          oldPurpose === purpose
+            ? []
+            : [
+                {
+                  fieldName: 'purpose',
+                  oldValue: oldPurpose,
+                  newValue: purpose,
+                },
+              ],
+      });
+      return saved;
+    });
   }
 
   /**
@@ -2990,8 +3357,28 @@ export class PurchaseOrdersService {
     poId: string,
     productId: string,
     documentId: string,
+    actor?: AuditActor,
   ): Promise<void> {
-    await this.productDocRepo.delete({ productId, documentId });
+    const existing = await this.productDocRepo.findOne({
+      where: { productId, documentId },
+    });
+    if (!existing) return;
+    const targetLabel = await this.documentAuditLabel(documentId);
+    await this.dataSource.transaction(async (manager) => {
+      await manager.delete(PurchaseOrderProductDocument, {
+        productId,
+        documentId,
+      });
+      await this.recordAudit(manager, actor, {
+        aggregateType: AUDIT_TYPE.PRODUCT_DOCUMENT,
+        aggregateId: documentId,
+        parentId: productId,
+        targetLabel,
+        eventType: AuditEventType.DELETED,
+        reason: `Gỡ tài liệu ${targetLabel}`,
+        changes: [],
+      });
+    });
   }
 
   /**
@@ -3041,6 +3428,7 @@ export class PurchaseOrdersService {
     productId: string,
     userId: string | undefined,
     dto: ConfirmPoDocumentDto,
+    actor?: AuditActor,
   ): Promise<{
     productId: string;
     documentId: string;
@@ -3132,6 +3520,18 @@ export class PurchaseOrdersService {
           }),
         );
 
+        await this.recordAudit(manager, actor, {
+          aggregateType: AUDIT_TYPE.PRODUCT_DOCUMENT,
+          aggregateId: doc.id,
+          parentId: productId,
+          targetLabel: dto.fileName,
+          eventType: AuditEventType.CREATED,
+          changes: [
+            { fieldName: 'fileName', oldValue: null, newValue: dto.fileName },
+            { fieldName: 'purpose', oldValue: null, newValue: dto.purpose },
+          ],
+        });
+
         return {
           productId,
           documentId: doc.id,
@@ -3159,6 +3559,7 @@ export class PurchaseOrdersService {
     documentId: string,
     userId: string | undefined,
     dto: ConfirmPoDocumentDto,
+    actor?: AuditActor,
   ) {
     const product = await this.productRepo.findOne({
       where: { id: productId, purchaseOrderId: poId },
@@ -3236,6 +3637,25 @@ export class PurchaseOrdersService {
         doc.currentVersionId = newVersion.id;
         await docRepo.save(doc);
 
+        const previous = existingVersions[0];
+        await this.recordAudit(manager, actor, {
+          aggregateType: AUDIT_TYPE.PRODUCT_DOCUMENT,
+          aggregateId: documentId,
+          parentId: productId,
+          targetLabel: doc.title,
+          eventType: AuditEventType.UPDATED,
+          reason: `Tải lên phiên bản ${nextVersionNo}`,
+          changes: [
+            {
+              fieldName: 'version',
+              oldValue: previous
+                ? `v${previous.versionNo} · ${previous.originalFileName}`
+                : null,
+              newValue: `v${nextVersionNo} · ${dto.fileName}`,
+            },
+          ],
+        });
+
         const allVersions = [newVersion, ...existingVersions];
 
         return {
@@ -3286,7 +3706,7 @@ export class PurchaseOrdersService {
   async saveProductOperationSteps(
     productId: string,
     dto: SaveProductOperationStepsDto,
-    userId?: string,
+    actor?: AuditActor,
   ) {
     const product = await this.productRepo.findOne({
       where: { id: productId },
@@ -3302,6 +3722,11 @@ export class PurchaseOrdersService {
     }
 
     return await this.dataSource.transaction(async (manager) => {
+      const beforeSteps = await manager.find(
+        PurchaseOrderProductOperationStep,
+        { where: { productId } },
+      );
+
       // Xóa các bước cũ
       await manager.delete(PurchaseOrderProductOperationStep, { productId });
 
@@ -3334,6 +3759,7 @@ export class PurchaseOrdersService {
         newSteps,
       );
 
+      const oldCmBaseDays = product.as3bCmBaseDays;
       // NOTE: use `!= null` (not truthy) so an explicit cmBaseDays of 0 is
       // still persisted instead of being silently skipped.
       if (dto.cmBaseDays != null) {
@@ -3341,19 +3767,99 @@ export class PurchaseOrdersService {
         await manager.save(PurchaseOrderProduct, product);
       }
 
-      // Log lịch sử
-      const log = new PurchaseOrderProductStatusHistory();
-      log.productId = productId;
-      log.oldStatus = product.status;
-      log.newStatus = product.status;
-      log.action = 'operation_steps_updated';
-      log.reason =
-        dto.reason || `Cập nhật ${savedSteps.length} bước công đoạn sản xuất`;
-      log.changedBy = userId || (null as any);
-      log.changedAt = new Date();
-      await manager.save(PurchaseOrderProductStatusHistory, log);
+      const extraChanges: EntityFieldChange[] =
+        dto.cmBaseDays != null &&
+        Number(oldCmBaseDays) !== Number(dto.cmBaseDays)
+          ? [
+              {
+                fieldName: 'as3bCmBaseDays',
+                oldValue: oldCmBaseDays ?? null,
+                newValue: Number(dto.cmBaseDays),
+              },
+            ]
+          : [];
+      await this.recordStepsAudit(
+        manager,
+        actor,
+        productId,
+        beforeSteps,
+        newSteps,
+        extraChanges,
+      );
 
       return savedSteps;
+    });
+  }
+
+  /** 1 lần bấm Lưu bảng công đoạn = 1 sự kiện, giống bên Mẫu Fit: field-name
+   * mang tiền tố "<tên công đoạn>::" để FE nhóm theo dòng, phần tóm tắt chỉ
+   * ghi số lượng. Công đoạn cũ/mới được ghép theo id. */
+  private async recordStepsAudit(
+    manager: EntityManager,
+    actor: AuditActor | undefined,
+    productId: string,
+    beforeSteps: PurchaseOrderProductOperationStep[],
+    afterSteps: PurchaseOrderProductOperationStep[],
+    extraChanges: EntityFieldChange[],
+  ): Promise<void> {
+    if (!actor) return;
+    const beforeById = new Map(beforeSteps.map((s) => [s.id, s]));
+    const afterIds = new Set(afterSteps.map((s) => s.id));
+    const stepNameById = new Map(
+      [...beforeSteps, ...afterSteps].map((s) => [s.id, s.stepName]),
+    );
+    const rowLabel = (step: PurchaseOrderProductOperationStep) =>
+      step.stepName || '(không tên)';
+
+    let created = 0;
+    let updated = 0;
+    const changes: EntityFieldChange[] = [...extraChanges];
+    for (const after of afterSteps) {
+      const before = beforeById.get(after.id) ?? null;
+      // Dòng mới: bỏ các giá trị mặc định (0, false, thứ tự) cho gọn.
+      const fields = auditDiff(before, after, STEP_AUDIT_FIELDS).filter(
+        (field) =>
+          before ||
+          (field.fieldName !== 'orderIndex' &&
+            field.newValue !== 0 &&
+            field.newValue !== false),
+      );
+      if (!before) created++;
+      else if (fields.length > 0) updated++;
+      for (const field of fields) {
+        const resolve = (value: unknown) =>
+          field.fieldName === 'parentStepId' && typeof value === 'string'
+            ? (stepNameById.get(value) ?? value)
+            : value;
+        changes.push({
+          fieldName: `${rowLabel(after)}::${field.fieldName}`,
+          oldValue: resolve(field.oldValue),
+          newValue: resolve(field.newValue),
+        });
+      }
+    }
+    const deleted = beforeSteps.filter((s) => !afterIds.has(s.id)).length;
+
+    const reasonParts: string[] = [];
+    if (created > 0) reasonParts.push(`Tạo mới ${created} công đoạn`);
+    if (updated > 0) reasonParts.push(`Cập nhật ${updated} công đoạn`);
+    if (deleted > 0) reasonParts.push(`Xoá ${deleted} công đoạn`);
+    if (reasonParts.length === 0 && extraChanges.length === 0) return;
+
+    const eventType =
+      created > 0 && updated === 0 && deleted === 0 && !extraChanges.length
+        ? AuditEventType.CREATED
+        : deleted > 0 && created === 0 && updated === 0 && !extraChanges.length
+          ? AuditEventType.DELETED
+          : AuditEventType.UPDATED;
+    await this.recordAudit(manager, actor, {
+      aggregateType: AUDIT_TYPE.PRODUCT_STEPS,
+      aggregateId: productId,
+      parentId: productId,
+      targetLabel: 'Quy trình công đoạn',
+      eventType,
+      reason: reasonParts.join('; ') || undefined,
+      changes,
     });
   }
 
@@ -3500,6 +4006,7 @@ export class PurchaseOrdersService {
     productId: string,
     dto: CreateProductSampleRoundDto,
     userId?: string,
+    actor?: AuditActor,
   ) {
     const product = await this.productRepo.findOne({
       where: { id: productId },
@@ -3549,6 +4056,15 @@ export class PurchaseOrdersService {
         await imageRepo.save(imageEntities);
       }
 
+      await this.recordAudit(manager, actor, {
+        aggregateType: AUDIT_TYPE.PRODUCT_SAMPLE_ROUND,
+        aggregateId: saved.id,
+        parentId: productId,
+        targetLabel: `Đợt may mẫu #${saved.roundNo}`,
+        eventType: AuditEventType.CREATED,
+        changes: auditDiff(null, saved, SAMPLE_ROUND_AUDIT_FIELDS),
+      });
+
       return saved;
     });
 
@@ -3565,9 +4081,11 @@ export class PurchaseOrdersService {
     roundId: string,
     dto: UpdateProductSampleRoundDto,
     userId?: string,
+    actor?: AuditActor,
   ) {
     await this.assertPoProductEditable(poId, productId);
     const round = await this.findProductSampleRoundOrThrow(productId, roundId);
+    const before = { ...round };
 
     if (dto.sampleDate !== undefined) {
       round.sampleDate = new Date(dto.sampleDate);
@@ -3586,7 +4104,20 @@ export class PurchaseOrdersService {
       }
     }
 
-    const saved = await this.productSampleRoundRepo.save(round);
+    const saved = await this.dataSource.transaction(async (manager) => {
+      const savedRound = await manager
+        .getRepository(PurchaseOrderProductSampleRound)
+        .save(round);
+      await this.recordAudit(manager, actor, {
+        aggregateType: AUDIT_TYPE.PRODUCT_SAMPLE_ROUND,
+        aggregateId: roundId,
+        parentId: productId,
+        targetLabel: `Đợt may mẫu #${round.roundNo}`,
+        eventType: AuditEventType.UPDATED,
+        changes: auditDiff(before, round, SAMPLE_ROUND_AUDIT_FIELDS),
+      });
+      return savedRound;
+    });
     const imagesMap = await this.mapProductSampleImages([roundId]);
     return this.toProductSampleRoundItem(saved, imagesMap.get(roundId) || []);
   }
@@ -3622,9 +4153,10 @@ export class PurchaseOrdersService {
     roundId: string,
     userId: string | undefined,
     dto: ConfirmProductSampleImageDto,
+    actor?: AuditActor,
   ) {
     await this.assertPoProductEditable(poId, productId);
-    await this.findProductSampleRoundOrThrow(productId, roundId);
+    const round = await this.findProductSampleRoundOrThrow(productId, roundId);
 
     if (
       !isObjectKeyInScope(
@@ -3696,6 +4228,17 @@ export class PurchaseOrdersService {
           }),
         );
 
+        await this.recordAudit(manager, actor, {
+          aggregateType: AUDIT_TYPE.PRODUCT_SAMPLE_ROUND,
+          aggregateId: roundId,
+          parentId: productId,
+          targetLabel: `Đợt may mẫu #${round.roundNo}`,
+          eventType: AuditEventType.DOCUMENT_VERSION_ADDED,
+          changes: [
+            { fieldName: 'images', oldValue: null, newValue: dto.fileName },
+          ],
+        });
+
         const url = await this.storage.getPresignedGetUrl(
           dto.objectKey,
           PRESIGN_GET_EXPIRY_SECONDS,
@@ -3757,9 +4300,10 @@ export class PurchaseOrdersService {
     productId: string,
     roundId: string,
     imageId: string,
+    actor?: AuditActor,
   ): Promise<void> {
     await this.assertPoProductEditable(poId, productId);
-    await this.findProductSampleRoundOrThrow(productId, roundId);
+    const round = await this.findProductSampleRoundOrThrow(productId, roundId);
 
     const image = await this.productSampleImageRepo.findOne({
       where: { id: imageId, sampleRoundId: roundId },
@@ -3767,7 +4311,23 @@ export class PurchaseOrdersService {
     if (!image) {
       throw new NotFoundException(`Không tìm thấy ảnh #${imageId}`);
     }
-    await this.productSampleImageRepo.remove(image);
+    const version = await this.docVersionRepo.findOne({
+      where: { id: image.documentVersionId },
+    });
+    const fileName = version?.originalFileName ?? 'ảnh';
+
+    await this.dataSource.transaction(async (manager) => {
+      await manager.remove(PurchaseOrderProductSampleImage, image);
+      await this.recordAudit(manager, actor, {
+        aggregateType: AUDIT_TYPE.PRODUCT_SAMPLE_ROUND,
+        aggregateId: roundId,
+        parentId: productId,
+        targetLabel: `Đợt may mẫu #${round.roundNo}`,
+        eventType: AuditEventType.DELETED,
+        reason: `Xoá ảnh ${fileName}`,
+        changes: [{ fieldName: 'images', oldValue: fileName, newValue: null }],
+      });
+    });
   }
 
   /**
@@ -3801,87 +4361,113 @@ export class PurchaseOrdersService {
     productId: string,
     dto: any,
     userId?: string,
+    actor?: AuditActor,
   ) {
-    let doc = await this.prodDocRepo.findOne({ where: { productId } });
+    const existingDoc = await this.prodDocRepo.findOne({
+      where: { productId },
+    });
+    const product = existingDoc
+      ? null
+      : await this.productRepo.findOne({ where: { id: productId } });
 
-    if (!doc) {
-      const product = await this.productRepo.findOne({
-        where: { id: productId },
-      });
-      doc = this.prodDocRepo.create({
-        productId,
-        styleId: null,
-        name: dto.name || `Tài liệu SX - ${product?.productCode || 'SP'}`,
-        status: dto.status || ProductionDocStatus.DRAFT,
-        createdBy: userId,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      });
-      doc = await this.prodDocRepo.save(doc);
-    }
+    await this.dataSource.transaction(async (manager) => {
+      const docRepo = manager.getRepository(ProductionDocument);
+      const sectionRepo = manager.getRepository(ProductionDocumentSection);
+      const sizeRowRepo = manager.getRepository(ProductionDocumentSizeRow);
 
-    if (dto.name !== undefined) doc.name = dto.name.trim();
-    if (dto.description !== undefined)
-      doc.description = dto.description ? dto.description.trim() : null;
-    if (dto.status !== undefined) doc.status = dto.status;
-    if (dto.section1Description !== undefined)
-      doc.section1Description = dto.section1Description;
-    if (dto.section1ImageUrl !== undefined)
-      doc.section1ImageUrl = dto.section1ImageUrl;
-    if (dto.section2Accessories !== undefined)
-      doc.section2Accessories = dto.section2Accessories;
-    if (dto.section3Notes !== undefined) doc.section3Notes = dto.section3Notes;
-    if (dto.section4CustomerFeedback !== undefined)
-      doc.section4CustomerFeedback = dto.section4CustomerFeedback;
-    if (dto.sizeData !== undefined) doc.sizeData = dto.sizeData;
-
-    doc.updatedBy = userId || (null as any);
-    doc.updatedAt = new Date();
-
-    await this.prodDocRepo.save(doc);
-
-    // Lưu sections (dynamic sections 06+)
-    if (dto.sections !== undefined) {
-      const existingSections = await this.prodDocSectionRepo.find({
-        where: { productionDocumentId: doc.id },
-      });
-      const nonFixed = existingSections.filter((s) => !s.isFixed);
-      if (nonFixed.length > 0) {
-        await this.prodDocSectionRepo.remove(nonFixed);
-      }
-
-      let dynamicOrder = 5;
-      const newSections = (dto.sections || [])
-        .filter((s: any) => !s.isFixed)
-        .map((s: any) =>
-          this.prodDocSectionRepo.create({
-            productionDocumentId: doc.id,
-            sectionCode: s.sectionCode || `SEC_DYN_${dynamicOrder++}`,
-            title: s.title ? s.title.trim() : '',
-            content: s.content ? s.content.trim() : null,
-            imageGroups: s.imageGroups ?? [],
-            orderIndex: s.orderIndex ?? dynamicOrder,
-            isFixed: false,
+      let doc = existingDoc;
+      if (!doc) {
+        doc = await docRepo.save(
+          docRepo.create({
+            productId,
+            styleId: null,
+            name: dto.name || `Tài liệu SX - ${product?.productCode || 'SP'}`,
+            status: dto.status || ProductionDocStatus.DRAFT,
+            createdBy: userId,
+            createdAt: new Date(),
+            updatedAt: new Date(),
           }),
         );
-      if (newSections.length > 0) {
-        await this.prodDocSectionRepo.save(newSections);
       }
-    }
+      const before = existingDoc
+        ? this.productionDocAuditSnapshot({ ...existingDoc })
+        : null;
 
-    // Lưu sizeRows (bảng thông số kích thước)
-    if (dto.sizeRows !== undefined) {
-      const existingSizeRows = await this.prodDocSizeRowRepo.find({
-        where: { productionDocumentId: doc.id },
-      });
-      if (existingSizeRows.length > 0) {
-        await this.prodDocSizeRowRepo.remove(existingSizeRows);
+      if (dto.name !== undefined) doc.name = dto.name.trim();
+      if (dto.description !== undefined)
+        doc.description = dto.description ? dto.description.trim() : null;
+      if (dto.status !== undefined) doc.status = dto.status;
+      if (dto.section1Description !== undefined)
+        doc.section1Description = dto.section1Description;
+      if (dto.section1ImageUrl !== undefined)
+        doc.section1ImageUrl = dto.section1ImageUrl;
+      if (dto.section2Accessories !== undefined)
+        doc.section2Accessories = dto.section2Accessories;
+      if (dto.section3Notes !== undefined)
+        doc.section3Notes = dto.section3Notes;
+      if (dto.section4CustomerFeedback !== undefined)
+        doc.section4CustomerFeedback = dto.section4CustomerFeedback;
+      if (dto.sizeData !== undefined) doc.sizeData = dto.sizeData;
+
+      doc.updatedBy = userId || (null as any);
+      doc.updatedAt = new Date();
+
+      await docRepo.save(doc);
+      const docId = doc.id;
+      const extraChanges: EntityFieldChange[] = [];
+
+      // Lưu sections (dynamic sections 06+)
+      if (dto.sections !== undefined) {
+        const existingSections = await sectionRepo.find({
+          where: { productionDocumentId: docId },
+        });
+        const nonFixed = existingSections.filter((s) => !s.isFixed);
+        if (nonFixed.length > 0) {
+          await sectionRepo.remove(nonFixed);
+        }
+
+        let dynamicOrder = 5;
+        const newSections = (dto.sections || [])
+          .filter((s: any) => !s.isFixed)
+          .map((s: any) =>
+            sectionRepo.create({
+              productionDocumentId: docId,
+              sectionCode: s.sectionCode || `SEC_DYN_${dynamicOrder++}`,
+              title: s.title ? s.title.trim() : '',
+              content: s.content ? s.content.trim() : null,
+              imageGroups: s.imageGroups ?? [],
+              orderIndex: s.orderIndex ?? dynamicOrder,
+              isFixed: false,
+            }),
+          );
+        if (newSections.length > 0) {
+          await sectionRepo.save(newSections);
+        }
+
+        const describe = (rows: ProductionDocumentSection[]) =>
+          rows.map((s) => `${s.title}: ${s.content ?? ''}`).join('; ') || null;
+        const oldValue = describe(nonFixed);
+        const newValue = describe(newSections);
+        if (oldValue !== newValue) {
+          extraChanges.push({ fieldName: 'sections', oldValue, newValue });
+        }
       }
 
-      if (dto.sizeRows.length > 0) {
-        const newSizeRows = dto.sizeRows.map((sr: any, index: number) =>
-          this.prodDocSizeRowRepo.create({
-            productionDocumentId: doc.id,
+      // Lưu sizeRows (bảng thông số kích thước)
+      if (dto.sizeRows !== undefined) {
+        const existingSizeRows = await sizeRowRepo.find({
+          where: { productionDocumentId: docId },
+          order: { orderIndex: 'ASC' },
+        });
+        if (existingSizeRows.length > 0) {
+          await sizeRowRepo.remove(existingSizeRows);
+        }
+
+        const newSizeRows: ProductionDocumentSizeRow[] = (
+          dto.sizeRows as any[]
+        ).map((sr: any, index: number) =>
+          sizeRowRepo.create({
+            productionDocumentId: docId,
             sizeLabel: String(sr.sizeLabel || '').trim(),
             measurementName: String(sr.measurementName || '').trim(),
             measurementValue: sr.measurementValue
@@ -3891,9 +4477,39 @@ export class PurchaseOrdersService {
             orderIndex: sr.orderIndex ?? index + 1,
           }),
         );
-        await this.prodDocSizeRowRepo.save(newSizeRows);
+        if (newSizeRows.length > 0) {
+          await sizeRowRepo.save(newSizeRows);
+        }
+
+        const describe = (rows: ProductionDocumentSizeRow[]) =>
+          rows
+            .map(
+              (r) =>
+                `${r.sizeLabel} · ${r.measurementName}: ${r.measurementValue ?? ''}${r.tolerance ? ` (±${r.tolerance})` : ''}`,
+            )
+            .join('; ') || null;
+        const oldValue = describe(existingSizeRows);
+        const newValue = describe(newSizeRows);
+        if (oldValue !== newValue) {
+          extraChanges.push({ fieldName: 'sizeRows', oldValue, newValue });
+        }
       }
-    }
+
+      const after = this.productionDocAuditSnapshot(doc) as AuditSnapshot;
+      await this.recordAudit(manager, actor, {
+        aggregateType: AUDIT_TYPE.PRODUCT_PRODUCTION_DOC,
+        aggregateId: docId,
+        parentId: productId,
+        targetLabel: doc.name,
+        eventType: existingDoc
+          ? AuditEventType.UPDATED
+          : AuditEventType.CREATED,
+        changes: [
+          ...diffEntity(before, after, PRODUCTION_DOC_AUDIT_FIELDS),
+          ...extraChanges,
+        ],
+      });
+    });
 
     return this.getProductProductionDoc(productId);
   }
@@ -3907,6 +4523,7 @@ export class PurchaseOrdersService {
     status: ProductStatus,
     reason?: string,
     userId?: string,
+    actor?: AuditActor,
   ) {
     const product = await this.productRepo.findOne({
       where: { id: productId, purchaseOrderId: poId },
@@ -3927,23 +4544,31 @@ export class PurchaseOrdersService {
     if (userId) product.updatedBy = userId;
     product.updatedAt = new Date();
 
-    const saved = await this.productRepo.save(product);
-
-    const log = new PurchaseOrderProductStatusHistory();
-    log.productId = productId;
-    log.oldStatus = oldStatus;
-    log.newStatus = normalizedStatus;
-    log.action =
-      normalizedStatus === ProductStatus.CLOSED ? 'locked' : 'unlocked';
-    log.reason =
-      reason ||
-      (normalizedStatus === ProductStatus.CLOSED
+    const actionText =
+      normalizedStatus === ProductStatus.CLOSED
         ? 'Khóa sản phẩm'
-        : 'Mở khóa sản phẩm (Đang xử lý)');
-    log.changedBy = userId || (null as any);
-    log.changedAt = new Date();
-    await this.productHistoryRepo.save(log);
-
-    return saved;
+        : 'Mở khóa sản phẩm';
+    return this.dataSource.transaction(async (manager) => {
+      const saved = await manager.save(PurchaseOrderProduct, product);
+      await this.recordAudit(manager, actor, {
+        aggregateType: AUDIT_TYPE.PRODUCT,
+        aggregateId: productId,
+        parentId: poId,
+        targetLabel: productAuditLabel(product),
+        eventType: AuditEventType.STATUS_CHANGED,
+        reason: reason?.trim() ? `${actionText}: ${reason.trim()}` : actionText,
+        changes:
+          oldStatus === normalizedStatus
+            ? []
+            : [
+                {
+                  fieldName: 'status',
+                  oldValue: oldStatus,
+                  newValue: normalizedStatus,
+                },
+              ],
+      });
+      return saved;
+    });
   }
 }

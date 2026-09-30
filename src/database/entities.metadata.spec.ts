@@ -31,8 +31,8 @@ describe('schema entities', () => {
       .tables.filter((metadata) => entities.includes(metadata.target as never))
       .map((metadata) => metadata.name);
 
-    expect(entities).toHaveLength(64);
-    expect(new Set(tables).size).toBe(64);
+    expect(entities).toHaveLength(62);
+    expect(new Set(tables).size).toBe(62);
     expect(tables).toEqual(
       expect.arrayContaining([
         'users',

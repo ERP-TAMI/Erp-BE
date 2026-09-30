@@ -11,7 +11,128 @@ export type EntityAuditConfig = {
   hiddenFields?: string[];
 };
 
+const PO_DOCUMENT_PURPOSE_LABELS: Record<string, string> = {
+  po_original: 'PO Tổng',
+  production_doc: 'PO Chi tiết',
+  tech_pack: 'Techpack',
+  sample_image: 'Ảnh mẫu',
+  color_card: 'Bảng màu',
+  material_pdf: 'Tài liệu NPL (PDF)',
+  translation: 'Bản dịch',
+  other: 'Khác',
+};
+
+const PO_PRODUCTION_DOC_FIELD_LABELS: Record<string, string> = {
+  name: 'Tên tài liệu',
+  description: 'Mô tả',
+  status: 'Trạng thái',
+  section1Description: 'Mô tả hình dáng',
+  section1ImageUrl: 'Ảnh mô tả hình dáng',
+  section2Accessories: 'Phụ liệu',
+  section3Notes: 'Ghi chú',
+  section4CustomerFeedback: 'Phản hồi khách hàng',
+  sizeData: 'Bảng thông số kích thước',
+  sections: 'Mục bổ sung',
+  sizeRows: 'Bảng thông số (dòng)',
+};
+
 export const ENTITY_AUDIT_CONFIG: Record<string, EntityAuditConfig> = {
+  PurchaseOrder: {
+    fieldLabels: {
+      poCode: 'Mã PO',
+      customerPoCode: 'Mã PO khách hàng',
+      customerNameSnapshot: 'Khách hàng',
+      receivedDate: 'Ngày nhận PO',
+      deadline: 'Hạn hoàn thành',
+      note: 'Ghi chú',
+      status: 'Trạng thái',
+      cancellationReason: 'Lý do huỷ',
+    },
+    fieldValueLabels: {
+      status: {
+        draft: 'Nháp',
+        pending_rd: 'Chờ R&D',
+        in_progress: 'Đang xử lý',
+        closed: 'Khóa',
+        cancelled: 'Đã hủy',
+      },
+    },
+  },
+  PurchaseOrderDocument: {
+    fieldLabels: { fileName: 'Tên tệp', purpose: 'Phân loại' },
+    fieldValueLabels: { purpose: PO_DOCUMENT_PURPOSE_LABELS },
+  },
+  PurchaseOrderProduct: {
+    fieldLabels: {
+      productCode: 'Mã sản phẩm',
+      productName: 'Tên sản phẩm',
+      category: 'Dòng sản phẩm',
+      materialNote: 'Ghi chú chất liệu',
+      deadline: 'Hạn giao',
+      as3bCmBaseDays: 'Số ngày CM cơ sở',
+      structureImageVersionId: 'Ảnh sản phẩm',
+      status: 'Trạng thái',
+      sizes: 'Size & số lượng',
+      colorName: 'Tên màu',
+    },
+    fieldValueLabels: {
+      // Sản phẩm PO chỉ còn 2 trạng thái thực tế: Đang xử lý / Khoá.
+      status: {
+        draft: 'Đang xử lý',
+        in_review: 'Đang xử lý',
+        sampling: 'Đang xử lý',
+        closed: 'Khoá',
+        cancelled: 'Đã hủy',
+      },
+    },
+  },
+  PurchaseOrderProductOperationStep: {
+    fieldLabels: {
+      stepName: 'Tên công đoạn',
+      description: 'Mô tả',
+      timePerPiece: 'Thời gian/SP (giây)',
+      ssv: '% công đoạn (SSV)',
+      targetTotal: 'SP/1H',
+      note: 'Ghi chú',
+      orderIndex: 'Thứ tự',
+      isGroup: 'Là nhóm công đoạn',
+      parentStepId: 'Công đoạn cha',
+      as3bCmBaseDays: 'Số ngày CM cơ sở',
+    },
+  },
+  PurchaseOrderProductSampleRound: {
+    fieldLabels: {
+      sampleDate: 'Ngày may mẫu',
+      feedback: 'Phản hồi',
+      status: 'Trạng thái',
+      images: 'Ảnh đính kèm',
+    },
+    fieldValueLabels: {
+      status: {
+        working: 'Đang may',
+        needs_revision: 'Cần chỉnh sửa',
+        approved: 'Đã duyệt',
+      },
+    },
+  },
+  PurchaseOrderProductionDocument: {
+    fieldLabels: PO_PRODUCTION_DOC_FIELD_LABELS,
+    fieldValueLabels: {
+      status: {
+        draft: 'Nháp',
+        in_progress: 'Đang thực hiện',
+        completed: 'Hoàn thành',
+      },
+    },
+  },
+  PurchaseOrderProductDocument: {
+    fieldLabels: {
+      fileName: 'Tên tệp',
+      purpose: 'Phân loại',
+      version: 'Phiên bản',
+    },
+    fieldValueLabels: { purpose: PO_DOCUMENT_PURPOSE_LABELS },
+  },
   Style: {
     fieldLabels: {
       styleCode: 'Mã mẫu',
@@ -153,21 +274,34 @@ const STYLE_VIEW_PERMISSION = 'master_data.styles.view';
 /** Quyền cần có để xem lịch sử từng loại dữ liệu — phải khớp quyền xem chính
  * dữ liệu đó, không thì ai đăng nhập cũng đọc được lịch sử (kể cả tài khoản
  * người dùng) chỉ bằng cách đoán aggregateType + id. Loại không có ở đây bị
- * từ chối. */
-const HISTORY_VIEW_PERMISSIONS: Record<string, string> = {
+ * từ chối. `null` = mọi tài khoản đã đăng nhập, dùng cho PO vì chính các
+ * endpoint đọc PO cũng chỉ yêu cầu đăng nhập. */
+const HISTORY_VIEW_PERMISSIONS: Record<string, string | null> = {
   Style: STYLE_VIEW_PERMISSION,
   StyleOperationStep: STYLE_VIEW_PERMISSION,
   StyleDocument: STYLE_VIEW_PERMISSION,
   StyleSampleRound: STYLE_VIEW_PERMISSION,
   ProductionDocument: STYLE_VIEW_PERMISSION,
+  PurchaseOrder: null,
+  PurchaseOrderDocument: null,
+  PurchaseOrderProduct: null,
+  PurchaseOrderProductOperationStep: null,
+  PurchaseOrderProductSampleRound: null,
+  PurchaseOrderProductionDocument: null,
+  PurchaseOrderProductDocument: null,
   User: 'system.users.manage',
 };
 
-export function getHistoryViewPermission(aggregateType: string): string | null {
+export function isHistoryViewSupported(aggregateType: string): boolean {
   return Object.prototype.hasOwnProperty.call(
     HISTORY_VIEW_PERMISSIONS,
     aggregateType,
-  )
+  );
+}
+
+/** Chỉ gọi sau isHistoryViewSupported(). */
+export function getHistoryViewPermission(aggregateType: string): string | null {
+  return isHistoryViewSupported(aggregateType)
     ? HISTORY_VIEW_PERMISSIONS[aggregateType]
     : null;
 }
