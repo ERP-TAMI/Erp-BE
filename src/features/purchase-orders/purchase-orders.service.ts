@@ -2285,7 +2285,10 @@ export class PurchaseOrdersService {
   }
 
   /**
-   * Lấy chi tiết một sản phẩm trong PO kèm các dữ liệu con
+   * Lấy thông tin chung 1 sản phẩm (tab Thông tin). Size/màu, quy trình công
+   * đoạn, đợt may mẫu, tài liệu SX, tài liệu đính kèm đọc qua endpoint riêng
+   * của từng tab — không kéo hết về đây (mỗi tab trả tiền cho đúng dữ liệu
+   * nó hiển thị, xem CLAUDE.md).
    */
   async getProductDetail(poId: string, productId: string) {
     const product = await this.productRepo.findOne({
@@ -2297,150 +2300,9 @@ export class PurchaseOrdersService {
       );
     }
 
-    const [sourceStyle, steps, sampleRounds, prodDoc, productDocs, rawColors] =
-      await Promise.all([
-        product.sourceStyleId
-          ? this.styleRepo.findOne({ where: { id: product.sourceStyleId } })
-          : Promise.resolve(null),
-        this.productStepRepo.find({
-          where: { productId },
-          order: { orderIndex: 'ASC' },
-        }),
-        this.productSampleRoundRepo.find({
-          where: { productId },
-          order: { roundNo: 'ASC' },
-        }),
-        this.prodDocRepo.findOne({
-          where: { productId },
-        }),
-        this.productDocRepo.find({
-          where: { productId },
-          order: { linkedAt: 'DESC' },
-        }),
-        this.productColorRepo.find({
-          where: { productId },
-          order: { orderIndex: 'ASC' },
-        }),
-      ]);
-
-    // Lấy thông tin tài liệu đính kèm Product kèm theo toàn bộ phiên bản
-    let docsWithInfo: any[] = [];
-    if (productDocs.length > 0) {
-      const docIds = productDocs.map((pd) => pd.documentId);
-      const docs = await this.docRepo.find({ where: { id: In(docIds) } });
-      const docsMap = new Map(docs.map((d) => [d.id, d]));
-      const allVersions = await this.docVersionRepo.find({
-        where: { documentId: In(docIds) },
-        order: { versionNo: 'DESC' },
-      });
-      const versionsByDoc = allVersions.reduce(
-        (acc, v) => {
-          if (!acc[v.documentId]) acc[v.documentId] = [];
-          acc[v.documentId].push(v);
-          return acc;
-        },
-        {} as Record<string, DocumentVersion[]>,
-      );
-
-      docsWithInfo = await Promise.all(
-        productDocs.map(async (pd) => {
-          const masterDoc = docsMap.get(pd.documentId);
-          const docVersions = versionsByDoc[pd.documentId] || [];
-          const currentVersion =
-            (masterDoc?.currentVersionId &&
-              docVersions.find((v) => v.id === masterDoc.currentVersionId)) ||
-            docVersions[0] ||
-            null;
-
-          // fileUrl trước đây trả thẳng storageKey — đó là object key của S3,
-          // không phải URL, nên mọi link tải/xem tài liệu của sản phẩm đều hỏng.
-          // Ký lại ở mỗi lần đọc, giống cách tài liệu PO và ảnh Style vẫn làm.
-          const signedCurrentUrl = isResolvableObjectKey(
-            currentVersion?.storageKey,
-          )
-            ? await this.storage.getPresignedGetUrl(currentVersion.storageKey)
-            : null;
-
-          const signedVersions = await Promise.all(
-            docVersions.map(async (v) => ({
-              id: v.id,
-              versionNo: v.versionNo,
-              originalFileName: v.originalFileName,
-              fileUrl: isResolvableObjectKey(v.storageKey)
-                ? await this.storage.getPresignedGetUrl(v.storageKey)
-                : null,
-              fileSize: v.byteSize ? Number(v.byteSize) : null,
-              mimeType: v.mimeType,
-              changeReason: v.changeReason,
-              uploadedAt: v.uploadedAt,
-              uploadedBy: v.uploadedBy,
-            })),
-          );
-
-          return {
-            documentId: pd.documentId,
-            productId: pd.productId,
-            purpose: pd.purpose,
-            linkedAt: pd.linkedAt,
-            sourcePoDocument: pd.sourcePoDocument ?? null,
-            title:
-              masterDoc?.title ||
-              currentVersion?.originalFileName ||
-              'Tài liệu',
-            documentCode: masterDoc?.documentCode || null,
-            fileName:
-              currentVersion?.originalFileName || masterDoc?.title || null,
-            fileUrl: signedCurrentUrl,
-            fileSize: currentVersion?.byteSize
-              ? Number(currentVersion.byteSize)
-              : null,
-            currentVersionNo: currentVersion?.versionNo || 1,
-            changeReason: currentVersion?.changeReason || null,
-            versions: signedVersions,
-          };
-        }),
-      );
-    }
-
-    // Lấy thông tin sizes của các colors
-    let colorsWithSizes: any[] = [];
-    let totalQuantity = 0;
-    if (rawColors.length > 0) {
-      const colorIds = rawColors.map((c) => c.id);
-      const sizes = await this.productColorSizeRepo.find({
-        where: { productColorId: In(colorIds) },
-        order: { orderIndex: 'ASC' },
-      });
-      const sizesByColor = sizes.reduce(
-        (acc, s) => {
-          if (!acc[s.productColorId]) acc[s.productColorId] = [];
-          acc[s.productColorId].push({
-            id: s.id,
-            sizeLabel: s.sizeLabel,
-            quantity: Number(s.quantity) || 0,
-            orderIndex: s.orderIndex,
-          });
-          totalQuantity += Number(s.quantity) || 0;
-          return acc;
-        },
-        {} as Record<string, any[]>,
-      );
-
-      colorsWithSizes = rawColors.map((c) => {
-        const colorSizes = sizesByColor[c.id] || [];
-        const colorQty = colorSizes.reduce(
-          (sum, s) => sum + (Number(s.quantity) || 0),
-          0,
-        );
-        return {
-          id: c.id,
-          colorName: c.colorName,
-          orderIndex: c.orderIndex,
-          sizes: colorSizes,
-          totalQuantity: colorQty,
-        };
-      });
-    }
+    const sourceStyle = product.sourceStyleId
+      ? await this.styleRepo.findOne({ where: { id: product.sourceStyleId } })
+      : null;
 
     // Liệt kê tường minh thay vì `...product`, cùng lý do như getProducts:
     // entity còn mang rowVersion, previousStatus, createdBy/updatedBy, closedBy.
@@ -2465,8 +2327,6 @@ export class PurchaseOrdersService {
       importedBy: product.importedBy,
       createdAt: product.createdAt,
       updatedAt: product.updatedAt,
-      totalQuantity,
-      colors: colorsWithSizes,
       sourceStyle: sourceStyle
         ? {
             id: sourceStyle.id,
@@ -2475,11 +2335,152 @@ export class PurchaseOrdersService {
             category: sourceStyle.category,
           }
         : null,
-      operationSteps: steps,
-      sampleRounds,
-      productionDocument: prodDoc,
-      documents: docsWithInfo,
     };
+  }
+
+  /**
+   * Lấy bảng màu & size của sản phẩm (tab Màu / tóm tắt tab Thông tin).
+   */
+  async getProductColors(productId: string) {
+    const rawColors = await this.productColorRepo.find({
+      where: { productId },
+      order: { orderIndex: 'ASC' },
+    });
+    if (rawColors.length === 0) {
+      return { colors: [], totalQuantity: 0 };
+    }
+
+    const colorIds = rawColors.map((c) => c.id);
+    const sizes = await this.productColorSizeRepo.find({
+      where: { productColorId: In(colorIds) },
+      order: { orderIndex: 'ASC' },
+    });
+    let totalQuantity = 0;
+    const sizesByColor = sizes.reduce(
+      (acc, s) => {
+        if (!acc[s.productColorId]) acc[s.productColorId] = [];
+        acc[s.productColorId].push({
+          id: s.id,
+          sizeLabel: s.sizeLabel,
+          quantity: Number(s.quantity) || 0,
+          orderIndex: s.orderIndex,
+        });
+        totalQuantity += Number(s.quantity) || 0;
+        return acc;
+      },
+      {} as Record<string, any[]>,
+    );
+
+    const colors = rawColors.map((c) => {
+      const colorSizes = sizesByColor[c.id] || [];
+      const colorQty = colorSizes.reduce(
+        (sum, s) => sum + (Number(s.quantity) || 0),
+        0,
+      );
+      return {
+        id: c.id,
+        colorName: c.colorName,
+        orderIndex: c.orderIndex,
+        sizes: colorSizes,
+        totalQuantity: colorQty,
+      };
+    });
+
+    return { colors, totalQuantity };
+  }
+
+  /**
+   * Lấy tài liệu đính kèm sản phẩm kèm toàn bộ phiên bản (tab Tài liệu đính
+   * kèm / lọc bảng màu ở tab Màu). Ký lại link S3 mỗi lần đọc — không lưu
+   * link đã ký (xem PRESIGN_GET_EXPIRY_SECONDS).
+   */
+  async getProductDocuments(productId: string, purpose?: string) {
+    if (
+      purpose &&
+      !Object.values(DocumentPurpose).includes(purpose as DocumentPurpose)
+    ) {
+      throw new BadRequestException(`purpose không hợp lệ: ${purpose}`);
+    }
+    const productDocs = await this.productDocRepo.find({
+      where: purpose
+        ? { productId, purpose: purpose as DocumentPurpose }
+        : { productId },
+      order: { linkedAt: 'DESC' },
+    });
+    if (productDocs.length === 0) return [];
+
+    const docIds = productDocs.map((pd) => pd.documentId);
+    const docs = await this.docRepo.find({ where: { id: In(docIds) } });
+    const docsMap = new Map(docs.map((d) => [d.id, d]));
+    const allVersions = await this.docVersionRepo.find({
+      where: { documentId: In(docIds) },
+      order: { versionNo: 'DESC' },
+    });
+    const versionsByDoc = allVersions.reduce(
+      (acc, v) => {
+        if (!acc[v.documentId]) acc[v.documentId] = [];
+        acc[v.documentId].push(v);
+        return acc;
+      },
+      {} as Record<string, DocumentVersion[]>,
+    );
+
+    return Promise.all(
+      productDocs.map(async (pd) => {
+        const masterDoc = docsMap.get(pd.documentId);
+        const docVersions = versionsByDoc[pd.documentId] || [];
+        const currentVersion =
+          (masterDoc?.currentVersionId &&
+            docVersions.find((v) => v.id === masterDoc.currentVersionId)) ||
+          docVersions[0] ||
+          null;
+
+        // fileUrl trước đây trả thẳng storageKey — đó là object key của S3,
+        // không phải URL, nên mọi link tải/xem tài liệu của sản phẩm đều hỏng.
+        // Ký lại ở mỗi lần đọc, giống cách tài liệu PO và ảnh Style vẫn làm.
+        const signedCurrentUrl = isResolvableObjectKey(
+          currentVersion?.storageKey,
+        )
+          ? await this.storage.getPresignedGetUrl(currentVersion.storageKey)
+          : null;
+
+        const signedVersions = await Promise.all(
+          docVersions.map(async (v) => ({
+            id: v.id,
+            versionNo: v.versionNo,
+            originalFileName: v.originalFileName,
+            fileUrl: isResolvableObjectKey(v.storageKey)
+              ? await this.storage.getPresignedGetUrl(v.storageKey)
+              : null,
+            fileSize: v.byteSize ? Number(v.byteSize) : null,
+            mimeType: v.mimeType,
+            changeReason: v.changeReason,
+            uploadedAt: v.uploadedAt,
+            uploadedBy: v.uploadedBy,
+          })),
+        );
+
+        return {
+          documentId: pd.documentId,
+          productId: pd.productId,
+          purpose: pd.purpose,
+          linkedAt: pd.linkedAt,
+          sourcePoDocument: pd.sourcePoDocument ?? null,
+          title:
+            masterDoc?.title || currentVersion?.originalFileName || 'Tài liệu',
+          documentCode: masterDoc?.documentCode || null,
+          fileName:
+            currentVersion?.originalFileName || masterDoc?.title || null,
+          fileUrl: signedCurrentUrl,
+          fileSize: currentVersion?.byteSize
+            ? Number(currentVersion.byteSize)
+            : null,
+          currentVersionNo: currentVersion?.versionNo || 1,
+          changeReason: currentVersion?.changeReason || null,
+          versions: signedVersions,
+        };
+      }),
+    );
   }
 
   /**

@@ -2135,4 +2135,143 @@ describe('PurchaseOrdersService', () => {
       );
     });
   });
+
+  describe('getProductDetail / getProductColors / getProductDocuments (per-tab split)', () => {
+    it('getProductDetail no longer returns colors/steps/sampleRounds/productionDocument/documents', async () => {
+      mockProductRepo.findOne.mockResolvedValueOnce({
+        id: 'prod-1',
+        purchaseOrderId: 'po-1',
+        productCode: 'SP-01',
+        productName: 'Áo thun',
+        sourceStyleId: null,
+      });
+
+      const result = await service.getProductDetail('po-1', 'prod-1');
+
+      expect(result).not.toHaveProperty('colors');
+      expect(result).not.toHaveProperty('operationSteps');
+      expect(result).not.toHaveProperty('sampleRounds');
+      expect(result).not.toHaveProperty('productionDocument');
+      expect(result).not.toHaveProperty('documents');
+      expect(result).not.toHaveProperty('totalQuantity');
+      expect(result.productCode).toBe('SP-01');
+    });
+
+    it('getProductColors returns colors with per-color size totals', async () => {
+      mockGenericRepo.find
+        .mockResolvedValueOnce([
+          { id: 'c-1', colorName: 'Đen', orderIndex: 0 },
+          { id: 'c-2', colorName: 'Trắng', orderIndex: 1 },
+        ])
+        .mockResolvedValueOnce([
+          {
+            id: 's-1',
+            productColorId: 'c-1',
+            sizeLabel: 'M',
+            quantity: 20,
+            orderIndex: 0,
+          },
+          {
+            id: 's-2',
+            productColorId: 'c-1',
+            sizeLabel: 'L',
+            quantity: 5,
+            orderIndex: 1,
+          },
+          {
+            id: 's-3',
+            productColorId: 'c-2',
+            sizeLabel: 'S',
+            quantity: 3,
+            orderIndex: 0,
+          },
+        ]);
+
+      const result = await service.getProductColors('prod-1');
+
+      expect(result.totalQuantity).toBe(28);
+      expect(result.colors).toEqual([
+        expect.objectContaining({ colorName: 'Đen', totalQuantity: 25 }),
+        expect.objectContaining({ colorName: 'Trắng', totalQuantity: 3 }),
+      ]);
+    });
+
+    it('getProductColors returns an empty list without querying sizes when the product has no colors', async () => {
+      mockGenericRepo.find.mockResolvedValueOnce([]);
+
+      const result = await service.getProductColors('prod-1');
+
+      expect(result).toEqual({ colors: [], totalQuantity: 0 });
+    });
+
+    it('getProductDocuments resolves a fresh presigned URL per document version', async () => {
+      mockGenericRepo.find.mockResolvedValueOnce([
+        {
+          documentId: 'doc-1',
+          productId: 'prod-1',
+          purpose: 'tech_pack',
+          linkedAt: new Date(),
+        },
+      ]);
+      mockDocRepo.find.mockResolvedValueOnce([
+        {
+          id: 'doc-1',
+          title: 'Techpack SP-01',
+          documentCode: 'DOC-1',
+          currentVersionId: 'v-1',
+        },
+      ]);
+      mockDocVersionRepo.find.mockResolvedValueOnce([
+        {
+          id: 'v-1',
+          documentId: 'doc-1',
+          versionNo: 1,
+          originalFileName: 'techpack.pdf',
+          storageKey: 'purchase-orders/prod-1/techpack.pdf',
+          byteSize: 1024,
+          mimeType: 'application/pdf',
+        },
+      ]);
+
+      const result = await service.getProductDocuments('prod-1');
+
+      expect(result).toEqual([
+        expect.objectContaining({
+          documentId: 'doc-1',
+          title: 'Techpack SP-01',
+          fileUrl: 'https://s3.example/get',
+          currentVersionNo: 1,
+        }),
+      ]);
+      expect(storageMock.getPresignedGetUrl).toHaveBeenCalled();
+    });
+
+    it('getProductDocuments returns an empty list without touching Document/DocumentVersion when nothing is linked', async () => {
+      mockGenericRepo.find.mockResolvedValueOnce([]);
+
+      const result = await service.getProductDocuments('prod-1');
+
+      expect(result).toEqual([]);
+      expect(mockDocRepo.find).not.toHaveBeenCalled();
+    });
+
+    it('getProductDocuments filters by purpose at the DB level, not just in the response, so the Bảng màu tab does not pay to presign every other document', async () => {
+      mockGenericRepo.find.mockResolvedValueOnce([]);
+
+      await service.getProductDocuments('prod-1', 'color_card');
+
+      expect(mockGenericRepo.find).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { productId: 'prod-1', purpose: 'color_card' },
+        }),
+      );
+    });
+
+    it('getProductDocuments rejects an unknown purpose value with a 400 instead of forwarding it to the DB', async () => {
+      await expect(
+        service.getProductDocuments('prod-1', '__proto__'),
+      ).rejects.toThrow(BadRequestException);
+      expect(mockGenericRepo.find).not.toHaveBeenCalled();
+    });
+  });
 });

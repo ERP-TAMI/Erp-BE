@@ -216,14 +216,32 @@ export class PurchaseOrdersController {
   }
 
   @Get(':id/products/:productId')
-  @ApiOperation({ summary: 'Lấy chi tiết sản phẩm và toàn bộ dữ liệu con' })
-  @ApiResponse({ status: 200, description: 'Chi tiết sản phẩm' })
+  @ApiOperation({ summary: 'Lấy thông tin chung của sản phẩm (tab Thông tin)' })
+  @ApiResponse({ status: 200, description: 'Thông tin chung của sản phẩm' })
   @ApiResponse({ status: 404, description: 'Không tìm thấy sản phẩm' })
   async getProductDetail(
     @Param('id', ParseUUIDPipe) id: string,
     @Param('productId', ParseUUIDPipe) productId: string,
   ) {
     return this.service.getProductDetail(id, productId);
+  }
+
+  @Get(':id/products/:productId/colors')
+  @ApiOperation({ summary: 'Lấy bảng màu & size của sản phẩm' })
+  async getProductColors(@Param('productId', ParseUUIDPipe) productId: string) {
+    return this.service.getProductColors(productId);
+  }
+
+  @Get(':id/products/:productId/documents')
+  @ApiOperation({
+    summary:
+      'Lấy danh sách tài liệu đính kèm sản phẩm, lọc theo purpose nếu có (VD tab Bảng màu chỉ cần color_card)',
+  })
+  async getProductDocumentsList(
+    @Param('productId', ParseUUIDPipe) productId: string,
+    @Query('purpose') purpose?: string,
+  ) {
+    return this.service.getProductDocuments(productId, purpose);
   }
 
   @Patch(':id/products/:productId')
