@@ -6,6 +6,7 @@ import { StyleOperationStepsService } from '../style-operation-steps.service';
 import { StyleOperationStep } from '../entities/StyleOperationStep.entity';
 import { Style } from '../entities/Style.entity';
 import { AuditService } from '../../audit/audit.service';
+import { AuditEventType } from '../../../common/enums/database.enums';
 
 const testActor = { id: 'actor-1', roleCode: 'RD' };
 
@@ -261,6 +262,95 @@ describe('StyleOperationStepsService', () => {
         service.createMany(mockStyleId, steps as any),
       ).rejects.toThrow(BadRequestException);
       expect(stepRepoMock.save).not.toHaveBeenCalled();
+    });
+
+    it('records exactly one audit event for a multi-row save, not one per row', async () => {
+      stepRepoMock.find.mockResolvedValueOnce([]);
+      const steps = [
+        { stepName: 'Cắt', timePerPiece: 10, ssv: 10, orderIndex: 0 },
+        { stepName: 'May', timePerPiece: 25, ssv: 25, orderIndex: 1 },
+      ];
+
+      await service.createMany(mockStyleId, steps as any, undefined, testActor);
+
+      expect(auditServiceMock.recordEntityChange).toHaveBeenCalledTimes(1);
+      const [, input] = auditServiceMock.recordEntityChange.mock.calls[0];
+      expect(input.eventType).toBe(AuditEventType.CREATED);
+      expect(input.aggregateId).toBe(mockStyleId);
+      expect(input.reason).toContain('Tạo mới 2 công đoạn (Cắt, May)');
+      expect(
+        input.changes.some((c: any) => c.fieldName === 'Cắt::stepName'),
+      ).toBe(true);
+      expect(
+        input.changes.some((c: any) => c.fieldName === 'May::stepName'),
+      ).toBe(true);
+    });
+
+    it('records one event covering create + update + delete together when a save mixes all three', async () => {
+      const secondExistingStep: Partial<StyleOperationStep> = {
+        id: 'existing-step-2',
+        styleId: mockStyleId,
+        stepName: 'Ủi',
+        timePerPiece: 5,
+        ssv: 5,
+        targetTotal: 100,
+        orderIndex: 1,
+        isGroup: false,
+        parentStepId: null,
+      };
+      stepRepoMock.find.mockResolvedValueOnce([mockStep, secondExistingStep]);
+      // The shared save mock falls back to the same mockStepId for every
+      // entity that has no id of its own — fine for single-row tests, but
+      // here it would collapse the one genuinely-new row onto mockStepId
+      // and get misread as an update. Give each id-less entity its own id.
+      let newRowCounter = 0;
+      stepRepoMock.save.mockImplementation(async (entity: any) => ({
+        id: entity.id || `new-row-${newRowCounter++}`,
+        ...entity,
+      }));
+
+      const steps = [
+        {
+          id: mockStepId,
+          stepName: 'Cắt vải (đã sửa)',
+          timePerPiece: 20,
+          ssv: 20,
+          orderIndex: 0,
+        },
+        { stepName: 'May cổ', timePerPiece: 12, ssv: 12, orderIndex: 1 },
+        // "Ủi" (existing-step-2) is intentionally left out — it gets deleted.
+      ];
+
+      await service.createMany(mockStyleId, steps as any, undefined, testActor);
+
+      expect(auditServiceMock.recordEntityChange).toHaveBeenCalledTimes(1);
+      const [, input] = auditServiceMock.recordEntityChange.mock.calls[0];
+      expect(input.eventType).toBe(AuditEventType.UPDATED);
+      expect(input.reason).toContain('Tạo mới 1 công đoạn (May cổ)');
+      expect(input.reason).toContain('Cập nhật 1 công đoạn (Cắt vải (đã sửa))');
+      expect(input.reason).toContain('Xoá 1 công đoạn (Ủi)');
+    });
+
+    it('records one DELETED event when the whole grid is cleared', async () => {
+      const steps: any[] = [];
+
+      await service.createMany(mockStyleId, steps, undefined, testActor);
+
+      expect(auditServiceMock.recordEntityChange).toHaveBeenCalledTimes(1);
+      const [, input] = auditServiceMock.recordEntityChange.mock.calls[0];
+      expect(input.eventType).toBe(AuditEventType.DELETED);
+      expect(input.reason).toContain('Xoá 1 công đoạn (Cắt vải)');
+    });
+
+    it('does not record any audit event when no actor is given', async () => {
+      stepRepoMock.find.mockResolvedValueOnce([]);
+      const steps = [
+        { stepName: 'Cắt', timePerPiece: 10, ssv: 10, orderIndex: 0 },
+      ];
+
+      await service.createMany(mockStyleId, steps as any);
+
+      expect(auditServiceMock.recordEntityChange).not.toHaveBeenCalled();
     });
   });
 

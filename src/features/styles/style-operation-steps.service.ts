@@ -13,7 +13,7 @@ import {
   StyleOperationStepItemDto,
 } from './dto/style-operation-step.dto';
 import { AuditService } from '../audit/audit.service';
-import { diffEntity } from '../audit/entity-diff.util';
+import { diffEntity, EntityFieldChange } from '../audit/entity-diff.util';
 import { AuditActor } from '../audit/audit-actor.type';
 import { AuditEventType } from '../../common/enums/database.enums';
 
@@ -134,34 +134,90 @@ export class StyleOperationStepsService {
         // vì createMany luôn xoá-rồi-tạo-lại chứ không UPDATE tại chỗ.
         const beforeSteps = await stepRepo.find({ where: { styleId } });
         const beforeById = new Map(beforeSteps.map((s) => [s.id, s]));
-        const recordAudit = async (
+
+        // 1 lần bấm "Lưu" trên bảng công đoạn có thể đụng tới hàng chục dòng
+        // (tạo/sửa/xoá trộn lẫn) — trước đây mỗi dòng ghi 1 audit event riêng,
+        // khiến lịch sử vỡ vụn thành hàng chục dòng cho cùng 1 thao tác lưu.
+        // Gom lại thành đúng 1 event/lần lưu: field-name của mỗi thay đổi
+        // được gắn tiền tố "<tên công đoạn>::" để getFieldLabel() ghép thành
+        // nhãn dễ đọc (VD "Cắt vải — Tên công đoạn") mà vẫn phân biệt được
+        // dòng nào đổi gì khi mở rộng chi tiết.
+        const createdLabels: string[] = [];
+        const updatedLabels: string[] = [];
+        const deletedLabels: string[] = [];
+        const bulkChanges: EntityFieldChange[] = [];
+
+        const accumulate = (
           after: StyleOperationStep,
-          eventType: AuditEventType,
           before: StyleOperationStep | null,
-        ): Promise<void> => {
-          if (!actor) return;
-          await this.recordStepChange(
-            manager,
-            styleId,
-            after,
-            eventType,
-            before,
-            actor,
-          );
+        ): void => {
+          const rowLabel = after.stepName || '(không tên)';
+          const fields = diffEntity(before, after, TRACKED_FIELDS);
+          if (!before) {
+            createdLabels.push(rowLabel);
+          } else if (fields.length > 0) {
+            updatedLabels.push(rowLabel);
+          }
+          for (const field of fields) {
+            bulkChanges.push({
+              ...field,
+              fieldName: `${rowLabel}::${field.fieldName}`,
+            });
+          }
         };
-        const recordDeleted = async (
-          before: StyleOperationStep,
-        ): Promise<void> => {
+
+        const accumulateDeleted = (before: StyleOperationStep): void => {
+          deletedLabels.push(before.stepName || '(không tên)');
+        };
+
+        const finalizeBulkAudit = async (): Promise<void> => {
           if (!actor) return;
+          if (
+            createdLabels.length === 0 &&
+            updatedLabels.length === 0 &&
+            deletedLabels.length === 0
+          ) {
+            return;
+          }
+          const reasonParts: string[] = [];
+          if (createdLabels.length > 0) {
+            reasonParts.push(
+              `Tạo mới ${createdLabels.length} công đoạn (${createdLabels.join(', ')})`,
+            );
+          }
+          if (updatedLabels.length > 0) {
+            reasonParts.push(
+              `Cập nhật ${updatedLabels.length} công đoạn (${updatedLabels.join(', ')})`,
+            );
+          }
+          if (deletedLabels.length > 0) {
+            reasonParts.push(
+              `Xoá ${deletedLabels.length} công đoạn (${deletedLabels.join(', ')})`,
+            );
+          }
+          const isPureCreation =
+            createdLabels.length > 0 &&
+            updatedLabels.length === 0 &&
+            deletedLabels.length === 0;
+          const isPureDeletion =
+            deletedLabels.length > 0 &&
+            createdLabels.length === 0 &&
+            updatedLabels.length === 0;
+          const eventType = isPureCreation
+            ? AuditEventType.CREATED
+            : isPureDeletion
+              ? AuditEventType.DELETED
+              : AuditEventType.UPDATED;
           await this.auditService.recordEntityChange(manager, {
             aggregateType: AGGREGATE_TYPE,
-            aggregateId: before.id,
+            aggregateId: styleId,
             parentId: styleId,
             actorId: actor.id,
             actorRole: actor.roleCode,
-            targetLabel: before.stepName,
-            eventType: AuditEventType.DELETED,
-            changes: [],
+            targetLabel: 'Quy trình công đoạn',
+            eventType,
+            reason: reasonParts.join('; '),
+            changes: bulkChanges,
           });
         };
 
@@ -181,8 +237,9 @@ export class StyleOperationStepsService {
 
         if (!steps || steps.length === 0) {
           for (const before of beforeSteps) {
-            await recordDeleted(before);
+            accumulateDeleted(before);
           }
+          await finalizeBulkAudit();
           return [];
         }
 
@@ -288,11 +345,7 @@ export class StyleOperationStepsService {
           const saved = await stepRepo.save(entity);
           savedStepsMap.set(index, saved);
           const before = beforeById.get(saved.id) ?? null;
-          await recordAudit(
-            saved,
-            before ? AuditEventType.UPDATED : AuditEventType.CREATED,
-            before,
-          );
+          accumulate(saved, before);
 
           if (rawId) {
             tempIdToRealIdMap.set(rawId, saved.id);
@@ -346,11 +399,7 @@ export class StyleOperationStepsService {
           const saved = await stepRepo.save(entity);
           savedStepsMap.set(index, saved);
           const before = beforeById.get(saved.id) ?? null;
-          await recordAudit(
-            saved,
-            before ? AuditEventType.UPDATED : AuditEventType.CREATED,
-            before,
-          );
+          accumulate(saved, before);
 
           if (rawId) {
             tempIdToRealIdMap.set(rawId, saved.id);
@@ -363,9 +412,11 @@ export class StyleOperationStepsService {
         const afterIds = new Set(afterSteps.map((s) => s.id));
         for (const before of beforeSteps) {
           if (!afterIds.has(before.id)) {
-            await recordDeleted(before);
+            accumulateDeleted(before);
           }
         }
+
+        await finalizeBulkAudit();
 
         return afterSteps;
       });
