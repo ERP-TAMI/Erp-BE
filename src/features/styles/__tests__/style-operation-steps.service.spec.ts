@@ -353,12 +353,12 @@ describe('StyleOperationStepsService', () => {
       expect(auditServiceMock.recordEntityChange).not.toHaveBeenCalled();
     });
 
-    it("resolves stageId to the stage's real name in a bulk save instead of a raw UUID", async () => {
+    it('does not record the catalog stage link in a bulk save (it only duplicates the step name)', async () => {
       const STAGE_ID = '11111111-1111-1111-1111-111111111111';
       stepRepoMock.find.mockResolvedValueOnce([]);
       stepRepoMock.query.mockImplementation((sql: string) => {
         if (sql.includes('FROM stages')) {
-          return Promise.resolve([{ id: STAGE_ID, stage_name: 'Xưởng cắt' }]);
+          return Promise.resolve([{ id: STAGE_ID }]);
         }
         return Promise.resolve([]);
       });
@@ -376,13 +376,9 @@ describe('StyleOperationStepsService', () => {
       await service.createMany(mockStyleId, steps as any, undefined, testActor);
 
       const [, input] = auditServiceMock.recordEntityChange.mock.calls[0];
-      const stageChange = input.changes.find(
-        (c: any) => c.fieldName === 'Cắt vải::stageId',
-      );
-      expect(stageChange).toMatchObject({
-        oldValue: null,
-        newValue: 'Xưởng cắt',
-      });
+      const fieldNames = input.changes.map((c: any) => c.fieldName);
+      expect(fieldNames).toContain('Cắt vải::stepName');
+      expect(fieldNames).not.toContain('Cắt vải::stageId');
     });
   });
 
@@ -427,18 +423,13 @@ describe('StyleOperationStepsService', () => {
       ).rejects.toThrow(NotFoundException);
     });
 
-    it("resolves stageId to the stage's real name in the audit change instead of a raw UUID", async () => {
+    it('does not record a change to the catalog stage link', async () => {
       const STAGE_ID = '11111111-1111-1111-1111-111111111111';
       stepRepoMock.findOne.mockResolvedValueOnce({
         ...mockStep,
         stageId: null,
       });
-      stepRepoMock.query.mockImplementation((sql: string) => {
-        if (sql.includes('FROM stages')) {
-          return Promise.resolve([{ stage_name: 'Xưởng cắt' }]);
-        }
-        return Promise.resolve([]);
-      });
+      stepRepoMock.query.mockResolvedValue([{ '?column?': 1 }]);
 
       await service.update(
         mockStyleId,
@@ -448,13 +439,9 @@ describe('StyleOperationStepsService', () => {
       );
 
       const [, input] = auditServiceMock.recordEntityChange.mock.calls[0];
-      const stageChange = input.changes.find(
-        (c: any) => c.fieldName === 'stageId',
+      expect(input.changes.map((c: any) => c.fieldName)).not.toContain(
+        'stageId',
       );
-      expect(stageChange).toMatchObject({
-        oldValue: null,
-        newValue: 'Xưởng cắt',
-      });
     });
 
     it('should throw BadRequestException if stageId does not exist', async () => {

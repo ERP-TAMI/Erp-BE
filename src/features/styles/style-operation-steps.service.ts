@@ -21,10 +21,12 @@ export type { AuditActor };
 
 const AGGREGATE_TYPE = 'StyleOperationStep';
 
+// Không theo dõi stageId: chọn công đoạn từ danh mục chỉ để chép tên/mô tả/
+// thời gian vào dòng — liên kết danh mục trùng nội dung với "Tên công đoạn"
+// nên hiện trong lịch sử chỉ gây nhiễu.
 const TRACKED_FIELDS = [
   'stepName',
   'description',
-  'stageId',
   'timePerPiece',
   'ssv',
   'targetTotal',
@@ -47,23 +49,16 @@ export class StyleOperationStepsService {
     private readonly auditService: AuditService,
   ) {}
 
-  /** stageId/groupId/parentStepId là khoá ngoại — hiện thẳng UUID trong lịch
-   * sử thay đổi thì không ai đọc hiểu được. Dịch (chốt tên ngay lúc ghi log,
-   * không tra cứu sống mỗi lần xem) sang tên thật của Stage/StageGroup/công
-   * đoạn cha trước khi lưu vào audit_event_changes. */
+  /** groupId/parentStepId là khoá ngoại — hiện thẳng UUID trong lịch sử thay
+   * đổi thì không ai đọc hiểu được. Dịch (chốt tên ngay lúc ghi log, không
+   * tra cứu sống mỗi lần xem) sang tên thật của StageGroup/công đoạn cha
+   * trước khi lưu vào audit_event_changes. */
   private async resolveFkValue(
     manager: EntityManager,
     fieldName: string,
     value: unknown,
   ): Promise<unknown> {
     if (typeof value !== 'string') return value;
-    if (fieldName === 'stageId') {
-      const rows = await manager.query(
-        'SELECT stage_name FROM stages WHERE id = $1',
-        [value],
-      );
-      return rows[0]?.stage_name ?? value;
-    }
     if (fieldName === 'groupId') {
       const rows = await manager.query(
         'SELECT group_name FROM stage_groups WHERE id = $1',
@@ -205,10 +200,9 @@ export class StyleOperationStepsService {
         const deletedLabels: string[] = [];
         const bulkChanges: EntityFieldChange[] = [];
 
-        // stageId/groupId/parentStepId là khoá ngoại — dịch (chốt tên ngay
-        // lúc ghi log) sang tên thật thay vì để lộ UUID ra lịch sử. Map thay
-        // vì tra cứu từng field/dòng vì 1 lần lưu có thể đụng hàng chục dòng.
-        const stageNameById = new Map<string, string>();
+        // groupId/parentStepId là khoá ngoại — dịch (chốt tên ngay lúc ghi
+        // log) sang tên thật thay vì để lộ UUID ra lịch sử. Map thay vì tra
+        // cứu từng field/dòng vì 1 lần lưu có thể đụng hàng chục dòng.
         const groupNameById = new Map<string, string>();
         const stepNameById = new Map(
           beforeSteps.map((s) => [s.id, s.stepName]),
@@ -218,7 +212,6 @@ export class StyleOperationStepsService {
           value: unknown,
         ): unknown => {
           if (typeof value !== 'string') return value;
-          if (fieldName === 'stageId') return stageNameById.get(value) ?? value;
           if (fieldName === 'groupId') return groupNameById.get(value) ?? value;
           if (fieldName === 'parentStepId')
             return stepNameById.get(value) ?? value;
@@ -329,13 +322,8 @@ export class StyleOperationStepsService {
         const validStageIds = new Set<string>();
         const validGroupIds = new Set<string>();
 
-        const stageRows = await manager.query(
-          'SELECT id, stage_name FROM stages',
-        );
-        stageRows.forEach((r: { id: string; stage_name: string }) => {
-          validStageIds.add(r.id);
-          stageNameById.set(r.id, r.stage_name);
-        });
+        const stageRows = await manager.query('SELECT id FROM stages');
+        stageRows.forEach((r: { id: string }) => validStageIds.add(r.id));
 
         const groupRows = await manager.query(
           'SELECT id, group_name FROM stage_groups',

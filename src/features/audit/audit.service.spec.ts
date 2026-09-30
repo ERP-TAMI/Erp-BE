@@ -372,6 +372,49 @@ describe('AuditService', () => {
       });
     });
 
+    it('hides fields configured as hidden, including in older records that stored them', async () => {
+      const { service, auditEvents, auditEventChanges } = buildAuditService();
+      (auditEvents.createQueryBuilder as jest.Mock).mockReturnValue(
+        buildMockQueryBuilder(
+          [
+            {
+              id: 'event-1',
+              occurredAt: new Date('2026-01-01T00:00:00.000Z'),
+              eventType: AuditEventType.CREATED,
+              actorUserId: 'actor-1',
+              actorRole: 'RD',
+              targetLabel: 'Quy trình công đoạn',
+              reason: 'Tạo mới 1 công đoạn',
+            },
+          ],
+          1,
+        ),
+      );
+      (auditEventChanges.find as jest.Mock).mockResolvedValue([
+        {
+          auditEventId: 'event-1',
+          fieldName: 'Cắt vải::stepName',
+          oldValue: null,
+          newValue: 'Cắt vải',
+        },
+        {
+          auditEventId: 'event-1',
+          fieldName: 'Cắt vải::stageId',
+          oldValue: null,
+          newValue: 'Cắt vải',
+        },
+      ]);
+
+      const result = await service.findEntityHistory(
+        { aggregateType: 'StyleOperationStep', parentId: 'style-1' },
+        [],
+      );
+
+      expect(result.items[0].changes.map((c) => c.fieldName)).toEqual([
+        'Cắt vải::stepName',
+      ]);
+    });
+
     it('translates a known enum value to its Vietnamese label, but leaves unknown values as-is', async () => {
       const { service, auditEvents, auditEventChanges } = buildAuditService();
       (auditEvents.createQueryBuilder as jest.Mock).mockReturnValue(

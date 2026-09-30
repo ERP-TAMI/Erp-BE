@@ -7,6 +7,8 @@ export type EntityAuditConfig = {
    * purpose) — không có thì oldValue/newValue hiện thẳng mã gốc (tiếng Anh)
    * ra UI lịch sử, rất khó hiểu với người dùng không kỹ thuật. */
   fieldValueLabels?: Record<string, Record<string, string>>;
+  /** Field không hiện trong lịch sử — kể cả các bản ghi cũ đã lỡ lưu nó. */
+  hiddenFields?: string[];
 };
 
 export const ENTITY_AUDIT_CONFIG: Record<string, EntityAuditConfig> = {
@@ -27,10 +29,12 @@ export const ENTITY_AUDIT_CONFIG: Record<string, EntityAuditConfig> = {
     },
   },
   StyleOperationStep: {
+    // Liên kết danh mục công đoạn luôn trùng "Tên công đoạn" (tên được chép từ
+    // danh mục khi chọn) — chỉ gây nhiễu nên ẩn khỏi lịch sử.
+    hiddenFields: ['stageId'],
     fieldLabels: {
       stepName: 'Tên công đoạn',
       description: 'Mô tả',
-      stageId: 'Công đoạn (Stage)',
       timePerPiece: 'Thời gian/SP (giây)',
       ssv: '% công đoạn (SSV)',
       targetTotal: 'SP/1H',
@@ -141,6 +145,16 @@ export function getFieldValueLabel(
     ENTITY_AUDIT_CONFIG[aggregateType]?.fieldValueLabels?.[fieldName]?.[
       value
     ] ?? value
+  );
+}
+
+export function isHiddenField(
+  aggregateType: string,
+  fieldName: string,
+): boolean {
+  return (
+    ENTITY_AUDIT_CONFIG[aggregateType]?.hiddenFields?.includes(fieldName) ??
+    false
   );
 }
 

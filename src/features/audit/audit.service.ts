@@ -10,6 +10,7 @@ import {
   canViewSensitiveFields,
   getFieldLabel,
   getFieldValueLabel,
+  isHiddenField,
   isSensitiveField,
   splitBulkFieldName,
 } from './entity-audit.config';
@@ -500,31 +501,40 @@ export class AuditService {
       actorRole: event.actorRole,
       targetLabel: event.targetLabel,
       reason: event.reason,
-      changes: (changesByEvent.get(event.id) ?? []).map((change) => {
-        const bulk = splitBulkFieldName(change.fieldName);
-        const realFieldName = bulk ? bulk.realFieldName : change.fieldName;
-        const sensitive = isSensitiveField(query.aggregateType, realFieldName);
-        const masked = sensitive && !canViewSensitive;
-        return {
-          fieldName: change.fieldName,
-          fieldLabel: getFieldLabel(query.aggregateType, realFieldName),
-          groupLabel: bulk?.rowLabel,
-          oldValue: masked
-            ? SENSITIVE_MASK
-            : translateFieldValue(
-                query.aggregateType,
-                realFieldName,
-                change.oldValue,
-              ),
-          newValue: masked
-            ? SENSITIVE_MASK
-            : translateFieldValue(
-                query.aggregateType,
-                realFieldName,
-                change.newValue,
-              ),
-        };
-      }),
+      changes: (changesByEvent.get(event.id) ?? [])
+        .filter((change) => {
+          const bulk = splitBulkFieldName(change.fieldName);
+          const realFieldName = bulk ? bulk.realFieldName : change.fieldName;
+          return !isHiddenField(query.aggregateType, realFieldName);
+        })
+        .map((change) => {
+          const bulk = splitBulkFieldName(change.fieldName);
+          const realFieldName = bulk ? bulk.realFieldName : change.fieldName;
+          const sensitive = isSensitiveField(
+            query.aggregateType,
+            realFieldName,
+          );
+          const masked = sensitive && !canViewSensitive;
+          return {
+            fieldName: change.fieldName,
+            fieldLabel: getFieldLabel(query.aggregateType, realFieldName),
+            groupLabel: bulk?.rowLabel,
+            oldValue: masked
+              ? SENSITIVE_MASK
+              : translateFieldValue(
+                  query.aggregateType,
+                  realFieldName,
+                  change.oldValue,
+                ),
+            newValue: masked
+              ? SENSITIVE_MASK
+              : translateFieldValue(
+                  query.aggregateType,
+                  realFieldName,
+                  change.newValue,
+                ),
+          };
+        }),
     }));
 
     return {
