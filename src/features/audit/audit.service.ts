@@ -453,8 +453,11 @@ export class AuditService {
       };
     }
 
+    // Không có ORDER BY thì Postgres trả thứ tự tuỳ ý (dòng vừa bị UPDATE bị
+    // dồn xuống cuối) — các field của cùng 1 công đoạn bị tách rời nhau.
     const changes = await this.auditEventChanges.find({
       where: { auditEventId: In(events.map((event) => event.id)) },
+      order: { id: 'ASC' },
     });
     const changesByEvent = new Map<string, AuditEventChange[]>();
     for (const change of changes) {
