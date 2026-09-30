@@ -128,6 +128,23 @@ describe('AuditService', () => {
     expect(httpAuditLogs.save).toHaveBeenCalled();
   });
 
+  it('filters http audit logs by a substring match on the actor email', async () => {
+    const { service, httpAuditLogs } = buildAuditService();
+    const qb = buildMockQueryBuilder([], 0);
+    (httpAuditLogs.createQueryBuilder as jest.Mock).mockReturnValue(qb);
+
+    await service.findHttpAuditLogs({
+      actorIdentifier: 'sa@tami',
+      page: 1,
+      limit: 20,
+    });
+
+    expect(qb.andWhere).toHaveBeenCalledWith(
+      'log.actorIdentifier ILIKE :actorIdentifier',
+      { actorIdentifier: '%sa@tami%' },
+    );
+  });
+
   describe('recordEntityChange', () => {
     function buildManager() {
       const eventRepository = {

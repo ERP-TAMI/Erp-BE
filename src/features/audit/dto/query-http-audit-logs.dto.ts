@@ -29,6 +29,14 @@ export class QueryHttpAuditLogsDto {
   @IsUUID('4')
   actorUserId?: string;
 
+  @ApiPropertyOptional({
+    description: 'Substring match on the actor email/identifier',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  actorIdentifier?: string;
+
   @ApiPropertyOptional({ description: 'ISO timestamp, inclusive lower bound' })
   @IsOptional()
   @IsDateString()

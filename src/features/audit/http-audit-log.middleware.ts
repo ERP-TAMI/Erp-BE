@@ -31,7 +31,18 @@ export class HttpAuditLogMiddleware implements NestMiddleware {
 
   constructor(private readonly auditService: AuditService) {}
 
+  // Nhật ký này để điều tra sự cố/thao tác bất thường, không phải log truy
+  // cập chung — GET/HEAD/OPTIONS không đổi dữ liệu nên chiếm phần lớn khối
+  // lượng (~90% số dòng) mà gần như không có giá trị điều tra, chỉ làm loãng
+  // bảng và phình DB nhanh không cần thiết.
+  private static readonly SKIPPED_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+
   use(req: AuditableRequest, res: Response, next: NextFunction): void {
+    if (HttpAuditLogMiddleware.SKIPPED_METHODS.has(req.method)) {
+      next();
+      return;
+    }
+
     const startedAt = Date.now();
     let capturedBody: unknown;
     const originalJson = res.json.bind(res);

@@ -21,13 +21,13 @@ describe('HttpAuditLogMiddleware', () => {
     middleware = new HttpAuditLogMiddleware(auditService);
   });
 
-  it('records a successful request with the authenticated actor', async () => {
+  it('records a successful mutating request with the authenticated actor', async () => {
     const request = {
-      method: 'GET',
-      originalUrl: '/styles?page=1',
-      url: '/styles?page=1',
-      query: { page: '1' },
-      body: {},
+      method: 'PATCH',
+      originalUrl: '/styles/style-1',
+      url: '/styles/style-1',
+      query: {},
+      body: { styleName: 'Áo mới' },
       headers: { 'user-agent': 'jest' },
       ip: '127.0.0.1',
       id: 'req-1',
@@ -45,8 +45,8 @@ describe('HttpAuditLogMiddleware', () => {
 
     expect(auditService.recordHttpRequest).toHaveBeenCalledWith(
       expect.objectContaining({
-        method: 'GET',
-        path: '/styles?page=1',
+        method: 'PATCH',
+        path: '/styles/style-1',
         statusCode: 200,
         actorUserId: 'user-1',
         actorRole: 'SA',
@@ -54,6 +54,34 @@ describe('HttpAuditLogMiddleware', () => {
       }),
     );
   });
+
+  it.each(['GET', 'HEAD', 'OPTIONS'])(
+    'does not record a %s request — read-only traffic dwarfs mutations and adds no investigative value',
+    async (method) => {
+      const request = {
+        method,
+        originalUrl: '/styles?page=1',
+        url: '/styles?page=1',
+        query: { page: '1' },
+        body: {},
+        headers: { 'user-agent': 'jest' },
+        ip: '127.0.0.1',
+        id: 'req-skip',
+        user: { id: 'user-1', email: 'sa@tami.test', roleCode: 'SA' },
+      };
+      const response = buildResponse(200);
+      const next = jest.fn();
+
+      middleware.use(request as any, response, next);
+      expect(next).toHaveBeenCalled();
+
+      response.emit('finish');
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(auditService.recordHttpRequest).not.toHaveBeenCalled();
+    },
+  );
 
   it('captures the error message and redacts the password for a failed request with no authenticated actor', async () => {
     const request = {

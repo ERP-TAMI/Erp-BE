@@ -159,6 +159,11 @@ export class AuditService {
         actorUserId: query.actorUserId,
       });
     }
+    if (query.actorIdentifier) {
+      qb.andWhere('log.actorIdentifier ILIKE :actorIdentifier', {
+        actorIdentifier: `%${query.actorIdentifier}%`,
+      });
+    }
     if (query.from) {
       qb.andWhere('log.occurredAt >= :from', { from: new Date(query.from) });
     }
