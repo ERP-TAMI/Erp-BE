@@ -115,6 +115,9 @@ describe('AuditService', () => {
       queryParams: { page: 1 },
       requestBody: null,
       errorMessage: null,
+      action: null,
+      resourceType: null,
+      resourceId: null,
     });
 
     expect(httpAuditLogs.create).toHaveBeenCalledWith(
@@ -126,6 +129,60 @@ describe('AuditService', () => {
       }),
     );
     expect(httpAuditLogs.save).toHaveBeenCalled();
+  });
+
+  it('describes each http log in plain terms: action, object type/name, and the login role looked up by email', async () => {
+    const { service, httpAuditLogs } = buildAuditService();
+    const styleId = 'ca49c0c4-b445-4f3d-9ada-0bc7da768650';
+    const base = {
+      statusCode: 200,
+      actorUserId: null,
+      actorIdentifier: 'sa@tami.test',
+      actorRole: null,
+      requestBody: null,
+      action: null,
+      resourceType: null,
+      resourceId: null,
+    };
+    (httpAuditLogs.createQueryBuilder as jest.Mock).mockReturnValue(
+      buildMockQueryBuilder(
+        [
+          { ...base, id: 'log-1', method: 'POST', path: '/auth/login' },
+          { ...base, id: 'log-2', method: 'PATCH', path: `/styles/${styleId}` },
+        ],
+        2,
+      ),
+    );
+    (httpAuditLogs as unknown as { query: jest.Mock }).query = jest.fn(
+      (sql: string) =>
+        Promise.resolve(
+          sql.includes('FROM styles')
+            ? [{ id: styleId, name: 'Ribbed Tank Top' }]
+            : [
+                {
+                  email: 'sa@tami.test',
+                  full_name: 'Quản trị hệ thống',
+                  role_code: 'SA',
+                },
+              ],
+        ),
+    );
+
+    const result = await service.findHttpAuditLogs({ page: 1, limit: 20 });
+
+    expect(result.items[0]).toMatchObject({
+      action: 'login',
+      actionLabel: 'Đăng nhập',
+      resourceLabel: 'Tài khoản',
+      targetName: 'Quản trị hệ thống',
+      actorRole: 'SA',
+    });
+    expect(result.items[1]).toMatchObject({
+      action: 'update',
+      actionLabel: 'Cập nhật',
+      resourceLabel: 'Mẫu Fit',
+      targetName: 'Ribbed Tank Top',
+    });
   });
 
   it('filters http audit logs by a substring match on the actor email', async () => {

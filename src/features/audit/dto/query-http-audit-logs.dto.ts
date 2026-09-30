@@ -12,6 +12,14 @@ import {
 } from 'class-validator';
 
 export class QueryHttpAuditLogsDto {
+  @ApiPropertyOptional({
+    description: 'Filter by classified action, e.g. login, update, delete',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  action?: string;
+
   @ApiPropertyOptional({ description: 'Filter by HTTP method, e.g. POST' })
   @IsOptional()
   @IsString()

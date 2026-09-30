@@ -51,4 +51,18 @@ export class HttpAuditLog {
 
   @Column({ type: 'text', nullable: true, name: 'error_message' })
   errorMessage: string | null;
+
+  @Column({ type: 'varchar', length: 40, nullable: true })
+  action: string | null;
+
+  @Column({
+    type: 'varchar',
+    length: 40,
+    nullable: true,
+    name: 'resource_type',
+  })
+  resourceType: string | null;
+
+  @Column({ type: 'varchar', length: 64, nullable: true, name: 'resource_id' })
+  resourceId: string | null;
 }

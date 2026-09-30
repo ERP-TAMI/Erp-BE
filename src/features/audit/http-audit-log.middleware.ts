@@ -2,6 +2,10 @@ import { Injectable, Logger, NestMiddleware } from '@nestjs/common';
 import { NextFunction, Request, Response } from 'express';
 import { AuditService } from './audit.service';
 import { redactSensitiveData } from './redact-sensitive-data.util';
+import {
+  classifyHttpRequest,
+  shouldSkipHttpAudit,
+} from './http-audit-classifier';
 import { RequestUser } from '../auth/jwt-payload.type';
 
 type AuditableRequest = Request & {
@@ -31,14 +35,10 @@ export class HttpAuditLogMiddleware implements NestMiddleware {
 
   constructor(private readonly auditService: AuditService) {}
 
-  // Nhật ký này để điều tra sự cố/thao tác bất thường, không phải log truy
-  // cập chung — GET/HEAD/OPTIONS không đổi dữ liệu nên chiếm phần lớn khối
-  // lượng (~90% số dòng) mà gần như không có giá trị điều tra, chỉ làm loãng
-  // bảng và phình DB nhanh không cần thiết.
-  private static readonly SKIPPED_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
-
   use(req: AuditableRequest, res: Response, next: NextFunction): void {
-    if (HttpAuditLogMiddleware.SKIPPED_METHODS.has(req.method)) {
+    // Chỉ ghi thao tác làm đổi dữ liệu — GET/refresh/presign/validate không có
+    // giá trị điều tra mà chiếm phần lớn khối lượng (xem shouldSkipHttpAudit).
+    if (shouldSkipHttpAudit(req.method, req.originalUrl ?? req.url)) {
       next();
       return;
     }
@@ -55,13 +55,19 @@ export class HttpAuditLogMiddleware implements NestMiddleware {
       const durationMs = Date.now() - startedAt;
       const actorIdentifier =
         req.user?.email ?? (req.body?.email as string | undefined) ?? null;
+      const path = req.originalUrl ?? req.url;
+      const statusCode = res.statusCode ?? null;
+      const classified = classifyHttpRequest(req.method, path, statusCode);
 
       void this.auditService
         .recordHttpRequest({
           occurredAt: new Date(startedAt),
           method: req.method,
-          path: req.originalUrl ?? req.url,
-          statusCode: res.statusCode ?? null,
+          path,
+          statusCode,
+          action: classified.action,
+          resourceType: classified.resource?.type ?? null,
+          resourceId: classified.resource?.id ?? null,
           durationMs,
           actorUserId: req.user?.id ?? null,
           actorIdentifier,
