@@ -258,7 +258,7 @@ describe('AuditService', () => {
       });
     });
 
-    it('resolves a composite bulk-save fieldName ("<rowLabel>::<fieldName>") to "rowLabel — label"', async () => {
+    it('splits a composite bulk-save fieldName ("<rowLabel>::<fieldName>") into a bare fieldLabel plus groupLabel', async () => {
       const { service, auditEvents, auditEventChanges } = buildAuditService();
       (auditEvents.createQueryBuilder as jest.Mock).mockReturnValue(
         buildMockQueryBuilder(
@@ -292,7 +292,8 @@ describe('AuditService', () => {
 
       expect(result.items[0].changes[0]).toMatchObject({
         fieldName: 'Cắt vải::stepName',
-        fieldLabel: 'Cắt vải — Tên công đoạn',
+        fieldLabel: 'Tên công đoạn',
+        groupLabel: 'Cắt vải',
         newValue: 'Cắt vải',
       });
     });

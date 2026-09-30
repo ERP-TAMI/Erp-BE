@@ -47,6 +47,61 @@ export class StyleOperationStepsService {
     private readonly auditService: AuditService,
   ) {}
 
+  /** stageId/groupId/parentStepId là khoá ngoại — hiện thẳng UUID trong lịch
+   * sử thay đổi thì không ai đọc hiểu được. Dịch (chốt tên ngay lúc ghi log,
+   * không tra cứu sống mỗi lần xem) sang tên thật của Stage/StageGroup/công
+   * đoạn cha trước khi lưu vào audit_event_changes. */
+  private async resolveFkValue(
+    manager: EntityManager,
+    fieldName: string,
+    value: unknown,
+  ): Promise<unknown> {
+    if (typeof value !== 'string') return value;
+    if (fieldName === 'stageId') {
+      const rows = await manager.query(
+        'SELECT stage_name FROM stages WHERE id = $1',
+        [value],
+      );
+      return rows[0]?.stage_name ?? value;
+    }
+    if (fieldName === 'groupId') {
+      const rows = await manager.query(
+        'SELECT group_name FROM stage_groups WHERE id = $1',
+        [value],
+      );
+      return rows[0]?.group_name ?? value;
+    }
+    if (fieldName === 'parentStepId') {
+      const rows = await manager.query(
+        'SELECT step_name FROM style_operation_steps WHERE id = $1',
+        [value],
+      );
+      return rows[0]?.step_name ?? value;
+    }
+    return value;
+  }
+
+  private async resolveFkChanges(
+    manager: EntityManager,
+    changes: EntityFieldChange[],
+  ): Promise<EntityFieldChange[]> {
+    return Promise.all(
+      changes.map(async (change) => ({
+        ...change,
+        oldValue: await this.resolveFkValue(
+          manager,
+          change.fieldName,
+          change.oldValue,
+        ),
+        newValue: await this.resolveFkValue(
+          manager,
+          change.fieldName,
+          change.newValue,
+        ),
+      })),
+    );
+  }
+
   private async recordStepChange(
     manager: EntityManager,
     styleId: string,
@@ -55,7 +110,10 @@ export class StyleOperationStepsService {
     before: Partial<StyleOperationStep> | null,
     actor: AuditActor,
   ): Promise<void> {
-    const changes = diffEntity(before, step, TRACKED_FIELDS);
+    const changes = await this.resolveFkChanges(
+      manager,
+      diffEntity(before, step, TRACKED_FIELDS),
+    );
     await this.auditService.recordEntityChange(manager, {
       aggregateType: AGGREGATE_TYPE,
       aggregateId: step.id,
@@ -147,6 +205,26 @@ export class StyleOperationStepsService {
         const deletedLabels: string[] = [];
         const bulkChanges: EntityFieldChange[] = [];
 
+        // stageId/groupId/parentStepId là khoá ngoại — dịch (chốt tên ngay
+        // lúc ghi log) sang tên thật thay vì để lộ UUID ra lịch sử. Map thay
+        // vì tra cứu từng field/dòng vì 1 lần lưu có thể đụng hàng chục dòng.
+        const stageNameById = new Map<string, string>();
+        const groupNameById = new Map<string, string>();
+        const stepNameById = new Map(
+          beforeSteps.map((s) => [s.id, s.stepName]),
+        );
+        const resolveFieldValue = (
+          fieldName: string,
+          value: unknown,
+        ): unknown => {
+          if (typeof value !== 'string') return value;
+          if (fieldName === 'stageId') return stageNameById.get(value) ?? value;
+          if (fieldName === 'groupId') return groupNameById.get(value) ?? value;
+          if (fieldName === 'parentStepId')
+            return stepNameById.get(value) ?? value;
+          return value;
+        };
+
         const accumulate = (
           after: StyleOperationStep,
           before: StyleOperationStep | null,
@@ -160,8 +238,9 @@ export class StyleOperationStepsService {
           }
           for (const field of fields) {
             bulkChanges.push({
-              ...field,
               fieldName: `${rowLabel}::${field.fieldName}`,
+              oldValue: resolveFieldValue(field.fieldName, field.oldValue),
+              newValue: resolveFieldValue(field.fieldName, field.newValue),
             });
           }
         };
@@ -254,11 +333,21 @@ export class StyleOperationStepsService {
         const validStageIds = new Set<string>();
         const validGroupIds = new Set<string>();
 
-        const stageRows = await manager.query('SELECT id FROM stages');
-        stageRows.forEach((r: { id: string }) => validStageIds.add(r.id));
+        const stageRows = await manager.query(
+          'SELECT id, stage_name FROM stages',
+        );
+        stageRows.forEach((r: { id: string; stage_name: string }) => {
+          validStageIds.add(r.id);
+          stageNameById.set(r.id, r.stage_name);
+        });
 
-        const groupRows = await manager.query('SELECT id FROM stage_groups');
-        groupRows.forEach((r: { id: string }) => validGroupIds.add(r.id));
+        const groupRows = await manager.query(
+          'SELECT id, group_name FROM stage_groups',
+        );
+        groupRows.forEach((r: { id: string; group_name: string }) => {
+          validGroupIds.add(r.id);
+          groupNameById.set(r.id, r.group_name);
+        });
 
         // Trước đây stageId/groupId không hợp lệ bị âm thầm set về null — người
         // dùng lưu xong tưởng đã gán đúng công đoạn/nhóm nhưng thực ra mất
@@ -344,6 +433,7 @@ export class StyleOperationStepsService {
 
           const saved = await stepRepo.save(entity);
           savedStepsMap.set(index, saved);
+          stepNameById.set(saved.id, saved.stepName);
           const before = beforeById.get(saved.id) ?? null;
           accumulate(saved, before);
 
@@ -398,6 +488,7 @@ export class StyleOperationStepsService {
 
           const saved = await stepRepo.save(entity);
           savedStepsMap.set(index, saved);
+          stepNameById.set(saved.id, saved.stepName);
           const before = beforeById.get(saved.id) ?? null;
           accumulate(saved, before);
 

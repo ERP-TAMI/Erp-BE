@@ -352,6 +352,38 @@ describe('StyleOperationStepsService', () => {
 
       expect(auditServiceMock.recordEntityChange).not.toHaveBeenCalled();
     });
+
+    it("resolves stageId to the stage's real name in a bulk save instead of a raw UUID", async () => {
+      const STAGE_ID = '11111111-1111-1111-1111-111111111111';
+      stepRepoMock.find.mockResolvedValueOnce([]);
+      stepRepoMock.query.mockImplementation((sql: string) => {
+        if (sql.includes('FROM stages')) {
+          return Promise.resolve([{ id: STAGE_ID, stage_name: 'Xưởng cắt' }]);
+        }
+        return Promise.resolve([]);
+      });
+
+      const steps = [
+        {
+          stepName: 'Cắt vải',
+          timePerPiece: 10,
+          ssv: 10,
+          orderIndex: 0,
+          stageId: STAGE_ID,
+        },
+      ];
+
+      await service.createMany(mockStyleId, steps as any, undefined, testActor);
+
+      const [, input] = auditServiceMock.recordEntityChange.mock.calls[0];
+      const stageChange = input.changes.find(
+        (c: any) => c.fieldName === 'Cắt vải::stageId',
+      );
+      expect(stageChange).toMatchObject({
+        oldValue: null,
+        newValue: 'Xưởng cắt',
+      });
+    });
   });
 
   describe('update', () => {
@@ -393,6 +425,36 @@ describe('StyleOperationStepsService', () => {
       await expect(
         service.update(mockStyleId, mockStepId, { stepName: 'Abc' }, testActor),
       ).rejects.toThrow(NotFoundException);
+    });
+
+    it("resolves stageId to the stage's real name in the audit change instead of a raw UUID", async () => {
+      const STAGE_ID = '11111111-1111-1111-1111-111111111111';
+      stepRepoMock.findOne.mockResolvedValueOnce({
+        ...mockStep,
+        stageId: null,
+      });
+      stepRepoMock.query.mockImplementation((sql: string) => {
+        if (sql.includes('FROM stages')) {
+          return Promise.resolve([{ stage_name: 'Xưởng cắt' }]);
+        }
+        return Promise.resolve([]);
+      });
+
+      await service.update(
+        mockStyleId,
+        mockStepId,
+        { stageId: STAGE_ID },
+        testActor,
+      );
+
+      const [, input] = auditServiceMock.recordEntityChange.mock.calls[0];
+      const stageChange = input.changes.find(
+        (c: any) => c.fieldName === 'stageId',
+      );
+      expect(stageChange).toMatchObject({
+        oldValue: null,
+        newValue: 'Xưởng cắt',
+      });
     });
 
     it('should throw BadRequestException if stageId does not exist', async () => {

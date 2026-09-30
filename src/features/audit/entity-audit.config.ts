@@ -89,10 +89,11 @@ export const ENTITY_AUDIT_CONFIG: Record<string, EntityAuditConfig> = {
  * chung vào 1 audit event thay vì 1 event/dòng — nhưng vẫn cần phân biệt
  * dòng nào đổi field gì. Không có cột riêng để lưu "dòng nào" trong
  * audit_event_changes, nên field-name của những entry dạng này được mã hoá
- * thành `"<nhãn dòng>::<tên field thật>"` (VD "Cắt vải::stepName") khi ghi;
- * hàm này tách lại để hiện đúng cả hai phần lúc đọc.
+ * thành `"<nhãn dòng>::<tên field thật>"` (VD "Cắt vải::stepName") khi ghi.
+ * Exported để audit.service.ts tách `groupLabel` ra khỏi `fieldLabel` khi trả
+ * về cho FE, thay vì gộp chung thành 1 chuỗi hiển thị.
  */
-function splitBulkFieldName(
+export function splitBulkFieldName(
   fieldName: string,
 ): { rowLabel: string; realFieldName: string } | null {
   const sepIndex = fieldName.indexOf('::');
@@ -107,13 +108,6 @@ export function getFieldLabel(
   aggregateType: string,
   fieldName: string,
 ): string {
-  const bulk = splitBulkFieldName(fieldName);
-  if (bulk) {
-    const label =
-      ENTITY_AUDIT_CONFIG[aggregateType]?.fieldLabels[bulk.realFieldName] ??
-      bulk.realFieldName;
-    return `${bulk.rowLabel} — ${label}`;
-  }
   return (
     ENTITY_AUDIT_CONFIG[aggregateType]?.fieldLabels[fieldName] ?? fieldName
   );
@@ -127,10 +121,8 @@ export function getFieldValueLabel(
   value: string | null,
 ): string | null {
   if (value === null) return null;
-  const bulk = splitBulkFieldName(fieldName);
-  const realFieldName = bulk ? bulk.realFieldName : fieldName;
   return (
-    ENTITY_AUDIT_CONFIG[aggregateType]?.fieldValueLabels?.[realFieldName]?.[
+    ENTITY_AUDIT_CONFIG[aggregateType]?.fieldValueLabels?.[fieldName]?.[
       value
     ] ?? value
   );
@@ -140,12 +132,9 @@ export function isSensitiveField(
   aggregateType: string,
   fieldName: string,
 ): boolean {
-  const bulk = splitBulkFieldName(fieldName);
-  const realFieldName = bulk ? bulk.realFieldName : fieldName;
   return (
-    ENTITY_AUDIT_CONFIG[aggregateType]?.sensitiveFields?.includes(
-      realFieldName,
-    ) ?? false
+    ENTITY_AUDIT_CONFIG[aggregateType]?.sensitiveFields?.includes(fieldName) ??
+    false
   );
 }
 

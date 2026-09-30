@@ -11,6 +11,7 @@ import {
   getFieldLabel,
   getFieldValueLabel,
   isSensitiveField,
+  splitBulkFieldName,
 } from './entity-audit.config';
 import { User } from '../auth/entities/User.entity';
 
@@ -92,6 +93,10 @@ export type EntityAuditInput = {
 export type EntityHistoryChange = {
   fieldName: string;
   fieldLabel: string;
+  /** Chỉ có ở các entry đến từ 1 lần lưu hàng loạt — tên dòng (VD "Cắt vải")
+   * mà field này thuộc về, để FE nhóm hiển thị theo dòng thay vì 1 danh sách
+   * phẳng lặp lại tên dòng ở mỗi field. */
+  groupLabel?: string;
   oldValue: unknown;
   newValue: unknown;
 };
@@ -363,26 +368,26 @@ export class AuditService {
       targetLabel: event.targetLabel,
       reason: event.reason,
       changes: (changesByEvent.get(event.id) ?? []).map((change) => {
-        const sensitive = isSensitiveField(
-          query.aggregateType,
-          change.fieldName,
-        );
+        const bulk = splitBulkFieldName(change.fieldName);
+        const realFieldName = bulk ? bulk.realFieldName : change.fieldName;
+        const sensitive = isSensitiveField(query.aggregateType, realFieldName);
         const masked = sensitive && !canViewSensitive;
         return {
           fieldName: change.fieldName,
-          fieldLabel: getFieldLabel(query.aggregateType, change.fieldName),
+          fieldLabel: getFieldLabel(query.aggregateType, realFieldName),
+          groupLabel: bulk?.rowLabel,
           oldValue: masked
             ? SENSITIVE_MASK
             : translateFieldValue(
                 query.aggregateType,
-                change.fieldName,
+                realFieldName,
                 change.oldValue,
               ),
           newValue: masked
             ? SENSITIVE_MASK
             : translateFieldValue(
                 query.aggregateType,
-                change.fieldName,
+                realFieldName,
                 change.newValue,
               ),
         };
