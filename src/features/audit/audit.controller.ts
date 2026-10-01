@@ -41,6 +41,7 @@ export class AuditController {
     return this.auditService.findEntityHistory(
       query,
       req.user.permissions,
+      req.user.id,
       req.user.roleCode,
     );
   }

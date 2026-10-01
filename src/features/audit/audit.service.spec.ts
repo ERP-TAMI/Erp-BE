@@ -387,6 +387,7 @@ describe('AuditService', () => {
       return service.findEntityHistory(
         { aggregateType: 'BomRevision', parentId: 'rev-1' },
         [],
+        'viewer-1',
         roleCode,
       );
     };
@@ -457,6 +458,7 @@ describe('AuditService', () => {
       const result = await service.findEntityHistory(
         { aggregateType: 'StyleOperationStep', aggregateId: 'step-1' },
         STYLE_VIEWER,
+        'viewer-1',
       );
 
       expect(result.items).toHaveLength(1);
@@ -499,6 +501,7 @@ describe('AuditService', () => {
       const result = await service.findEntityHistory(
         { aggregateType: 'StyleOperationStep', aggregateId: 'style-1' },
         STYLE_VIEWER,
+        'viewer-1',
       );
 
       expect(result.items[0].changes[0]).toMatchObject({
@@ -545,6 +548,7 @@ describe('AuditService', () => {
       const result = await service.findEntityHistory(
         { aggregateType: 'StyleOperationStep', parentId: 'style-1' },
         STYLE_VIEWER,
+        'viewer-1',
       );
 
       expect(result.items[0].changes.map((c) => c.fieldName)).toEqual([
@@ -588,6 +592,7 @@ describe('AuditService', () => {
       const result = await service.findEntityHistory(
         { aggregateType: 'StyleSampleRound', aggregateId: 'round-1' },
         STYLE_VIEWER,
+        'viewer-1',
       );
 
       expect(result.items[0].changes[0]).toMatchObject({
@@ -607,6 +612,7 @@ describe('AuditService', () => {
       const result = await service.findEntityHistory(
         { aggregateType: 'StyleOperationStep', aggregateId: 'step-1' },
         STYLE_VIEWER,
+        'viewer-1',
       );
       expect(result.items).toEqual([]);
       expect(result.total).toBe(0);
@@ -615,7 +621,11 @@ describe('AuditService', () => {
     it('rejects when neither aggregateId nor parentId is given', async () => {
       const { service } = buildAuditService();
       await expect(
-        service.findEntityHistory({ aggregateType: 'StyleOperationStep' }, []),
+        service.findEntityHistory(
+          { aggregateType: 'StyleOperationStep' },
+          [],
+          'viewer-1',
+        ),
       ).rejects.toThrow();
     });
 
@@ -625,13 +635,51 @@ describe('AuditService', () => {
         service.findEntityHistory(
           { aggregateType: 'StyleOperationStep', parentId: 'style-1' },
           [],
+          'viewer-1',
         ),
       ).rejects.toThrow(ForbiddenException);
-      // User history needs user-management rights, not just style access.
+      // User history needs user-management rights or an authenticated self scope.
       await expect(
         service.findEntityHistory(
           { aggregateType: 'User', aggregateId: 'user-1' },
           STYLE_VIEWER,
+          'viewer-1',
+        ),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('allows users to read only their own User history without user-management permission', async () => {
+      const { service } = buildAuditService();
+
+      await expect(
+        service.findEntityHistory(
+          { aggregateType: 'User', aggregateId: 'USER-1' },
+          [],
+          'user-1',
+        ),
+      ).resolves.toMatchObject({ items: [], total: 0 });
+
+      await expect(
+        service.findEntityHistory(
+          { aggregateType: 'User', aggregateId: 'user-2' },
+          [],
+          'user-1',
+        ),
+      ).rejects.toThrow(ForbiddenException);
+
+      await expect(
+        service.findEntityHistory(
+          { aggregateType: 'User', aggregateId: 'user-2' },
+          ['system.users.manage'],
+          'user-1',
+        ),
+      ).resolves.toMatchObject({ items: [], total: 0 });
+
+      await expect(
+        service.findEntityHistory(
+          { aggregateType: 'User', parentId: 'user-1' },
+          [],
+          'user-1',
         ),
       ).rejects.toThrow(ForbiddenException);
     });
@@ -641,6 +689,7 @@ describe('AuditService', () => {
       const result = await service.findEntityHistory(
         { aggregateType: 'PurchaseOrder', aggregateId: 'po-1' },
         [],
+        'viewer-1',
       );
       expect(result.items).toEqual([]);
     });
@@ -649,10 +698,11 @@ describe('AuditService', () => {
       const { service } = buildAuditService();
       for (const aggregateType of ['Anything', '__proto__', 'constructor']) {
         await expect(
-          service.findEntityHistory({ aggregateType, aggregateId: 'x' }, [
-            'master_data.styles.view',
-            'system.users.manage',
-          ]),
+          service.findEntityHistory(
+            { aggregateType, aggregateId: 'x' },
+            ['master_data.styles.view', 'system.users.manage'],
+            'viewer-1',
+          ),
         ).rejects.toThrow(BadRequestException);
       }
     });
@@ -665,6 +715,7 @@ describe('AuditService', () => {
       await service.findEntityHistory(
         { aggregateType: 'StyleOperationStep', parentId: 'style-1' },
         STYLE_VIEWER,
+        'viewer-1',
       );
 
       expect(qb.andWhere).toHaveBeenCalledWith('event.parentId = :parentId', {
@@ -729,6 +780,7 @@ describe('AuditService', () => {
       const result = await service.findEntityHistory(
         { aggregateType: 'BomTimeline', parentId: 'bom-1' },
         [],
+        'viewer-1',
         'RD',
       );
 
@@ -756,6 +808,7 @@ describe('AuditService', () => {
         service.findEntityHistory(
           { aggregateType: 'BomTimeline', aggregateId: 'version-1' },
           [],
+          'viewer-1',
         ),
       ).rejects.toThrow(BadRequestException);
     });
