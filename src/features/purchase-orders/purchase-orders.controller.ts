@@ -284,7 +284,7 @@ export class PurchaseOrdersController {
   }
 
   @Patch(':id/products/:productId/status')
-  @UseGuards(PurchaseOrderProductStatusGuard)
+  @UseGuards(PurchaseOrderWriteAccessGuard, PurchaseOrderProductStatusGuard)
   @ApiOperation({ summary: 'Cập nhật trạng thái sản phẩm PO' })
   @ApiResponse({ status: 200, description: 'Đã cập nhật trạng thái sản phẩm' })
   async updateProductStatus(
