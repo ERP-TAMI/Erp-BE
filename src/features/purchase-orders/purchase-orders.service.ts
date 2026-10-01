@@ -26,7 +26,6 @@ import {
   isDuplicateStorageKeyError,
 } from '../storage/storage-key.util';
 import { PurchaseOrder } from './entities/PurchaseOrder.entity';
-import { PurchaseOrderStatusHistory } from './entities/PurchaseOrderStatusHistory.entity';
 import { PurchaseOrderDocument } from './entities/PurchaseOrderDocument.entity';
 import { PurchaseOrderProduct } from './entities/PurchaseOrderProduct.entity';
 import {
@@ -34,7 +33,6 @@ import {
   PurchaseOrderProductSampleRound,
   PurchaseOrderProductSampleImage,
   PurchaseOrderProductDocument,
-  PurchaseOrderProductStatusHistory,
   PurchaseOrderProductColor,
   PurchaseOrderProductColorSize,
 } from './entities';
@@ -51,10 +49,13 @@ import {
   ProductionDocumentSection,
   ProductionDocumentImage,
 } from '../production/entities';
+import { UpdateStyleProductionDocDto } from '../production/dto/update-style-production-doc.dto';
+import { Bom } from '../boms/entities/Bom.entity';
 import { Document } from '../documents/entities/Document.entity';
 import { DocumentVersion } from '../documents/entities/DocumentVersion.entity';
 import { Customer } from '../master-data/entities/Customer.entity';
 import {
+  AuditEventType,
   DocumentPurpose,
   PoStatus,
   ProductStatus,
@@ -81,6 +82,9 @@ import {
   PresignPoDocumentDto,
   ConfirmPoDocumentDto,
 } from './dto';
+import { AuditService, EntityAuditInput } from '../audit/audit.service';
+import { AuditActor } from '../audit/audit-actor.type';
+import { diffEntity, EntityFieldChange } from '../audit/entity-diff.util';
 
 export const ALLOWED_PO_MIME_BY_EXTENSION: Record<string, string[]> = {
   '.pdf': ['application/pdf'],
@@ -220,14 +224,124 @@ function toYmdString(val: string | Date): string {
   return String(val).slice(0, 10);
 }
 
+const AUDIT_TYPE = {
+  PO: 'PurchaseOrder',
+  PO_DOCUMENT: 'PurchaseOrderDocument',
+  PRODUCT: 'PurchaseOrderProduct',
+  PRODUCT_STEPS: 'PurchaseOrderProductOperationStep',
+  PRODUCT_SAMPLE_ROUND: 'PurchaseOrderProductSampleRound',
+  PRODUCT_PRODUCTION_DOC: 'PurchaseOrderProductionDocument',
+  PRODUCT_DOCUMENT: 'PurchaseOrderProductDocument',
+} as const;
+
+const PO_AUDIT_FIELDS = [
+  'poCode',
+  'customerPoCode',
+  'customerNameSnapshot',
+  'receivedDate',
+  'deadline',
+  'note',
+  'status',
+  'cancellationReason',
+];
+const PRODUCT_AUDIT_FIELDS = [
+  'productCode',
+  'productName',
+  'category',
+  'materialNote',
+  'deadline',
+  'as3bCmBaseDays',
+  'structureImageVersionId',
+  'status',
+];
+const SAMPLE_ROUND_AUDIT_FIELDS = ['sampleDate', 'feedback', 'status'];
+const STEP_AUDIT_FIELDS = [
+  'stepName',
+  'description',
+  'timePerPiece',
+  'ssv',
+  'targetTotal',
+  'note',
+  'orderIndex',
+  'isGroup',
+  'parentStepId',
+];
+const PRODUCTION_DOC_AUDIT_FIELDS = [
+  'name',
+  'description',
+  'status',
+  'section1Description',
+  'section1ImageUrl',
+  'section2Accessories',
+  'section3Notes',
+  'section4CustomerFeedback',
+  'sizeData',
+];
+const AUDIT_DATE_FIELDS = new Set(['receivedDate', 'deadline', 'sampleDate']);
+const AUDIT_NUMERIC_FIELDS = new Set([
+  'timePerPiece',
+  'ssv',
+  'targetTotal',
+  'orderIndex',
+  'as3bCmBaseDays',
+]);
+
+type AuditSnapshot = Record<string, unknown>;
+
+/** Cột date/numeric đọc từ DB về là chuỗi, còn giá trị vừa gán là Date/number —
+ * so thẳng thì lần lưu nào cũng "đổi". Chuẩn hoá trước khi diff. */
+function auditSnapshot(
+  entity: object | null | undefined,
+  fields: readonly string[],
+): AuditSnapshot | null {
+  if (!entity) return null;
+  const source = entity as Record<string, unknown>;
+  const snapshot: AuditSnapshot = {};
+  for (const field of fields) {
+    const value = source[field];
+    if (value === null || value === undefined || value === '') {
+      snapshot[field] = null;
+    } else if (AUDIT_DATE_FIELDS.has(field)) {
+      snapshot[field] = toYmdString(value as string | Date);
+    } else if (AUDIT_NUMERIC_FIELDS.has(field)) {
+      snapshot[field] = Number(value);
+    } else {
+      snapshot[field] = value;
+    }
+  }
+  return snapshot;
+}
+
+function auditDiff(
+  before: object | null,
+  after: object,
+  fields: readonly string[],
+): EntityFieldChange[] {
+  return diffEntity(
+    auditSnapshot(before, fields),
+    auditSnapshot(after, fields) as AuditSnapshot,
+    fields,
+  );
+}
+
+function productAuditLabel(product: PurchaseOrderProduct): string {
+  return `${product.productCode} - ${product.productName}`;
+}
+
+function formatColorSizes(
+  sizes: Array<{ sizeLabel: string; quantity: number | string }>,
+): string {
+  return sizes.length === 0
+    ? '(không có size)'
+    : sizes.map((s) => `${s.sizeLabel}: ${Number(s.quantity)}`).join(' · ');
+}
+
 @Injectable()
 export class PurchaseOrdersService {
   constructor(
     private readonly dataSource: DataSource,
     @InjectRepository(PurchaseOrder)
     private readonly poRepo: Repository<PurchaseOrder>,
-    @InjectRepository(PurchaseOrderStatusHistory)
-    private readonly historyRepo: Repository<PurchaseOrderStatusHistory>,
     @InjectRepository(PurchaseOrderDocument)
     private readonly poDocRepo: Repository<PurchaseOrderDocument>,
     @InjectRepository(PurchaseOrderProduct)
@@ -240,8 +354,6 @@ export class PurchaseOrdersService {
     private readonly productSampleImageRepo: Repository<PurchaseOrderProductSampleImage>,
     @InjectRepository(PurchaseOrderProductDocument)
     private readonly productDocRepo: Repository<PurchaseOrderProductDocument>,
-    @InjectRepository(PurchaseOrderProductStatusHistory)
-    private readonly productHistoryRepo: Repository<PurchaseOrderProductStatusHistory>,
     @InjectRepository(PurchaseOrderProductColor)
     private readonly productColorRepo: Repository<PurchaseOrderProductColor>,
     @InjectRepository(PurchaseOrderProductColorSize)
@@ -272,11 +384,125 @@ export class PurchaseOrdersService {
     private readonly customerRepo: Repository<Customer>,
     @Inject(STORAGE_SERVICE)
     private readonly storage: StorageService,
+    private readonly auditService: AuditService,
   ) {}
+
+  private async recordAudit(
+    manager: EntityManager,
+    actor: AuditActor | undefined,
+    input: Omit<EntityAuditInput, 'actorId' | 'actorRole'>,
+  ): Promise<void> {
+    if (!actor) return;
+    await this.auditService.recordEntityChange(manager, {
+      ...input,
+      actorId: actor.id,
+      actorRole: actor.roleCode,
+    });
+  }
+
+  /** Giống normalizeImageRef bên Mẫu Fit: FE gửi lại nguyên link đã ký nhận
+   * được lúc đọc, nên phải rút về object key trước khi vào DB hoặc lịch sử —
+   * link đó chứa access key và hết hạn sau 1 giờ. */
+  private toAuditImageRef(value: unknown): unknown {
+    if (typeof value !== 'string' || !/^https?:\/\//.test(value)) return value;
+    if (!this.storage.isTrustedObjectHost(value)) return value;
+    try {
+      return decodeURIComponent(new URL(value).pathname.replace(/^\/+/, ''));
+    } catch {
+      return value;
+    }
+  }
+
+  /** Ảnh sản phẩm chỉ được trỏ tới object của chính PO này, hoặc ảnh gốc của
+   * Mẫu Fit nguồn (khi import). Không thì client có thể gán key bất kỳ trong
+   * bucket rồi để BE ký URL đọc nó. */
+  private toProductImageKey(
+    value: string | null | undefined,
+    poId: string,
+    sourceStyleId?: string | null,
+  ): string | null {
+    const key = this.toStoredImageRef(value);
+    if (!key) return null;
+    const inScope =
+      isObjectKeyInScope(key, `purchase-orders/${poId}/`) ||
+      (Boolean(sourceStyleId) &&
+        isObjectKeyInScope(key, `styles/${sourceStyleId}/`));
+    if (!inScope) {
+      throw new BadRequestException('Ảnh sản phẩm không hợp lệ.');
+    }
+    return key;
+  }
+
+  private toStoredImageRef(value: string | null | undefined): string | null {
+    if (!value) return null;
+    return this.toAuditImageRef(value.trim()) as string;
+  }
+
+  private toStoredSizeData(sizeData: unknown): unknown {
+    if (!Array.isArray(sizeData)) return sizeData;
+    return sizeData.map((item) =>
+      item &&
+      typeof item === 'object' &&
+      typeof (item as { imageUrl?: unknown }).imageUrl === 'string'
+        ? {
+            ...item,
+            imageUrl: this.toStoredImageRef(
+              (item as { imageUrl: string }).imageUrl,
+            ),
+          }
+        : item,
+    );
+  }
+
+  private toStoredImageGroups(imageGroups: unknown): any[] {
+    if (!Array.isArray(imageGroups)) return [];
+    return imageGroups.map((group) =>
+      group && typeof group === 'object' && Array.isArray(group.imageUrls)
+        ? {
+            ...group,
+            imageUrls: (group.imageUrls as unknown[]).map((url) =>
+              typeof url === 'string' ? this.toStoredImageRef(url) : url,
+            ),
+          }
+        : group,
+    );
+  }
+
+  /** Ngược lại với toStoredImageRef: key trong DB phải ký lại mỗi lần đọc. */
+  private async resolveImageRef(
+    value: string | null | undefined,
+  ): Promise<string | null> {
+    if (!value) return null;
+    if (/^https?:\/\//.test(value)) return value;
+    if (!isResolvableObjectKey(value)) return value;
+    return this.storage.getPresignedGetUrl(value);
+  }
+
+  private productionDocAuditSnapshot(
+    doc: ProductionDocument | null,
+  ): AuditSnapshot | null {
+    const snapshot = auditSnapshot(doc, PRODUCTION_DOC_AUDIT_FIELDS);
+    if (!snapshot) return null;
+    snapshot.section1ImageUrl = this.toAuditImageRef(snapshot.section1ImageUrl);
+    if (Array.isArray(snapshot.sizeData)) {
+      snapshot.sizeData = (snapshot.sizeData as unknown[]).map((item) =>
+        item && typeof item === 'object' && 'imageUrl' in item
+          ? {
+              ...item,
+              imageUrl: this.toAuditImageRef(
+                (item as { imageUrl: unknown }).imageUrl,
+              ),
+            }
+          : item,
+      );
+    }
+    return snapshot;
+  }
 
   async create(
     dto: CreatePurchaseOrderDto,
     userId?: string,
+    actor?: AuditActor,
   ): Promise<PurchaseOrderDetailResponse> {
     const existing = await this.poRepo.findOne({
       where: { poCode: dto.poCode },
@@ -338,20 +564,17 @@ export class PurchaseOrdersService {
       updatedAt: now,
     });
 
-    const savedPo = (await this.poRepo.save(
-      poEntity,
-    )) as unknown as PurchaseOrder;
-
-    const historyRecord = this.historyRepo.create({
-      purchaseOrderId: savedPo.id,
-      oldStatus: null,
-      newStatus: PoStatus.DRAFT,
-      action: 'Khởi tạo PO',
-      reason: 'Tạo mới đơn hàng PO',
-      changedBy: userId || null,
-      changedAt: now,
+    const savedPo = await this.dataSource.transaction(async (manager) => {
+      const saved = await manager.save(PurchaseOrder, poEntity);
+      await this.recordAudit(manager, actor, {
+        aggregateType: AUDIT_TYPE.PO,
+        aggregateId: saved.id,
+        targetLabel: saved.poCode,
+        eventType: AuditEventType.CREATED,
+        changes: auditDiff(null, saved, PO_AUDIT_FIELDS),
+      });
+      return saved;
     });
-    await this.historyRepo.save(historyRecord);
 
     return this.findOne(savedPo.id);
   }
@@ -639,6 +862,7 @@ export class PurchaseOrdersService {
     id: string,
     dto: UpdatePurchaseOrderDto,
     userId?: string,
+    actor?: AuditActor,
   ): Promise<PurchaseOrderDetailResponse> {
     const po = await this.poRepo.findOne({ where: { id } });
     if (!po) {
@@ -646,6 +870,7 @@ export class PurchaseOrdersService {
     }
 
     this.checkPoNotLocked(po, 'chỉnh sửa thông tin');
+    const before = { ...po };
 
     if (dto.deadline !== undefined && !dto.deadline) {
       throw new BadRequestException(
@@ -700,7 +925,16 @@ export class PurchaseOrdersService {
     po.updatedBy = userId || null;
     po.updatedAt = new Date();
 
-    await this.poRepo.save(po);
+    await this.dataSource.transaction(async (manager) => {
+      await manager.save(PurchaseOrder, po);
+      await this.recordAudit(manager, actor, {
+        aggregateType: AUDIT_TYPE.PO,
+        aggregateId: po.id,
+        targetLabel: po.poCode,
+        eventType: AuditEventType.UPDATED,
+        changes: auditDiff(before, po, PO_AUDIT_FIELDS),
+      });
+    });
 
     return this.findOne(id);
   }
@@ -709,11 +943,13 @@ export class PurchaseOrdersService {
     id: string,
     dto: UpdatePoStatusDto,
     userId?: string,
+    actor?: AuditActor,
   ): Promise<PurchaseOrderDetailResponse> {
     const po = await this.poRepo.findOne({ where: { id } });
     if (!po) {
       throw new NotFoundException(`Không tìm thấy đơn hàng PO với ID: ${id}`);
     }
+    const before = { ...po };
 
     const currentStatus = po.status;
     const newStatus = dto.status;
@@ -762,8 +998,6 @@ export class PurchaseOrdersService {
       po.cancellationReason = dto.reason?.trim() || null;
     }
 
-    await this.poRepo.save(po);
-
     const actionText =
       newStatus === PoStatus.PENDING_RD
         ? 'Chuyển sang Chờ R&D'
@@ -772,27 +1006,35 @@ export class PurchaseOrdersService {
           : newStatus === PoStatus.CLOSED
             ? 'Khóa PO'
             : 'Hủy đơn hàng PO';
+    const reason = dto.reason?.trim();
 
-    const history = this.historyRepo.create({
-      purchaseOrderId: id,
-      oldStatus: currentStatus,
-      newStatus: newStatus,
-      action: actionText,
-      reason: dto.reason?.trim() || null,
-      changedBy: userId || null,
-      changedAt: now,
+    await this.dataSource.transaction(async (manager) => {
+      await manager.save(PurchaseOrder, po);
+      await this.recordAudit(manager, actor, {
+        aggregateType: AUDIT_TYPE.PO,
+        aggregateId: po.id,
+        targetLabel: po.poCode,
+        eventType: AuditEventType.STATUS_CHANGED,
+        reason: reason ? `${actionText}: ${reason}` : actionText,
+        changes: auditDiff(before, po, PO_AUDIT_FIELDS),
+      });
     });
-    await this.historyRepo.save(history);
 
     return this.findOne(id);
   }
 
   // ─── Documents Management ──────────────────────────────────────────────────
 
+  private async documentAuditLabel(documentId: string): Promise<string> {
+    const doc = await this.docRepo.findOne({ where: { id: documentId } });
+    return doc?.title || 'Tài liệu';
+  }
+
   async linkDocument(
     poId: string,
     dto: LinkPoDocumentDto,
     userId?: string,
+    actor?: AuditActor,
   ): Promise<PurchaseOrderDetailResponse> {
     const po = await this.poRepo.findOne({ where: { id: poId } });
     if (!po) {
@@ -804,21 +1046,53 @@ export class PurchaseOrdersService {
     const existingLink = await this.poDocRepo.findOne({
       where: { purchaseOrderId: poId, documentId: dto.documentId },
     });
+    const targetLabel = await this.documentAuditLabel(dto.documentId);
 
-    if (existingLink) {
-      existingLink.purpose = dto.purpose;
-      if (userId) existingLink.linkedBy = userId;
-      await this.poDocRepo.save(existingLink);
-    } else {
-      const link = this.poDocRepo.create({
-        purchaseOrderId: poId,
-        documentId: dto.documentId,
-        purpose: dto.purpose,
-        linkedBy: userId || null,
-        linkedAt: new Date(),
-      });
-      await this.poDocRepo.save(link);
-    }
+    await this.dataSource.transaction(async (manager) => {
+      if (existingLink) {
+        const oldPurpose = existingLink.purpose;
+        existingLink.purpose = dto.purpose;
+        if (userId) existingLink.linkedBy = userId;
+        await manager.save(PurchaseOrderDocument, existingLink);
+        await this.recordAudit(manager, actor, {
+          aggregateType: AUDIT_TYPE.PO_DOCUMENT,
+          aggregateId: dto.documentId,
+          parentId: poId,
+          targetLabel,
+          eventType: AuditEventType.UPDATED,
+          changes:
+            oldPurpose === dto.purpose
+              ? []
+              : [
+                  {
+                    fieldName: 'purpose',
+                    oldValue: oldPurpose,
+                    newValue: dto.purpose,
+                  },
+                ],
+        });
+      } else {
+        const link = this.poDocRepo.create({
+          purchaseOrderId: poId,
+          documentId: dto.documentId,
+          purpose: dto.purpose,
+          linkedBy: userId || null,
+          linkedAt: new Date(),
+        });
+        await manager.save(PurchaseOrderDocument, link);
+        await this.recordAudit(manager, actor, {
+          aggregateType: AUDIT_TYPE.PO_DOCUMENT,
+          aggregateId: dto.documentId,
+          parentId: poId,
+          targetLabel,
+          eventType: AuditEventType.CREATED,
+          changes: [
+            { fieldName: 'fileName', oldValue: null, newValue: targetLabel },
+            { fieldName: 'purpose', oldValue: null, newValue: dto.purpose },
+          ],
+        });
+      }
+    });
 
     return this.findOne(poId);
   }
@@ -828,6 +1102,7 @@ export class PurchaseOrdersService {
     documentId: string,
     purpose: DocumentPurpose,
     userId?: string,
+    actor?: AuditActor,
   ): Promise<PurchaseOrderDetailResponse> {
     const po = await this.poRepo.findOne({ where: { id: poId } });
     if (!po) {
@@ -846,14 +1121,40 @@ export class PurchaseOrdersService {
       );
     }
 
+    const oldPurpose = existingLink.purpose;
     existingLink.purpose = purpose;
     if (userId) existingLink.linkedBy = userId;
-    await this.poDocRepo.save(existingLink);
+    const targetLabel = await this.documentAuditLabel(documentId);
+
+    await this.dataSource.transaction(async (manager) => {
+      await manager.save(PurchaseOrderDocument, existingLink);
+      await this.recordAudit(manager, actor, {
+        aggregateType: AUDIT_TYPE.PO_DOCUMENT,
+        aggregateId: documentId,
+        parentId: poId,
+        targetLabel,
+        eventType: AuditEventType.UPDATED,
+        changes:
+          oldPurpose === purpose
+            ? []
+            : [
+                {
+                  fieldName: 'purpose',
+                  oldValue: oldPurpose,
+                  newValue: purpose,
+                },
+              ],
+      });
+    });
 
     return this.findOne(poId);
   }
 
-  async unlinkDocument(poId: string, documentId: string): Promise<void> {
+  async unlinkDocument(
+    poId: string,
+    documentId: string,
+    actor?: AuditActor,
+  ): Promise<void> {
     const po = await this.poRepo.findOne({ where: { id: poId } });
     if (!po) {
       throw new NotFoundException(`Không tìm thấy đơn hàng PO với ID: ${poId}`);
@@ -863,17 +1164,20 @@ export class PurchaseOrdersService {
     const existingLink = await this.poDocRepo.findOne({
       where: { purchaseOrderId: poId, documentId },
     });
+    if (!existingLink) return;
 
-    if (existingLink) {
-      await this.poDocRepo.remove(existingLink);
-    }
-  }
-
-  async findHistory(poId: string): Promise<PurchaseOrderStatusHistory[]> {
-    await this.findOne(poId);
-    return this.historyRepo.find({
-      where: { purchaseOrderId: poId },
-      order: { changedAt: 'DESC' },
+    const targetLabel = await this.documentAuditLabel(documentId);
+    await this.dataSource.transaction(async (manager) => {
+      await manager.remove(PurchaseOrderDocument, existingLink);
+      await this.recordAudit(manager, actor, {
+        aggregateType: AUDIT_TYPE.PO_DOCUMENT,
+        aggregateId: documentId,
+        parentId: poId,
+        targetLabel,
+        eventType: AuditEventType.DELETED,
+        reason: `Gỡ tài liệu ${targetLabel}`,
+        changes: [],
+      });
     });
   }
 
@@ -1185,6 +1489,7 @@ export class PurchaseOrdersService {
     poId: string,
     userId: string | undefined,
     dto: ConfirmPoDocumentDto,
+    actor?: AuditActor,
   ): Promise<{
     documentId: string;
     documentCode: string | null;
@@ -1263,6 +1568,18 @@ export class PurchaseOrdersService {
             linkedAt: now,
           }),
         );
+
+        await this.recordAudit(manager, actor, {
+          aggregateType: AUDIT_TYPE.PO_DOCUMENT,
+          aggregateId: doc.id,
+          parentId: poId,
+          targetLabel: dto.fileName,
+          eventType: AuditEventType.CREATED,
+          changes: [
+            { fieldName: 'fileName', oldValue: null, newValue: dto.fileName },
+            { fieldName: 'purpose', oldValue: null, newValue: dto.purpose },
+          ],
+        });
 
         return {
           documentId: doc.id,
@@ -2036,7 +2353,10 @@ export class PurchaseOrdersService {
   }
 
   /**
-   * Lấy chi tiết một sản phẩm trong PO kèm các dữ liệu con
+   * Lấy thông tin chung 1 sản phẩm (tab Thông tin). Size/màu, quy trình công
+   * đoạn, đợt may mẫu, tài liệu SX, tài liệu đính kèm đọc qua endpoint riêng
+   * của từng tab — không kéo hết về đây (mỗi tab trả tiền cho đúng dữ liệu
+   * nó hiển thị, xem CLAUDE.md).
    */
   async getProductDetail(poId: string, productId: string) {
     const product = await this.productRepo.findOne({
@@ -2048,161 +2368,9 @@ export class PurchaseOrdersService {
       );
     }
 
-    const [
-      sourceStyle,
-      steps,
-      sampleRounds,
-      prodDoc,
-      productDocs,
-      history,
-      rawColors,
-    ] = await Promise.all([
-      product.sourceStyleId
-        ? this.styleRepo.findOne({ where: { id: product.sourceStyleId } })
-        : Promise.resolve(null),
-      this.productStepRepo.find({
-        where: { productId },
-        order: { orderIndex: 'ASC' },
-      }),
-      this.productSampleRoundRepo.find({
-        where: { productId },
-        order: { roundNo: 'ASC' },
-      }),
-      this.prodDocRepo.findOne({
-        where: { productId },
-      }),
-      this.productDocRepo.find({
-        where: { productId },
-        order: { linkedAt: 'DESC' },
-      }),
-      this.productHistoryRepo.find({
-        where: { productId },
-        order: { changedAt: 'DESC' },
-      }),
-      this.productColorRepo.find({
-        where: { productId },
-        order: { orderIndex: 'ASC' },
-      }),
-    ]);
-
-    // Lấy thông tin tài liệu đính kèm Product kèm theo toàn bộ phiên bản
-    let docsWithInfo: any[] = [];
-    if (productDocs.length > 0) {
-      const docIds = productDocs.map((pd) => pd.documentId);
-      const docs = await this.docRepo.find({ where: { id: In(docIds) } });
-      const docsMap = new Map(docs.map((d) => [d.id, d]));
-      const allVersions = await this.docVersionRepo.find({
-        where: { documentId: In(docIds) },
-        order: { versionNo: 'DESC' },
-      });
-      const versionsByDoc = allVersions.reduce(
-        (acc, v) => {
-          if (!acc[v.documentId]) acc[v.documentId] = [];
-          acc[v.documentId].push(v);
-          return acc;
-        },
-        {} as Record<string, DocumentVersion[]>,
-      );
-
-      docsWithInfo = await Promise.all(
-        productDocs.map(async (pd) => {
-          const masterDoc = docsMap.get(pd.documentId);
-          const docVersions = versionsByDoc[pd.documentId] || [];
-          const currentVersion =
-            (masterDoc?.currentVersionId &&
-              docVersions.find((v) => v.id === masterDoc.currentVersionId)) ||
-            docVersions[0] ||
-            null;
-
-          // fileUrl trước đây trả thẳng storageKey — đó là object key của S3,
-          // không phải URL, nên mọi link tải/xem tài liệu của sản phẩm đều hỏng.
-          // Ký lại ở mỗi lần đọc, giống cách tài liệu PO và ảnh Style vẫn làm.
-          const signedCurrentUrl = isResolvableObjectKey(
-            currentVersion?.storageKey,
-          )
-            ? await this.storage.getPresignedGetUrl(currentVersion.storageKey)
-            : null;
-
-          const signedVersions = await Promise.all(
-            docVersions.map(async (v) => ({
-              id: v.id,
-              versionNo: v.versionNo,
-              originalFileName: v.originalFileName,
-              fileUrl: isResolvableObjectKey(v.storageKey)
-                ? await this.storage.getPresignedGetUrl(v.storageKey)
-                : null,
-              fileSize: v.byteSize ? Number(v.byteSize) : null,
-              mimeType: v.mimeType,
-              changeReason: v.changeReason,
-              uploadedAt: v.uploadedAt,
-              uploadedBy: v.uploadedBy,
-            })),
-          );
-
-          return {
-            documentId: pd.documentId,
-            productId: pd.productId,
-            purpose: pd.purpose,
-            linkedAt: pd.linkedAt,
-            sourcePoDocument: pd.sourcePoDocument ?? null,
-            title:
-              masterDoc?.title ||
-              currentVersion?.originalFileName ||
-              'Tài liệu',
-            documentCode: masterDoc?.documentCode || null,
-            fileName:
-              currentVersion?.originalFileName || masterDoc?.title || null,
-            fileUrl: signedCurrentUrl,
-            fileSize: currentVersion?.byteSize
-              ? Number(currentVersion.byteSize)
-              : null,
-            currentVersionNo: currentVersion?.versionNo || 1,
-            changeReason: currentVersion?.changeReason || null,
-            versions: signedVersions,
-          };
-        }),
-      );
-    }
-
-    // Lấy thông tin sizes của các colors
-    let colorsWithSizes: any[] = [];
-    let totalQuantity = 0;
-    if (rawColors.length > 0) {
-      const colorIds = rawColors.map((c) => c.id);
-      const sizes = await this.productColorSizeRepo.find({
-        where: { productColorId: In(colorIds) },
-        order: { orderIndex: 'ASC' },
-      });
-      const sizesByColor = sizes.reduce(
-        (acc, s) => {
-          if (!acc[s.productColorId]) acc[s.productColorId] = [];
-          acc[s.productColorId].push({
-            id: s.id,
-            sizeLabel: s.sizeLabel,
-            quantity: Number(s.quantity) || 0,
-            orderIndex: s.orderIndex,
-          });
-          totalQuantity += Number(s.quantity) || 0;
-          return acc;
-        },
-        {} as Record<string, any[]>,
-      );
-
-      colorsWithSizes = rawColors.map((c) => {
-        const colorSizes = sizesByColor[c.id] || [];
-        const colorQty = colorSizes.reduce(
-          (sum, s) => sum + (Number(s.quantity) || 0),
-          0,
-        );
-        return {
-          id: c.id,
-          colorName: c.colorName,
-          orderIndex: c.orderIndex,
-          sizes: colorSizes,
-          totalQuantity: colorQty,
-        };
-      });
-    }
+    const sourceStyle = product.sourceStyleId
+      ? await this.styleRepo.findOne({ where: { id: product.sourceStyleId } })
+      : null;
 
     // Liệt kê tường minh thay vì `...product`, cùng lý do như getProducts:
     // entity còn mang rowVersion, previousStatus, createdBy/updatedBy, closedBy.
@@ -2227,8 +2395,6 @@ export class PurchaseOrdersService {
       importedBy: product.importedBy,
       createdAt: product.createdAt,
       updatedAt: product.updatedAt,
-      totalQuantity,
-      colors: colorsWithSizes,
       sourceStyle: sourceStyle
         ? {
             id: sourceStyle.id,
@@ -2237,12 +2403,152 @@ export class PurchaseOrdersService {
             category: sourceStyle.category,
           }
         : null,
-      operationSteps: steps,
-      sampleRounds,
-      productionDocument: prodDoc,
-      documents: docsWithInfo,
-      statusHistory: history,
     };
+  }
+
+  /**
+   * Lấy bảng màu & size của sản phẩm (tab Màu / tóm tắt tab Thông tin).
+   */
+  async getProductColors(productId: string) {
+    const rawColors = await this.productColorRepo.find({
+      where: { productId },
+      order: { orderIndex: 'ASC' },
+    });
+    if (rawColors.length === 0) {
+      return { colors: [], totalQuantity: 0 };
+    }
+
+    const colorIds = rawColors.map((c) => c.id);
+    const sizes = await this.productColorSizeRepo.find({
+      where: { productColorId: In(colorIds) },
+      order: { orderIndex: 'ASC' },
+    });
+    let totalQuantity = 0;
+    const sizesByColor = sizes.reduce(
+      (acc, s) => {
+        if (!acc[s.productColorId]) acc[s.productColorId] = [];
+        acc[s.productColorId].push({
+          id: s.id,
+          sizeLabel: s.sizeLabel,
+          quantity: Number(s.quantity) || 0,
+          orderIndex: s.orderIndex,
+        });
+        totalQuantity += Number(s.quantity) || 0;
+        return acc;
+      },
+      {} as Record<string, any[]>,
+    );
+
+    const colors = rawColors.map((c) => {
+      const colorSizes = sizesByColor[c.id] || [];
+      const colorQty = colorSizes.reduce(
+        (sum, s) => sum + (Number(s.quantity) || 0),
+        0,
+      );
+      return {
+        id: c.id,
+        colorName: c.colorName,
+        orderIndex: c.orderIndex,
+        sizes: colorSizes,
+        totalQuantity: colorQty,
+      };
+    });
+
+    return { colors, totalQuantity };
+  }
+
+  /**
+   * Lấy tài liệu đính kèm sản phẩm kèm toàn bộ phiên bản (tab Tài liệu đính
+   * kèm / lọc bảng màu ở tab Màu). Ký lại link S3 mỗi lần đọc — không lưu
+   * link đã ký (xem PRESIGN_GET_EXPIRY_SECONDS).
+   */
+  async getProductDocuments(productId: string, purpose?: string) {
+    if (
+      purpose &&
+      !Object.values(DocumentPurpose).includes(purpose as DocumentPurpose)
+    ) {
+      throw new BadRequestException(`purpose không hợp lệ: ${purpose}`);
+    }
+    const productDocs = await this.productDocRepo.find({
+      where: purpose
+        ? { productId, purpose: purpose as DocumentPurpose }
+        : { productId },
+      order: { linkedAt: 'DESC' },
+    });
+    if (productDocs.length === 0) return [];
+
+    const docIds = productDocs.map((pd) => pd.documentId);
+    const docs = await this.docRepo.find({ where: { id: In(docIds) } });
+    const docsMap = new Map(docs.map((d) => [d.id, d]));
+    const allVersions = await this.docVersionRepo.find({
+      where: { documentId: In(docIds) },
+      order: { versionNo: 'DESC' },
+    });
+    const versionsByDoc = allVersions.reduce(
+      (acc, v) => {
+        if (!acc[v.documentId]) acc[v.documentId] = [];
+        acc[v.documentId].push(v);
+        return acc;
+      },
+      {} as Record<string, DocumentVersion[]>,
+    );
+
+    return Promise.all(
+      productDocs.map(async (pd) => {
+        const masterDoc = docsMap.get(pd.documentId);
+        const docVersions = versionsByDoc[pd.documentId] || [];
+        const currentVersion =
+          (masterDoc?.currentVersionId &&
+            docVersions.find((v) => v.id === masterDoc.currentVersionId)) ||
+          docVersions[0] ||
+          null;
+
+        // fileUrl trước đây trả thẳng storageKey — đó là object key của S3,
+        // không phải URL, nên mọi link tải/xem tài liệu của sản phẩm đều hỏng.
+        // Ký lại ở mỗi lần đọc, giống cách tài liệu PO và ảnh Style vẫn làm.
+        const signedCurrentUrl = isResolvableObjectKey(
+          currentVersion?.storageKey,
+        )
+          ? await this.storage.getPresignedGetUrl(currentVersion.storageKey)
+          : null;
+
+        const signedVersions = await Promise.all(
+          docVersions.map(async (v) => ({
+            id: v.id,
+            versionNo: v.versionNo,
+            originalFileName: v.originalFileName,
+            fileUrl: isResolvableObjectKey(v.storageKey)
+              ? await this.storage.getPresignedGetUrl(v.storageKey)
+              : null,
+            fileSize: v.byteSize ? Number(v.byteSize) : null,
+            mimeType: v.mimeType,
+            changeReason: v.changeReason,
+            uploadedAt: v.uploadedAt,
+            uploadedBy: v.uploadedBy,
+          })),
+        );
+
+        return {
+          documentId: pd.documentId,
+          productId: pd.productId,
+          purpose: pd.purpose,
+          linkedAt: pd.linkedAt,
+          sourcePoDocument: pd.sourcePoDocument ?? null,
+          title:
+            masterDoc?.title || currentVersion?.originalFileName || 'Tài liệu',
+          documentCode: masterDoc?.documentCode || null,
+          fileName:
+            currentVersion?.originalFileName || masterDoc?.title || null,
+          fileUrl: signedCurrentUrl,
+          fileSize: currentVersion?.byteSize
+            ? Number(currentVersion.byteSize)
+            : null,
+          currentVersionNo: currentVersion?.versionNo || 1,
+          changeReason: currentVersion?.changeReason || null,
+          versions: signedVersions,
+        };
+      }),
+    );
   }
 
   /**
@@ -2253,6 +2559,7 @@ export class PurchaseOrdersService {
     poId: string,
     dto: CreatePoProductDto,
     userId?: string,
+    actor?: AuditActor,
   ): Promise<PurchaseOrderProduct> {
     const po = await this.poRepo.findOne({ where: { id: poId } });
     if (!po) {
@@ -2320,7 +2627,13 @@ export class PurchaseOrdersService {
         materialNote: dto.materialNote || dto.colorName || undefined,
         deadline: targetDeadline || undefined,
         structureImageVersionId:
-          dto.structureImageVersionId || sourceStyle?.baseImageKey || null,
+          this.toProductImageKey(
+            dto.structureImageVersionId,
+            poId,
+            sourceStyleId,
+          ) ||
+          sourceStyle?.baseImageKey ||
+          null,
         status: ProductStatus.DRAFT,
         as3bCmBaseDays: targetCmDays,
         importedAt: sourceStyleId ? new Date() : undefined,
@@ -2640,18 +2953,24 @@ export class PurchaseOrdersService {
         }
       }
 
-      // 3. Ghi log lịch sử khởi tạo
-      const historyLog = new PurchaseOrderProductStatusHistory();
-      historyLog.productId = savedProduct.id;
-      historyLog.oldStatus = undefined as any;
-      historyLog.newStatus = ProductStatus.DRAFT;
-      historyLog.action = sourceStyleId ? 'imported_from_fit' : 'created';
-      historyLog.reason = sourceStyleId
-        ? `Import độc lập từ Mẫu Fit ${sourceStyle?.styleCode || ''} - ${sourceStyle?.styleName || ''}`
-        : 'Tạo mới sản phẩm thủ công';
-      historyLog.changedBy = userId || (null as any);
-      historyLog.changedAt = new Date();
-      await manager.save(PurchaseOrderProductStatusHistory, historyLog);
+      await this.recordAudit(manager, actor, {
+        aggregateType: AUDIT_TYPE.PRODUCT,
+        aggregateId: savedProduct.id,
+        parentId: poId,
+        targetLabel: productAuditLabel(savedProduct),
+        eventType: AuditEventType.CREATED,
+        reason: sourceStyle
+          ? `Import từ Mẫu Fit ${sourceStyle.styleCode} - ${sourceStyle.styleName}`
+          : undefined,
+        changes: [
+          ...auditDiff(null, savedProduct, PRODUCT_AUDIT_FIELDS),
+          ...(dto.colors ?? []).map((color) => ({
+            fieldName: `${color.colorName.trim()}::sizes`,
+            oldValue: null,
+            newValue: formatColorSizes(color.sizes ?? []),
+          })),
+        ],
+      });
 
       return savedProduct;
     });
@@ -2665,19 +2984,20 @@ export class PurchaseOrdersService {
     productId: string,
     dto: UpdatePoProductDto,
     userId?: string,
+    actor?: AuditActor,
   ): Promise<PurchaseOrderProduct> {
-    const product = await this.productRepo.findOne({
-      where: { id: productId, purchaseOrderId: poId },
-    });
-    if (!product) {
-      throw new NotFoundException(`Không tìm thấy sản phẩm #${productId}`);
-    }
+    const product = await this.assertPoOpenForProduct(
+      poId,
+      productId,
+      'chỉnh sửa sản phẩm',
+    );
 
     if (product.status === ProductStatus.CLOSED) {
       throw new BadRequestException(
         'Sản phẩm đang ở trạng thái Khóa. Vui lòng mở khóa trước khi chỉnh sửa.',
       );
     }
+    const before = { ...product };
 
     if (dto.productCode && dto.productCode.trim() !== product.productCode) {
       const newCode = dto.productCode.trim();
@@ -2703,109 +3023,160 @@ export class PurchaseOrdersService {
     if (dto.as3bCmBaseDays !== undefined)
       product.as3bCmBaseDays = Number(dto.as3bCmBaseDays);
     if (dto.structureImageVersionId !== undefined)
-      product.structureImageVersionId =
-        dto.structureImageVersionId?.trim() || null;
+      product.structureImageVersionId = this.toProductImageKey(
+        dto.structureImageVersionId,
+        poId,
+        product.sourceStyleId,
+      );
 
     product.updatedBy = userId || product.updatedBy;
     product.updatedAt = new Date();
 
-    const saved = await this.productRepo.save(product);
+    const incomingColors =
+      dto.colors === undefined
+        ? undefined
+        : Array.isArray(dto.colors)
+          ? dto.colors
+          : [];
+    if (incomingColors) this.validateColorsBusinessRules(incomingColors);
 
-    // Cập nhật lại màu sắc và bảng phân bổ size nếu được truyền lên.
-    //
-    // QUAN TRỌNG: đây là upsert-theo-id, không phải xóa hết rồi tạo lại —
-    // xóa-rồi-tạo-lại sẽ đổi id của MỌI màu mỗi lần lưu. Màu vẫn còn trong
-    // dto (dù đổi tên) phải giữ nguyên id cũ bằng cách UPDATE tại chỗ; chỉ
-    // những màu bị người dùng xóa hẳn mới bị xóa thật.
-    if (dto.colors !== undefined) {
-      const incomingColors = Array.isArray(dto.colors) ? dto.colors : [];
-      this.validateColorsBusinessRules(incomingColors);
+    return this.dataSource.transaction(async (manager) => {
+      const saved = await manager.save(PurchaseOrderProduct, product);
+      const sizeChanges = incomingColors
+        ? await this.replaceProductColors(manager, productId, incomingColors)
+        : [];
+      await this.recordAudit(manager, actor, {
+        aggregateType: AUDIT_TYPE.PRODUCT,
+        aggregateId: productId,
+        parentId: poId,
+        targetLabel: productAuditLabel(product),
+        eventType: AuditEventType.UPDATED,
+        reason: dto.reason || undefined,
+        changes: [
+          ...auditDiff(before, product, PRODUCT_AUDIT_FIELDS),
+          ...sizeChanges,
+        ],
+      });
+      return saved;
+    });
+  }
 
-      await this.dataSource.transaction(async (manager) => {
-        try {
-          const existingColors = await manager.find(PurchaseOrderProductColor, {
-            where: { productId },
+  /**
+   * Upsert-theo-id, không phải xóa hết rồi tạo lại — xóa-rồi-tạo-lại sẽ đổi
+   * id của MỌI màu mỗi lần lưu. Màu vẫn còn trong dto (dù đổi tên) giữ
+   * nguyên id cũ; chỉ màu bị xóa hẳn mới bị xóa thật. Trả về thay đổi size
+   * theo từng màu để ghi lịch sử.
+   */
+  private async replaceProductColors(
+    manager: EntityManager,
+    productId: string,
+    incomingColors: ProductColorItemDto[],
+  ): Promise<EntityFieldChange[]> {
+    try {
+      const existingColors = await manager.find(PurchaseOrderProductColor, {
+        where: { productId },
+      });
+      const existingSizes =
+        existingColors.length === 0
+          ? []
+          : await manager.find(PurchaseOrderProductColorSize, {
+              where: { productColorId: In(existingColors.map((c) => c.id)) },
+              order: { orderIndex: 'ASC' },
+            });
+      const oldSizesByColorId = new Map(
+        existingColors.map((c) => [
+          c.id,
+          formatColorSizes(
+            existingSizes.filter((s) => s.productColorId === c.id),
+          ),
+        ]),
+      );
+      const existingById = new Map(existingColors.map((c) => [c.id, c]));
+      const keptIds = new Set<string>();
+      const changes: EntityFieldChange[] = [];
+
+      for (let cIdx = 0; cIdx < incomingColors.length; cIdx++) {
+        const cDto = incomingColors[cIdx];
+        const colorName = cDto.colorName.trim();
+        const existing = cDto.id ? existingById.get(cDto.id) : undefined;
+        const oldName = existing?.colorName;
+
+        let savedColor: PurchaseOrderProductColor;
+        if (existing) {
+          existing.colorName = colorName;
+          existing.orderIndex = cIdx;
+          savedColor = await manager.save(PurchaseOrderProductColor, existing);
+        } else {
+          const newColor = manager.create(PurchaseOrderProductColor, {
+            productId,
+            colorName,
+            orderIndex: cIdx,
           });
-          const existingById = new Map(existingColors.map((c) => [c.id, c]));
-          const keptIds = new Set<string>();
-
-          for (let cIdx = 0; cIdx < incomingColors.length; cIdx++) {
-            const cDto = incomingColors[cIdx];
-            const colorName = cDto.colorName.trim();
-            const existing = cDto.id ? existingById.get(cDto.id) : undefined;
-
-            let savedColor: PurchaseOrderProductColor;
-            if (existing) {
-              existing.colorName = colorName;
-              existing.orderIndex = cIdx;
-              savedColor = await manager.save(
-                PurchaseOrderProductColor,
-                existing,
-              );
-            } else {
-              const newColor = manager.create(PurchaseOrderProductColor, {
-                productId,
-                colorName,
-                orderIndex: cIdx,
-              });
-              savedColor = await manager.save(
-                PurchaseOrderProductColor,
-                newColor,
-              );
-            }
-            keptIds.add(savedColor.id);
-
-            // Chưa có bảng nào tham chiếu id của từng size — thay hết cho
-            // gọn là an toàn, chỉ id của MÀU mới cần giữ ổn định.
-            await manager.delete(PurchaseOrderProductColorSize, {
-              productColorId: savedColor.id,
-            });
-            const sizesDto = cDto.sizes || [];
-            if (sizesDto.length > 0) {
-              const sizeEntities = sizesDto.map((sDto, sIdx) =>
-                manager.create(PurchaseOrderProductColorSize, {
-                  productColorId: savedColor.id,
-                  sizeLabel: sDto.sizeLabel.trim(),
-                  quantity: sDto.quantity,
-                  orderIndex: sIdx,
-                }),
-              );
-              await manager.save(PurchaseOrderProductColorSize, sizeEntities);
-            }
-          }
-
-          const removedIds = existingColors
-            .map((c) => c.id)
-            .filter((id) => !keptIds.has(id));
-          if (removedIds.length > 0) {
-            await manager.delete(PurchaseOrderProductColorSize, {
-              productColorId: In(removedIds),
-            });
-            await manager.delete(PurchaseOrderProductColor, {
-              id: In(removedIds),
-            });
-          }
-        } catch (error) {
-          this.rethrowColorConstraintViolation(error);
+          savedColor = await manager.save(PurchaseOrderProductColor, newColor);
         }
-      });
-    }
+        keptIds.add(savedColor.id);
 
-    // Ghi log cập nhật nếu có lý do
-    if (dto.reason) {
-      const log = this.productHistoryRepo.create({
-        productId,
-        oldStatus: product.status,
-        newStatus: product.status,
-        action: 'updated',
-        reason: dto.reason,
-        changedBy: userId,
-        changedAt: new Date(),
-      });
-      await this.productHistoryRepo.save(log);
-    }
+        // Chưa có bảng nào tham chiếu id của từng size — thay hết cho
+        // gọn là an toàn, chỉ id của MÀU mới cần giữ ổn định.
+        await manager.delete(PurchaseOrderProductColorSize, {
+          productColorId: savedColor.id,
+        });
+        const sizesDto = cDto.sizes || [];
+        if (sizesDto.length > 0) {
+          const sizeEntities = sizesDto.map((sDto, sIdx) =>
+            manager.create(PurchaseOrderProductColorSize, {
+              productColorId: savedColor.id,
+              sizeLabel: sDto.sizeLabel.trim(),
+              quantity: sDto.quantity,
+              orderIndex: sIdx,
+            }),
+          );
+          await manager.save(PurchaseOrderProductColorSize, sizeEntities);
+        }
 
-    return saved;
+        const oldSizes = existing
+          ? (oldSizesByColorId.get(existing.id) ?? null)
+          : null;
+        const newSizes = formatColorSizes(
+          sizesDto.map((s) => ({ ...s, sizeLabel: s.sizeLabel.trim() })),
+        );
+        if (oldName !== undefined && oldName !== colorName) {
+          changes.push({
+            fieldName: `${colorName}::colorName`,
+            oldValue: oldName,
+            newValue: colorName,
+          });
+        }
+        if (oldSizes !== newSizes) {
+          changes.push({
+            fieldName: `${colorName}::sizes`,
+            oldValue: oldSizes,
+            newValue: newSizes,
+          });
+        }
+      }
+
+      const removedColors = existingColors.filter((c) => !keptIds.has(c.id));
+      if (removedColors.length > 0) {
+        const removedIds = removedColors.map((c) => c.id);
+        await manager.delete(PurchaseOrderProductColorSize, {
+          productColorId: In(removedIds),
+        });
+        await manager.delete(PurchaseOrderProductColor, {
+          id: In(removedIds),
+        });
+        for (const color of removedColors) {
+          changes.push({
+            fieldName: `${color.colorName}::sizes`,
+            oldValue: oldSizesByColorId.get(color.id) ?? null,
+            newValue: null,
+          });
+        }
+      }
+      return changes;
+    } catch (error) {
+      this.rethrowColorConstraintViolation(error);
+    }
   }
 
   /**
@@ -2848,9 +3219,6 @@ export class PurchaseOrdersService {
     // 4. Xóa tài liệu đính kèm Product
     await manager.delete(PurchaseOrderProductDocument, { productId });
 
-    // 5. Xóa lịch sử trạng thái
-    await manager.delete(PurchaseOrderProductStatusHistory, { productId });
-
     // 5.5. Xóa màu sắc & sizes của Product
     const colorsToDelete = await manager.find(PurchaseOrderProductColor, {
       where: { productId },
@@ -2867,13 +3235,16 @@ export class PurchaseOrdersService {
     await manager.delete(PurchaseOrderProduct, { id: productId });
   }
 
-  async removeProduct(poId: string, productId: string): Promise<void> {
-    const product = await this.productRepo.findOne({
-      where: { id: productId, purchaseOrderId: poId },
-    });
-    if (!product) {
-      throw new NotFoundException(`Không tìm thấy sản phẩm #${productId}`);
-    }
+  async removeProduct(
+    poId: string,
+    productId: string,
+    actor?: AuditActor,
+  ): Promise<void> {
+    const product = await this.assertPoOpenForProduct(
+      poId,
+      productId,
+      'xóa sản phẩm',
+    );
 
     if (product.status === ProductStatus.CLOSED) {
       throw new BadRequestException(
@@ -2882,7 +3253,23 @@ export class PurchaseOrdersService {
     }
 
     await this.dataSource.transaction(async (manager) => {
+      // boms.purchase_order_product_id là ON DELETE RESTRICT — BOM có thể đã
+      // duyệt và có giá thành, nên chặn rõ ràng thay vì để DB trả lỗi 500.
+      const bom = await manager.findOne(Bom, {
+        where: { purchaseOrderProductId: productId },
+      });
+      if (bom) {
+        throw new ConflictException('Sản phẩm đã có BOM, không thể xóa.');
+      }
       await this.deleteProductCascade(manager, productId);
+      await this.recordAudit(manager, actor, {
+        aggregateType: AUDIT_TYPE.PRODUCT,
+        aggregateId: productId,
+        parentId: poId,
+        targetLabel: productAuditLabel(product),
+        eventType: AuditEventType.DELETED,
+        changes: [],
+      });
     });
   }
 
@@ -2892,7 +3279,7 @@ export class PurchaseOrdersService {
    * đưa vào xử lý/khóa/hủy thì dùng luồng Hủy (updateStatus) để giữ lại lịch
    * sử thay vì xóa cứng.
    */
-  async remove(id: string): Promise<void> {
+  async remove(id: string, actor?: AuditActor): Promise<void> {
     const po = await this.poRepo.findOne({ where: { id } });
     if (!po) {
       throw new NotFoundException(`Không tìm thấy đơn hàng PO với ID: ${id}`);
@@ -2908,15 +3295,32 @@ export class PurchaseOrdersService {
       const products = await manager.find(PurchaseOrderProduct, {
         where: { purchaseOrderId: id },
       });
+      if (products.length > 0) {
+        const bom = await manager.findOne(Bom, {
+          where: { purchaseOrderProductId: In(products.map((p) => p.id)) },
+        });
+        if (bom) {
+          const owner = products.find(
+            (p) => p.id === bom.purchaseOrderProductId,
+          );
+          throw new ConflictException(
+            `Sản phẩm ${owner?.productCode ?? ''} đã có BOM, không thể xóa đơn hàng PO.`,
+          );
+        }
+      }
       for (const product of products) {
         await this.deleteProductCascade(manager, product.id);
       }
 
       await manager.delete(PurchaseOrderDocument, { purchaseOrderId: id });
-      await manager.delete(PurchaseOrderStatusHistory, {
-        purchaseOrderId: id,
-      });
       await manager.delete(PurchaseOrder, { id });
+      await this.recordAudit(manager, actor, {
+        aggregateType: AUDIT_TYPE.PO,
+        aggregateId: id,
+        targetLabel: po.poCode,
+        eventType: AuditEventType.DELETED,
+        changes: [],
+      });
     });
   }
 
@@ -2929,7 +3333,19 @@ export class PurchaseOrdersService {
     documentId: string,
     userId?: string,
     targetPurpose?: DocumentPurpose,
+    actor?: AuditActor,
   ) {
+    const product = await this.assertPoOpenForProduct(
+      poId,
+      productId,
+      'gán tài liệu',
+    );
+    if (product.status === ProductStatus.CLOSED) {
+      throw new BadRequestException(
+        'Sản phẩm đã bị khóa, không thể gán tài liệu.',
+      );
+    }
+
     const poDoc = await this.poDocRepo.findOne({
       where: { purchaseOrderId: poId, documentId },
     });
@@ -2945,23 +3361,59 @@ export class PurchaseOrdersService {
     const existing = await this.productDocRepo.findOne({
       where: { productId, documentId },
     });
-    if (existing) {
-      if (targetPurpose && existing.purpose !== targetPurpose) {
-        existing.purpose = targetPurpose;
-        return await this.productDocRepo.save(existing);
-      }
+    if (existing && (!targetPurpose || existing.purpose === targetPurpose)) {
       return existing;
     }
 
-    const link = this.productDocRepo.create({
-      productId,
-      documentId,
-      sourcePoDocument: true,
-      purpose: purposeToUse,
-      linkedBy: userId,
-      linkedAt: new Date(),
+    const targetLabel = await this.documentAuditLabel(documentId);
+    return this.dataSource.transaction(async (manager) => {
+      if (existing && targetPurpose) {
+        const oldPurpose = existing.purpose;
+        existing.purpose = targetPurpose;
+        const saved = await manager.save(
+          PurchaseOrderProductDocument,
+          existing,
+        );
+        await this.recordAudit(manager, actor, {
+          aggregateType: AUDIT_TYPE.PRODUCT_DOCUMENT,
+          aggregateId: documentId,
+          parentId: productId,
+          targetLabel,
+          eventType: AuditEventType.UPDATED,
+          changes: [
+            {
+              fieldName: 'purpose',
+              oldValue: oldPurpose,
+              newValue: targetPurpose,
+            },
+          ],
+        });
+        return saved;
+      }
+
+      const link = this.productDocRepo.create({
+        productId,
+        documentId,
+        sourcePoDocument: true,
+        purpose: purposeToUse,
+        linkedBy: userId,
+        linkedAt: new Date(),
+      });
+      const saved = await manager.save(PurchaseOrderProductDocument, link);
+      await this.recordAudit(manager, actor, {
+        aggregateType: AUDIT_TYPE.PRODUCT_DOCUMENT,
+        aggregateId: documentId,
+        parentId: productId,
+        targetLabel,
+        eventType: AuditEventType.CREATED,
+        reason: 'Gán từ kho tài liệu PO',
+        changes: [
+          { fieldName: 'fileName', oldValue: null, newValue: targetLabel },
+          { fieldName: 'purpose', oldValue: null, newValue: purposeToUse },
+        ],
+      });
+      return saved;
     });
-    return await this.productDocRepo.save(link);
   }
 
   /**
@@ -2972,15 +3424,48 @@ export class PurchaseOrdersService {
     productId: string,
     documentId: string,
     purpose: DocumentPurpose,
+    actor?: AuditActor,
   ) {
+    const product = await this.assertPoOpenForProduct(
+      poId,
+      productId,
+      'đổi phân loại tài liệu',
+    );
+    if (product.status === ProductStatus.CLOSED) {
+      throw new BadRequestException(
+        'Sản phẩm đã bị khóa, không thể đổi phân loại tài liệu.',
+      );
+    }
     const existing = await this.productDocRepo.findOne({
       where: { productId, documentId },
     });
     if (!existing) {
       throw new NotFoundException('Tài liệu chưa được gán vào sản phẩm này.');
     }
+    const oldPurpose = existing.purpose;
     existing.purpose = purpose;
-    return await this.productDocRepo.save(existing);
+    const targetLabel = await this.documentAuditLabel(documentId);
+    return this.dataSource.transaction(async (manager) => {
+      const saved = await manager.save(PurchaseOrderProductDocument, existing);
+      await this.recordAudit(manager, actor, {
+        aggregateType: AUDIT_TYPE.PRODUCT_DOCUMENT,
+        aggregateId: documentId,
+        parentId: productId,
+        targetLabel,
+        eventType: AuditEventType.UPDATED,
+        changes:
+          oldPurpose === purpose
+            ? []
+            : [
+                {
+                  fieldName: 'purpose',
+                  oldValue: oldPurpose,
+                  newValue: purpose,
+                },
+              ],
+      });
+      return saved;
+    });
   }
 
   /**
@@ -2990,8 +3475,38 @@ export class PurchaseOrdersService {
     poId: string,
     productId: string,
     documentId: string,
+    actor?: AuditActor,
   ): Promise<void> {
-    await this.productDocRepo.delete({ productId, documentId });
+    const product = await this.assertPoOpenForProduct(
+      poId,
+      productId,
+      'gỡ tài liệu',
+    );
+    if (product.status === ProductStatus.CLOSED) {
+      throw new BadRequestException(
+        'Sản phẩm đã bị khóa, không thể gỡ tài liệu.',
+      );
+    }
+    const existing = await this.productDocRepo.findOne({
+      where: { productId, documentId },
+    });
+    if (!existing) return;
+    const targetLabel = await this.documentAuditLabel(documentId);
+    await this.dataSource.transaction(async (manager) => {
+      await manager.delete(PurchaseOrderProductDocument, {
+        productId,
+        documentId,
+      });
+      await this.recordAudit(manager, actor, {
+        aggregateType: AUDIT_TYPE.PRODUCT_DOCUMENT,
+        aggregateId: documentId,
+        parentId: productId,
+        targetLabel,
+        eventType: AuditEventType.DELETED,
+        reason: `Gỡ tài liệu ${targetLabel}`,
+        changes: [],
+      });
+    });
   }
 
   /**
@@ -3002,14 +3517,11 @@ export class PurchaseOrdersService {
     productId: string,
     dto: PresignPoDocumentDto,
   ): Promise<{ objectKey: string; uploadUrl: string; expiresIn: number }> {
-    const product = await this.productRepo.findOne({
-      where: { id: productId, purchaseOrderId: poId },
-    });
-    if (!product) {
-      throw new NotFoundException(
-        `Không tìm thấy sản phẩm #${productId} trong đơn hàng PO`,
-      );
-    }
+    const product = await this.assertPoOpenForProduct(
+      poId,
+      productId,
+      'tải lên tài liệu mới',
+    );
     if (product.status === ProductStatus.CLOSED) {
       throw new BadRequestException(
         'Sản phẩm đã bị khóa, không thể tải lên tài liệu mới.',
@@ -3041,6 +3553,7 @@ export class PurchaseOrdersService {
     productId: string,
     userId: string | undefined,
     dto: ConfirmPoDocumentDto,
+    actor?: AuditActor,
   ): Promise<{
     productId: string;
     documentId: string;
@@ -3052,14 +3565,11 @@ export class PurchaseOrdersService {
     fileName: string;
     fileSize: number;
   }> {
-    const product = await this.productRepo.findOne({
-      where: { id: productId, purchaseOrderId: poId },
-    });
-    if (!product) {
-      throw new NotFoundException(
-        `Không tìm thấy sản phẩm #${productId} trong đơn hàng PO`,
-      );
-    }
+    const product = await this.assertPoOpenForProduct(
+      poId,
+      productId,
+      'tải lên tài liệu mới',
+    );
     if (product.status === ProductStatus.CLOSED) {
       throw new BadRequestException(
         'Sản phẩm đã bị khóa, không thể tải lên tài liệu mới.',
@@ -3132,6 +3642,18 @@ export class PurchaseOrdersService {
           }),
         );
 
+        await this.recordAudit(manager, actor, {
+          aggregateType: AUDIT_TYPE.PRODUCT_DOCUMENT,
+          aggregateId: doc.id,
+          parentId: productId,
+          targetLabel: dto.fileName,
+          eventType: AuditEventType.CREATED,
+          changes: [
+            { fieldName: 'fileName', oldValue: null, newValue: dto.fileName },
+            { fieldName: 'purpose', oldValue: null, newValue: dto.purpose },
+          ],
+        });
+
         return {
           productId,
           documentId: doc.id,
@@ -3159,15 +3681,13 @@ export class PurchaseOrdersService {
     documentId: string,
     userId: string | undefined,
     dto: ConfirmPoDocumentDto,
+    actor?: AuditActor,
   ) {
-    const product = await this.productRepo.findOne({
-      where: { id: productId, purchaseOrderId: poId },
-    });
-    if (!product) {
-      throw new NotFoundException(
-        `Không tìm thấy sản phẩm #${productId} trong đơn hàng PO`,
-      );
-    }
+    const product = await this.assertPoOpenForProduct(
+      poId,
+      productId,
+      'cập nhật phiên bản tài liệu',
+    );
     if (product.status === ProductStatus.CLOSED) {
       throw new BadRequestException(
         'Sản phẩm đã bị khóa, không thể cập nhật phiên bản mới.',
@@ -3236,6 +3756,25 @@ export class PurchaseOrdersService {
         doc.currentVersionId = newVersion.id;
         await docRepo.save(doc);
 
+        const previous = existingVersions[0];
+        await this.recordAudit(manager, actor, {
+          aggregateType: AUDIT_TYPE.PRODUCT_DOCUMENT,
+          aggregateId: documentId,
+          parentId: productId,
+          targetLabel: doc.title,
+          eventType: AuditEventType.UPDATED,
+          reason: `Tải lên phiên bản ${nextVersionNo}`,
+          changes: [
+            {
+              fieldName: 'version',
+              oldValue: previous
+                ? `v${previous.versionNo} · ${previous.originalFileName}`
+                : null,
+              newValue: `v${nextVersionNo} · ${dto.fileName}`,
+            },
+          ],
+        });
+
         const allVersions = [newVersion, ...existingVersions];
 
         return {
@@ -3284,16 +3823,16 @@ export class PurchaseOrdersService {
   }
 
   async saveProductOperationSteps(
+    poId: string,
     productId: string,
     dto: SaveProductOperationStepsDto,
-    userId?: string,
+    actor?: AuditActor,
   ) {
-    const product = await this.productRepo.findOne({
-      where: { id: productId },
-    });
-    if (!product) {
-      throw new NotFoundException(`Không tìm thấy sản phẩm #${productId}`);
-    }
+    const product = await this.assertPoOpenForProduct(
+      poId,
+      productId,
+      'chỉnh sửa bảng quy trình công đoạn',
+    );
 
     if (product.status === ProductStatus.CLOSED) {
       throw new BadRequestException(
@@ -3302,6 +3841,11 @@ export class PurchaseOrdersService {
     }
 
     return await this.dataSource.transaction(async (manager) => {
+      const beforeSteps = await manager.find(
+        PurchaseOrderProductOperationStep,
+        { where: { productId } },
+      );
+
       // Xóa các bước cũ
       await manager.delete(PurchaseOrderProductOperationStep, { productId });
 
@@ -3334,6 +3878,7 @@ export class PurchaseOrdersService {
         newSteps,
       );
 
+      const oldCmBaseDays = product.as3bCmBaseDays;
       // NOTE: use `!= null` (not truthy) so an explicit cmBaseDays of 0 is
       // still persisted instead of being silently skipped.
       if (dto.cmBaseDays != null) {
@@ -3341,19 +3886,99 @@ export class PurchaseOrdersService {
         await manager.save(PurchaseOrderProduct, product);
       }
 
-      // Log lịch sử
-      const log = new PurchaseOrderProductStatusHistory();
-      log.productId = productId;
-      log.oldStatus = product.status;
-      log.newStatus = product.status;
-      log.action = 'operation_steps_updated';
-      log.reason =
-        dto.reason || `Cập nhật ${savedSteps.length} bước công đoạn sản xuất`;
-      log.changedBy = userId || (null as any);
-      log.changedAt = new Date();
-      await manager.save(PurchaseOrderProductStatusHistory, log);
+      const extraChanges: EntityFieldChange[] =
+        dto.cmBaseDays != null &&
+        Number(oldCmBaseDays) !== Number(dto.cmBaseDays)
+          ? [
+              {
+                fieldName: 'as3bCmBaseDays',
+                oldValue: oldCmBaseDays ?? null,
+                newValue: Number(dto.cmBaseDays),
+              },
+            ]
+          : [];
+      await this.recordStepsAudit(
+        manager,
+        actor,
+        productId,
+        beforeSteps,
+        newSteps,
+        extraChanges,
+      );
 
       return savedSteps;
+    });
+  }
+
+  /** 1 lần bấm Lưu bảng công đoạn = 1 sự kiện, giống bên Mẫu Fit: field-name
+   * mang tiền tố "<tên công đoạn>::" để FE nhóm theo dòng, phần tóm tắt chỉ
+   * ghi số lượng. Công đoạn cũ/mới được ghép theo id. */
+  private async recordStepsAudit(
+    manager: EntityManager,
+    actor: AuditActor | undefined,
+    productId: string,
+    beforeSteps: PurchaseOrderProductOperationStep[],
+    afterSteps: PurchaseOrderProductOperationStep[],
+    extraChanges: EntityFieldChange[],
+  ): Promise<void> {
+    if (!actor) return;
+    const beforeById = new Map(beforeSteps.map((s) => [s.id, s]));
+    const afterIds = new Set(afterSteps.map((s) => s.id));
+    const stepNameById = new Map(
+      [...beforeSteps, ...afterSteps].map((s) => [s.id, s.stepName]),
+    );
+    const rowLabel = (step: PurchaseOrderProductOperationStep) =>
+      step.stepName || '(không tên)';
+
+    let created = 0;
+    let updated = 0;
+    const changes: EntityFieldChange[] = [...extraChanges];
+    for (const after of afterSteps) {
+      const before = beforeById.get(after.id) ?? null;
+      // Dòng mới: bỏ các giá trị mặc định (0, false, thứ tự) cho gọn.
+      const fields = auditDiff(before, after, STEP_AUDIT_FIELDS).filter(
+        (field) =>
+          before ||
+          (field.fieldName !== 'orderIndex' &&
+            field.newValue !== 0 &&
+            field.newValue !== false),
+      );
+      if (!before) created++;
+      else if (fields.length > 0) updated++;
+      for (const field of fields) {
+        const resolve = (value: unknown) =>
+          field.fieldName === 'parentStepId' && typeof value === 'string'
+            ? (stepNameById.get(value) ?? value)
+            : value;
+        changes.push({
+          fieldName: `${rowLabel(after)}::${field.fieldName}`,
+          oldValue: resolve(field.oldValue),
+          newValue: resolve(field.newValue),
+        });
+      }
+    }
+    const deleted = beforeSteps.filter((s) => !afterIds.has(s.id)).length;
+
+    const reasonParts: string[] = [];
+    if (created > 0) reasonParts.push(`Tạo mới ${created} công đoạn`);
+    if (updated > 0) reasonParts.push(`Cập nhật ${updated} công đoạn`);
+    if (deleted > 0) reasonParts.push(`Xoá ${deleted} công đoạn`);
+    if (reasonParts.length === 0 && extraChanges.length === 0) return;
+
+    const eventType =
+      created > 0 && updated === 0 && deleted === 0 && !extraChanges.length
+        ? AuditEventType.CREATED
+        : deleted > 0 && created === 0 && updated === 0 && !extraChanges.length
+          ? AuditEventType.DELETED
+          : AuditEventType.UPDATED;
+    await this.recordAudit(manager, actor, {
+      aggregateType: AUDIT_TYPE.PRODUCT_STEPS,
+      aggregateId: productId,
+      parentId: productId,
+      targetLabel: 'Quy trình công đoạn',
+      eventType,
+      reason: reasonParts.join('; ') || undefined,
+      changes,
     });
   }
 
@@ -3381,11 +4006,37 @@ export class PurchaseOrdersService {
    * link tải ảnh) vẫn dùng assertPoProductExists thẳng, không qua hàm này,
    * vì sản phẩm khóa vẫn được phép xem/tải về theo đúng banner cảnh báo bên FE.
    */
+  /** PO đã khóa/hủy thì mọi dữ liệu sản phẩm bên trong cũng đóng băng. Kiểm
+   * tra theo PO thật của sản phẩm, không tin riêng :id trên URL. */
+  private async assertPoOpenForProduct(
+    poId: string,
+    productId: string,
+    action: string,
+  ): Promise<PurchaseOrderProduct> {
+    const [product, po] = await Promise.all([
+      this.productRepo.findOne({
+        where: { id: productId, purchaseOrderId: poId },
+      }),
+      this.poRepo.findOne({ where: { id: poId } }),
+    ]);
+    if (!product || !po) {
+      throw new NotFoundException(
+        `Không tìm thấy sản phẩm #${productId} trong đơn hàng PO`,
+      );
+    }
+    this.checkPoNotLocked(po, action);
+    return product;
+  }
+
   private async assertPoProductEditable(
     poId: string,
     productId: string,
   ): Promise<PurchaseOrderProduct> {
-    const product = await this.assertPoProductExists(poId, productId);
+    const product = await this.assertPoOpenForProduct(
+      poId,
+      productId,
+      'chỉnh sửa đợt may mẫu',
+    );
     if (product.status === ProductStatus.CLOSED) {
       throw new BadRequestException(
         'Sản phẩm đã bị khóa, không thể chỉnh sửa đợt may mẫu.',
@@ -3497,16 +4148,17 @@ export class PurchaseOrdersService {
   }
 
   async createProductSampleRound(
+    poId: string,
     productId: string,
     dto: CreateProductSampleRoundDto,
     userId?: string,
+    actor?: AuditActor,
   ) {
-    const product = await this.productRepo.findOne({
-      where: { id: productId },
-    });
-    if (!product) {
-      throw new NotFoundException(`Không tìm thấy sản phẩm #${productId}`);
-    }
+    const product = await this.assertPoOpenForProduct(
+      poId,
+      productId,
+      'chỉnh sửa đợt may mẫu',
+    );
     if (product.status === ProductStatus.CLOSED) {
       throw new BadRequestException(
         'Sản phẩm đã bị khóa, không thể chỉnh sửa đợt may mẫu.',
@@ -3514,11 +4166,18 @@ export class PurchaseOrdersService {
     }
 
     const savedRound = await this.dataSource.transaction(async (manager) => {
+      // Giống bên Mẫu Fit: 2 request cùng lúc (bấm đúp) đọc cùng count rồi
+      // cùng insert roundNo đó → đụng uq_product_sample_round. Khoá dòng sản
+      // phẩm để các request của cùng 1 sản phẩm chạy tuần tự.
+      await manager.findOne(PurchaseOrderProduct, {
+        where: { id: productId },
+        lock: { mode: 'pessimistic_write' },
+      });
       const roundRepo = manager.getRepository(PurchaseOrderProductSampleRound);
       const imageRepo = manager.getRepository(PurchaseOrderProductSampleImage);
 
       const currentCount = await roundRepo.count({ where: { productId } });
-      const roundNo = dto.roundNo || currentCount + 1;
+      const roundNo = currentCount + 1;
 
       const round = roundRepo.create({
         productId,
@@ -3549,6 +4208,15 @@ export class PurchaseOrdersService {
         await imageRepo.save(imageEntities);
       }
 
+      await this.recordAudit(manager, actor, {
+        aggregateType: AUDIT_TYPE.PRODUCT_SAMPLE_ROUND,
+        aggregateId: saved.id,
+        parentId: productId,
+        targetLabel: `Đợt may mẫu #${saved.roundNo}`,
+        eventType: AuditEventType.CREATED,
+        changes: auditDiff(null, saved, SAMPLE_ROUND_AUDIT_FIELDS),
+      });
+
       return saved;
     });
 
@@ -3565,9 +4233,11 @@ export class PurchaseOrdersService {
     roundId: string,
     dto: UpdateProductSampleRoundDto,
     userId?: string,
+    actor?: AuditActor,
   ) {
     await this.assertPoProductEditable(poId, productId);
     const round = await this.findProductSampleRoundOrThrow(productId, roundId);
+    const before = { ...round };
 
     if (dto.sampleDate !== undefined) {
       round.sampleDate = new Date(dto.sampleDate);
@@ -3586,7 +4256,20 @@ export class PurchaseOrdersService {
       }
     }
 
-    const saved = await this.productSampleRoundRepo.save(round);
+    const saved = await this.dataSource.transaction(async (manager) => {
+      const savedRound = await manager
+        .getRepository(PurchaseOrderProductSampleRound)
+        .save(round);
+      await this.recordAudit(manager, actor, {
+        aggregateType: AUDIT_TYPE.PRODUCT_SAMPLE_ROUND,
+        aggregateId: roundId,
+        parentId: productId,
+        targetLabel: `Đợt may mẫu #${round.roundNo}`,
+        eventType: AuditEventType.UPDATED,
+        changes: auditDiff(before, round, SAMPLE_ROUND_AUDIT_FIELDS),
+      });
+      return savedRound;
+    });
     const imagesMap = await this.mapProductSampleImages([roundId]);
     return this.toProductSampleRoundItem(saved, imagesMap.get(roundId) || []);
   }
@@ -3622,9 +4305,10 @@ export class PurchaseOrdersService {
     roundId: string,
     userId: string | undefined,
     dto: ConfirmProductSampleImageDto,
+    actor?: AuditActor,
   ) {
     await this.assertPoProductEditable(poId, productId);
-    await this.findProductSampleRoundOrThrow(productId, roundId);
+    const round = await this.findProductSampleRoundOrThrow(productId, roundId);
 
     if (
       !isObjectKeyInScope(
@@ -3696,6 +4380,17 @@ export class PurchaseOrdersService {
           }),
         );
 
+        await this.recordAudit(manager, actor, {
+          aggregateType: AUDIT_TYPE.PRODUCT_SAMPLE_ROUND,
+          aggregateId: roundId,
+          parentId: productId,
+          targetLabel: `Đợt may mẫu #${round.roundNo}`,
+          eventType: AuditEventType.DOCUMENT_VERSION_ADDED,
+          changes: [
+            { fieldName: 'images', oldValue: null, newValue: dto.fileName },
+          ],
+        });
+
         const url = await this.storage.getPresignedGetUrl(
           dto.objectKey,
           PRESIGN_GET_EXPIRY_SECONDS,
@@ -3757,9 +4452,10 @@ export class PurchaseOrdersService {
     productId: string,
     roundId: string,
     imageId: string,
+    actor?: AuditActor,
   ): Promise<void> {
     await this.assertPoProductEditable(poId, productId);
-    await this.findProductSampleRoundOrThrow(productId, roundId);
+    const round = await this.findProductSampleRoundOrThrow(productId, roundId);
 
     const image = await this.productSampleImageRepo.findOne({
       where: { id: imageId, sampleRoundId: roundId },
@@ -3767,7 +4463,23 @@ export class PurchaseOrdersService {
     if (!image) {
       throw new NotFoundException(`Không tìm thấy ảnh #${imageId}`);
     }
-    await this.productSampleImageRepo.remove(image);
+    const version = await this.docVersionRepo.findOne({
+      where: { id: image.documentVersionId },
+    });
+    const fileName = version?.originalFileName ?? 'ảnh';
+
+    await this.dataSource.transaction(async (manager) => {
+      await manager.remove(PurchaseOrderProductSampleImage, image);
+      await this.recordAudit(manager, actor, {
+        aggregateType: AUDIT_TYPE.PRODUCT_SAMPLE_ROUND,
+        aggregateId: roundId,
+        parentId: productId,
+        targetLabel: `Đợt may mẫu #${round.roundNo}`,
+        eventType: AuditEventType.DELETED,
+        reason: `Xoá ảnh ${fileName}`,
+        changes: [{ fieldName: 'images', oldValue: fileName, newValue: null }],
+      });
+    });
   }
 
   /**
@@ -3790,110 +4502,234 @@ export class PurchaseOrdersService {
       }),
     ]);
 
+    // DB chỉ giữ object key (xem toStoredImageRef) — ký lại mỗi lần đọc,
+    // không thì FE nhận key trần và ảnh không hiển thị.
+    const sizeData = Array.isArray(doc.sizeData)
+      ? await Promise.all(
+          (doc.sizeData as any[]).map(async (item) =>
+            item &&
+            typeof item === 'object' &&
+            typeof item.imageUrl === 'string'
+              ? { ...item, imageUrl: await this.resolveImageRef(item.imageUrl) }
+              : item,
+          ),
+        )
+      : doc.sizeData;
+
+    const resolvedSections = await Promise.all(
+      sections.map(async (s) => ({
+        id: s.id,
+        sectionCode: s.sectionCode,
+        title: s.title,
+        content: s.content,
+        imageGroups: await Promise.all(
+          (s.imageGroups ?? []).map(async (group: any) => ({
+            ...group,
+            imageUrls: await Promise.all(
+              (group?.imageUrls ?? []).map((url: string) =>
+                this.resolveImageRef(url),
+              ),
+            ),
+          })),
+        ),
+        orderIndex: s.orderIndex,
+        isFixed: s.isFixed,
+      })),
+    );
+
+    // Liệt kê tường minh: FE spread lại sections/sizeRows vào payload lưu,
+    // cột nội bộ (productionDocumentId, rowVersion...) sẽ bị DTO từ chối.
     return {
-      ...doc,
-      sections,
-      sizeRows,
+      id: doc.id,
+      productId: doc.productId,
+      styleId: doc.styleId,
+      name: doc.name,
+      description: doc.description,
+      status: doc.status,
+      section1Description: doc.section1Description,
+      section1ImageUrl: await this.resolveImageRef(doc.section1ImageUrl),
+      section2Accessories: doc.section2Accessories,
+      section3Notes: doc.section3Notes,
+      section4CustomerFeedback: doc.section4CustomerFeedback,
+      sizeData,
+      sourceDocumentId: doc.sourceDocumentId,
+      copiedFromStyleId: doc.copiedFromStyleId,
+      copiedAt: doc.copiedAt,
+      createdAt: doc.createdAt,
+      updatedAt: doc.updatedAt,
+      sections: resolvedSections,
+      sizeRows: sizeRows.map((sr) => ({
+        id: sr.id,
+        sizeLabel: sr.sizeLabel,
+        measurementName: sr.measurementName,
+        measurementValue: sr.measurementValue,
+        tolerance: sr.tolerance,
+        orderIndex: sr.orderIndex,
+      })),
     };
   }
 
   async updateProductProductionDoc(
+    poId: string,
     productId: string,
-    dto: any,
+    dto: UpdateStyleProductionDocDto,
     userId?: string,
+    actor?: AuditActor,
   ) {
-    let doc = await this.prodDocRepo.findOne({ where: { productId } });
-
-    if (!doc) {
-      const product = await this.productRepo.findOne({
-        where: { id: productId },
-      });
-      doc = this.prodDocRepo.create({
-        productId,
-        styleId: null,
-        name: dto.name || `Tài liệu SX - ${product?.productCode || 'SP'}`,
-        status: dto.status || ProductionDocStatus.DRAFT,
-        createdBy: userId,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      });
-      doc = await this.prodDocRepo.save(doc);
+    const product = await this.assertPoOpenForProduct(
+      poId,
+      productId,
+      'chỉnh sửa tài liệu sản xuất',
+    );
+    if (product.status === ProductStatus.CLOSED) {
+      throw new BadRequestException(
+        'Sản phẩm đã bị khóa, không thể chỉnh sửa tài liệu sản xuất.',
+      );
     }
+    const existingDoc = await this.prodDocRepo.findOne({
+      where: { productId },
+    });
 
-    if (dto.name !== undefined) doc.name = dto.name.trim();
-    if (dto.description !== undefined)
-      doc.description = dto.description ? dto.description.trim() : null;
-    if (dto.status !== undefined) doc.status = dto.status;
-    if (dto.section1Description !== undefined)
-      doc.section1Description = dto.section1Description;
-    if (dto.section1ImageUrl !== undefined)
-      doc.section1ImageUrl = dto.section1ImageUrl;
-    if (dto.section2Accessories !== undefined)
-      doc.section2Accessories = dto.section2Accessories;
-    if (dto.section3Notes !== undefined) doc.section3Notes = dto.section3Notes;
-    if (dto.section4CustomerFeedback !== undefined)
-      doc.section4CustomerFeedback = dto.section4CustomerFeedback;
-    if (dto.sizeData !== undefined) doc.sizeData = dto.sizeData;
+    await this.dataSource.transaction(async (manager) => {
+      const docRepo = manager.getRepository(ProductionDocument);
+      const sectionRepo = manager.getRepository(ProductionDocumentSection);
+      const sizeRowRepo = manager.getRepository(ProductionDocumentSizeRow);
 
-    doc.updatedBy = userId || (null as any);
-    doc.updatedAt = new Date();
-
-    await this.prodDocRepo.save(doc);
-
-    // Lưu sections (dynamic sections 06+)
-    if (dto.sections !== undefined) {
-      const existingSections = await this.prodDocSectionRepo.find({
-        where: { productionDocumentId: doc.id },
-      });
-      const nonFixed = existingSections.filter((s) => !s.isFixed);
-      if (nonFixed.length > 0) {
-        await this.prodDocSectionRepo.remove(nonFixed);
-      }
-
-      let dynamicOrder = 5;
-      const newSections = (dto.sections || [])
-        .filter((s: any) => !s.isFixed)
-        .map((s: any) =>
-          this.prodDocSectionRepo.create({
-            productionDocumentId: doc.id,
-            sectionCode: s.sectionCode || `SEC_DYN_${dynamicOrder++}`,
-            title: s.title ? s.title.trim() : '',
-            content: s.content ? s.content.trim() : null,
-            imageGroups: s.imageGroups ?? [],
-            orderIndex: s.orderIndex ?? dynamicOrder,
-            isFixed: false,
+      let doc = existingDoc;
+      if (!doc) {
+        doc = await docRepo.save(
+          docRepo.create({
+            productId,
+            styleId: null,
+            name: dto.name || `Tài liệu SX - ${product.productCode || 'SP'}`,
+            status: dto.status || ProductionDocStatus.DRAFT,
+            createdBy: userId,
+            createdAt: new Date(),
+            updatedAt: new Date(),
           }),
         );
-      if (newSections.length > 0) {
-        await this.prodDocSectionRepo.save(newSections);
       }
-    }
+      const before = existingDoc
+        ? this.productionDocAuditSnapshot({ ...existingDoc })
+        : null;
 
-    // Lưu sizeRows (bảng thông số kích thước)
-    if (dto.sizeRows !== undefined) {
-      const existingSizeRows = await this.prodDocSizeRowRepo.find({
-        where: { productionDocumentId: doc.id },
-      });
-      if (existingSizeRows.length > 0) {
-        await this.prodDocSizeRowRepo.remove(existingSizeRows);
+      if (dto.name !== undefined) doc.name = dto.name.trim();
+      if (dto.description !== undefined)
+        doc.description = dto.description ? dto.description.trim() : null;
+      if (dto.status !== undefined) doc.status = dto.status;
+      if (dto.section1Description !== undefined)
+        doc.section1Description = dto.section1Description;
+      if (dto.section1ImageUrl !== undefined)
+        doc.section1ImageUrl = this.toStoredImageRef(dto.section1ImageUrl);
+      if (dto.section2Accessories !== undefined)
+        doc.section2Accessories = dto.section2Accessories;
+      if (dto.section3Notes !== undefined)
+        doc.section3Notes = dto.section3Notes;
+      if (dto.section4CustomerFeedback !== undefined)
+        doc.section4CustomerFeedback = dto.section4CustomerFeedback;
+      if (dto.sizeData !== undefined)
+        doc.sizeData = this.toStoredSizeData(dto.sizeData) as any;
+
+      doc.updatedBy = userId || (null as any);
+      doc.updatedAt = new Date();
+
+      await docRepo.save(doc);
+      const docId = doc.id;
+      const extraChanges: EntityFieldChange[] = [];
+
+      // Lưu sections (dynamic sections 06+)
+      if (dto.sections !== undefined) {
+        const existingSections = await sectionRepo.find({
+          where: { productionDocumentId: docId },
+        });
+        const nonFixed = existingSections.filter((s) => !s.isFixed);
+        if (nonFixed.length > 0) {
+          await sectionRepo.remove(nonFixed);
+        }
+
+        let dynamicOrder = 5;
+        const newSections = (dto.sections || [])
+          .filter((s) => !s.isFixed)
+          .map((s) =>
+            sectionRepo.create({
+              productionDocumentId: docId,
+              sectionCode: s.sectionCode || `SEC_DYN_${dynamicOrder++}`,
+              title: s.title ? s.title.trim() : '',
+              content: s.content ? s.content.trim() : null,
+              imageGroups: this.toStoredImageGroups(s.imageGroups),
+              orderIndex: s.orderIndex ?? dynamicOrder,
+              isFixed: false,
+            }),
+          );
+        if (newSections.length > 0) {
+          await sectionRepo.save(newSections);
+        }
+
+        const describe = (rows: ProductionDocumentSection[]) =>
+          rows.map((s) => `${s.title}: ${s.content ?? ''}`).join('; ') || null;
+        const oldValue = describe(nonFixed);
+        const newValue = describe(newSections);
+        if (oldValue !== newValue) {
+          extraChanges.push({ fieldName: 'sections', oldValue, newValue });
+        }
       }
 
-      if (dto.sizeRows.length > 0) {
-        const newSizeRows = dto.sizeRows.map((sr: any, index: number) =>
-          this.prodDocSizeRowRepo.create({
-            productionDocumentId: doc.id,
-            sizeLabel: String(sr.sizeLabel || '').trim(),
-            measurementName: String(sr.measurementName || '').trim(),
-            measurementValue: sr.measurementValue
-              ? String(sr.measurementValue).trim()
-              : null,
-            tolerance: sr.tolerance ? String(sr.tolerance).trim() : null,
-            orderIndex: sr.orderIndex ?? index + 1,
-          }),
+      // Lưu sizeRows (bảng thông số kích thước)
+      if (dto.sizeRows !== undefined) {
+        const existingSizeRows = await sizeRowRepo.find({
+          where: { productionDocumentId: docId },
+          order: { orderIndex: 'ASC' },
+        });
+        if (existingSizeRows.length > 0) {
+          await sizeRowRepo.remove(existingSizeRows);
+        }
+
+        const newSizeRows: ProductionDocumentSizeRow[] = dto.sizeRows.map(
+          (sr, index) =>
+            sizeRowRepo.create({
+              productionDocumentId: docId,
+              sizeLabel: String(sr.sizeLabel || '').trim(),
+              measurementName: String(sr.measurementName || '').trim(),
+              measurementValue: sr.measurementValue
+                ? String(sr.measurementValue).trim()
+                : null,
+              tolerance: sr.tolerance ? String(sr.tolerance).trim() : null,
+              orderIndex: sr.orderIndex ?? index + 1,
+            }),
         );
-        await this.prodDocSizeRowRepo.save(newSizeRows);
+        if (newSizeRows.length > 0) {
+          await sizeRowRepo.save(newSizeRows);
+        }
+
+        const describe = (rows: ProductionDocumentSizeRow[]) =>
+          rows
+            .map(
+              (r) =>
+                `${r.sizeLabel} · ${r.measurementName}: ${r.measurementValue ?? ''}${r.tolerance ? ` (±${r.tolerance})` : ''}`,
+            )
+            .join('; ') || null;
+        const oldValue = describe(existingSizeRows);
+        const newValue = describe(newSizeRows);
+        if (oldValue !== newValue) {
+          extraChanges.push({ fieldName: 'sizeRows', oldValue, newValue });
+        }
       }
-    }
+
+      const after = this.productionDocAuditSnapshot(doc) as AuditSnapshot;
+      await this.recordAudit(manager, actor, {
+        aggregateType: AUDIT_TYPE.PRODUCT_PRODUCTION_DOC,
+        aggregateId: docId,
+        parentId: productId,
+        targetLabel: doc.name,
+        eventType: existingDoc
+          ? AuditEventType.UPDATED
+          : AuditEventType.CREATED,
+        changes: [
+          ...diffEntity(before, after, PRODUCTION_DOC_AUDIT_FIELDS),
+          ...extraChanges,
+        ],
+      });
+    });
 
     return this.getProductProductionDoc(productId);
   }
@@ -3907,13 +4743,13 @@ export class PurchaseOrdersService {
     status: ProductStatus,
     reason?: string,
     userId?: string,
+    actor?: AuditActor,
   ) {
-    const product = await this.productRepo.findOne({
-      where: { id: productId, purchaseOrderId: poId },
-    });
-    if (!product) {
-      throw new NotFoundException(`Không tìm thấy sản phẩm #${productId}`);
-    }
+    const product = await this.assertPoOpenForProduct(
+      poId,
+      productId,
+      'khóa/mở khóa sản phẩm',
+    );
 
     // Đối với Product chỉ có 2 trạng thái: Đang Xử Lý (DRAFT) và Khóa (CLOSED)
     const normalizedStatus =
@@ -3927,23 +4763,31 @@ export class PurchaseOrdersService {
     if (userId) product.updatedBy = userId;
     product.updatedAt = new Date();
 
-    const saved = await this.productRepo.save(product);
-
-    const log = new PurchaseOrderProductStatusHistory();
-    log.productId = productId;
-    log.oldStatus = oldStatus;
-    log.newStatus = normalizedStatus;
-    log.action =
-      normalizedStatus === ProductStatus.CLOSED ? 'locked' : 'unlocked';
-    log.reason =
-      reason ||
-      (normalizedStatus === ProductStatus.CLOSED
+    const actionText =
+      normalizedStatus === ProductStatus.CLOSED
         ? 'Khóa sản phẩm'
-        : 'Mở khóa sản phẩm (Đang xử lý)');
-    log.changedBy = userId || (null as any);
-    log.changedAt = new Date();
-    await this.productHistoryRepo.save(log);
-
-    return saved;
+        : 'Mở khóa sản phẩm';
+    return this.dataSource.transaction(async (manager) => {
+      const saved = await manager.save(PurchaseOrderProduct, product);
+      await this.recordAudit(manager, actor, {
+        aggregateType: AUDIT_TYPE.PRODUCT,
+        aggregateId: productId,
+        parentId: poId,
+        targetLabel: productAuditLabel(product),
+        eventType: AuditEventType.STATUS_CHANGED,
+        reason: reason?.trim() ? `${actionText}: ${reason.trim()}` : actionText,
+        changes:
+          oldStatus === normalizedStatus
+            ? []
+            : [
+                {
+                  fieldName: 'status',
+                  oldValue: oldStatus,
+                  newValue: normalizedStatus,
+                },
+              ],
+      });
+      return saved;
+    });
   }
 }

@@ -4,19 +4,18 @@ import { DataSource, In } from 'typeorm';
 import {
   ConflictException,
   BadRequestException,
+  NotFoundException,
   ValidationPipe,
 } from '@nestjs/common';
 import { PurchaseOrdersService } from './purchase-orders.service';
 import { SaveProductOperationStepsDto } from './dto';
 import { PurchaseOrder } from './entities/PurchaseOrder.entity';
-import { PurchaseOrderStatusHistory } from './entities/PurchaseOrderStatusHistory.entity';
 import { PurchaseOrderDocument } from './entities/PurchaseOrderDocument.entity';
 import { PurchaseOrderProduct } from './entities/PurchaseOrderProduct.entity';
 import { PurchaseOrderProductOperationStep } from './entities/PurchaseOrderProductOperationStep.entity';
 import { PurchaseOrderProductSampleRound } from './entities/PurchaseOrderProductSampleRound.entity';
 import { PurchaseOrderProductSampleImage } from './entities/PurchaseOrderProductSampleImage.entity';
 import { PurchaseOrderProductDocument } from './entities/PurchaseOrderProductDocument.entity';
-import { PurchaseOrderProductStatusHistory } from './entities/PurchaseOrderProductStatusHistory.entity';
 import { PurchaseOrderProductColor } from './entities/PurchaseOrderProductColor.entity';
 import { PurchaseOrderProductColorSize } from './entities/PurchaseOrderProductColorSize.entity';
 import { Style } from '../styles/entities/Style.entity';
@@ -37,6 +36,8 @@ import {
   DocumentPurpose,
 } from '../../common/enums/database.enums';
 import { STORAGE_SERVICE, StorageService } from '../storage/storage.interface';
+import { Bom } from '../boms/entities/Bom.entity';
+import { AuditService } from '../audit/audit.service';
 
 describe('PurchaseOrdersService', () => {
   let service: PurchaseOrdersService;
@@ -49,11 +50,12 @@ describe('PurchaseOrdersService', () => {
     remove: jest.fn(),
   };
 
-  const mockHistoryRepo = {
-    find: jest.fn(),
-    create: jest.fn(),
-    save: jest.fn(),
+  const mockAuditService = {
+    recordEntityChange: jest.fn().mockResolvedValue(undefined),
   };
+  const ACTOR = { id: 'user-1', roleCode: 'SA' };
+  const auditCalls = () =>
+    mockAuditService.recordEntityChange.mock.calls.map((call) => call[1]);
 
   const mockPoDocRepo = {
     find: jest.fn(),
@@ -157,6 +159,12 @@ describe('PurchaseOrdersService', () => {
     colorName: string;
     orderIndex: number;
   }> = [];
+  let mockExistingColorSizes: Array<{
+    productColorId: string;
+    sizeLabel: string;
+    quantity: number;
+  }> = [];
+  let mockExistingSteps: Array<Record<string, unknown>> = [];
 
   let storageMock: jest.Mocked<StorageService>;
   let txColorRepoMock: { find: jest.Mock; save: jest.Mock; delete: jest.Mock };
@@ -202,6 +210,12 @@ describe('PurchaseOrdersService', () => {
           if (entity === PurchaseOrderProductColor) {
             return Promise.resolve(mockExistingColors);
           }
+          if (entity === PurchaseOrderProductColorSize) {
+            return Promise.resolve(mockExistingColorSizes);
+          }
+          if (entity === PurchaseOrderProductOperationStep) {
+            return Promise.resolve(mockExistingSteps);
+          }
           return Promise.resolve([]);
         }),
         create: jest.fn().mockImplementation((entity: any, dto: any) => {
@@ -218,6 +232,10 @@ describe('PurchaseOrdersService', () => {
           .fn()
           .mockImplementation((entityOrTarget: any, maybeEntity: any) => {
             const target = maybeEntity || entityOrTarget;
+            if (entityOrTarget === PurchaseOrder)
+              return mockPoRepo.save(target);
+            if (entityOrTarget === PurchaseOrderDocument)
+              return mockPoDocRepo.save(target);
             if (entityOrTarget === PurchaseOrderProduct || !maybeEntity) {
               mockProductRepo.save(target);
               return Promise.resolve(target);
@@ -240,7 +258,13 @@ describe('PurchaseOrdersService', () => {
             return txColorSizeRepoMock.delete(criteria);
           return Promise.resolve({ affected: 1 });
         }),
-        remove: jest.fn().mockResolvedValue(undefined),
+        remove: jest
+          .fn()
+          .mockImplementation((entity: any, target: any) =>
+            entity === PurchaseOrderDocument
+              ? mockPoDocRepo.remove(target)
+              : Promise.resolve(undefined),
+          ),
         getRepository: jest.fn().mockImplementation((entity: any) => {
           if (entity === Document) return txDocRepoMock;
           if (entity === DocumentVersion) return txVersionRepoMock;
@@ -260,11 +284,19 @@ describe('PurchaseOrdersService', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    // Mọi thao tác ghi cấp sản phẩm giờ tra PO để chặn khi PO đã khóa/hủy.
+    mockPoRepo.findOne.mockReset();
+    mockPoRepo.findOne.mockResolvedValue({
+      id: 'po-1',
+      status: PoStatus.IN_PROGRESS,
+    });
 
     mockStyleDocuments = [];
     mockSourceDocumentsById = {};
     mockSourceVersionsById = {};
     mockExistingColors = [];
+    mockExistingColorSizes = [];
+    mockExistingSteps = [];
 
     txColorRepoMock = {
       find: jest
@@ -357,10 +389,6 @@ describe('PurchaseOrdersService', () => {
           useValue: mockPoRepo,
         },
         {
-          provide: getRepositoryToken(PurchaseOrderStatusHistory),
-          useValue: mockHistoryRepo,
-        },
-        {
           provide: getRepositoryToken(PurchaseOrderDocument),
           useValue: mockPoDocRepo,
         },
@@ -382,10 +410,6 @@ describe('PurchaseOrdersService', () => {
         },
         {
           provide: getRepositoryToken(PurchaseOrderProductDocument),
-          useValue: mockGenericRepo,
-        },
-        {
-          provide: getRepositoryToken(PurchaseOrderProductStatusHistory),
           useValue: mockGenericRepo,
         },
         {
@@ -445,6 +469,7 @@ describe('PurchaseOrdersService', () => {
           useValue: mockCustomerRepo,
         },
         { provide: STORAGE_SERVICE, useValue: storageMock },
+        { provide: AuditService, useValue: mockAuditService },
       ],
     }).compile();
 
@@ -456,6 +481,10 @@ describe('PurchaseOrdersService', () => {
   });
 
   describe('create', () => {
+    beforeEach(() => {
+      mockPoRepo.findOne.mockResolvedValue(null);
+    });
+
     it('should throw ConflictException if poCode already exists', async () => {
       mockPoRepo.findOne.mockResolvedValueOnce({
         id: 'po-1',
@@ -499,7 +528,7 @@ describe('PurchaseOrdersService', () => {
       ).rejects.toThrow('Hạn hoàn thành (deadline) phải sau ngày nhận PO.');
     });
 
-    it('should create new PO with status draft, deadline and write history', async () => {
+    it('should create new PO with status draft, deadline and write an audit event', async () => {
       mockPoRepo.findOne.mockResolvedValueOnce(null);
       mockCustomerRepo.findOne.mockResolvedValueOnce({ id: 'cust-1' });
       const now = new Date();
@@ -518,25 +547,39 @@ describe('PurchaseOrdersService', () => {
 
       mockPoRepo.create.mockReturnValue(mockCreatedPo);
       mockPoRepo.save.mockResolvedValue(mockCreatedPo);
-      mockHistoryRepo.create.mockReturnValue({});
-      mockHistoryRepo.save.mockResolvedValue({});
       mockPoDocRepo.find.mockResolvedValue([]);
       mockProductRepo.find.mockResolvedValue([]);
-      mockHistoryRepo.find.mockResolvedValue([]);
 
       mockPoRepo.findOne.mockResolvedValueOnce(mockCreatedPo);
 
-      const result = await service.create({
-        poCode: 'PO-100',
-        customerId: 'cust-1',
-        customerNameSnapshot: 'Khách hàng A',
-        receivedDate: '2030-01-01',
-        deadline: '2030-01-15',
-      });
+      const result = await service.create(
+        {
+          poCode: 'PO-100',
+          customerId: 'cust-1',
+          customerNameSnapshot: 'Khách hàng A',
+          receivedDate: '2030-01-01',
+          deadline: '2030-01-15',
+        },
+        'user-1',
+        ACTOR,
+      );
 
       expect(result.poCode).toBe('PO-100');
       expect(result.status).toBe(PoStatus.DRAFT);
-      expect(mockHistoryRepo.save).toHaveBeenCalled();
+      expect(auditCalls()).toEqual([
+        expect.objectContaining({
+          aggregateType: 'PurchaseOrder',
+          aggregateId: 'po-100',
+          eventType: 'created',
+          actorId: 'user-1',
+          targetLabel: 'PO-100',
+        }),
+      ]);
+      expect(auditCalls()[0].changes).toEqual(
+        expect.arrayContaining([
+          { fieldName: 'deadline', oldValue: null, newValue: '2030-01-15' },
+        ]),
+      );
     });
 
     it('should set customerId to null when customerNameSnapshot does not match any customer', async () => {
@@ -558,11 +601,8 @@ describe('PurchaseOrdersService', () => {
 
       mockPoRepo.create.mockReturnValue(mockCreatedPo);
       mockPoRepo.save.mockResolvedValue(mockCreatedPo);
-      mockHistoryRepo.create.mockReturnValue({});
-      mockHistoryRepo.save.mockResolvedValue({});
       mockPoDocRepo.find.mockResolvedValue([]);
       mockProductRepo.find.mockResolvedValue([]);
-      mockHistoryRepo.find.mockResolvedValue([]);
       mockPoRepo.findOne.mockResolvedValueOnce(mockCreatedPo);
 
       const result = await service.create({
@@ -623,11 +663,8 @@ describe('PurchaseOrdersService', () => {
       };
       mockPoRepo.findOne.mockResolvedValue(mockPo);
       mockPoRepo.save.mockResolvedValue(mockPo);
-      mockHistoryRepo.create.mockReturnValue({});
-      mockHistoryRepo.save.mockResolvedValue({});
       mockPoDocRepo.find.mockResolvedValue([]);
       mockProductRepo.find.mockResolvedValue([]);
-      mockHistoryRepo.find.mockResolvedValue([]);
 
       const result = await service.updateStatus('po-1', {
         status: PoStatus.CLOSED,
@@ -650,11 +687,8 @@ describe('PurchaseOrdersService', () => {
       };
       mockPoRepo.findOne.mockResolvedValue(mockPo);
       mockPoRepo.save.mockResolvedValue(mockPo);
-      mockHistoryRepo.create.mockReturnValue({});
-      mockHistoryRepo.save.mockResolvedValue({});
       mockPoDocRepo.find.mockResolvedValue([]);
       mockProductRepo.find.mockResolvedValue([]);
-      mockHistoryRepo.find.mockResolvedValue([]);
 
       const result = await service.updateStatus('po-1', {
         status: PoStatus.IN_PROGRESS,
@@ -726,7 +760,6 @@ describe('PurchaseOrdersService', () => {
       });
       mockPoDocRepo.find.mockResolvedValue([]);
       mockProductRepo.find.mockResolvedValue([]);
-      mockHistoryRepo.find.mockResolvedValue([]);
 
       const res = await service.update('po-1', { deadline: '2026-10-01' });
       expect(mockPoRepo.save).toHaveBeenCalled();
@@ -750,8 +783,6 @@ describe('PurchaseOrdersService', () => {
       };
       mockProductRepo.create.mockReturnValue(mockProduct);
       mockProductRepo.save.mockResolvedValue(mockProduct);
-      mockHistoryRepo.create.mockReturnValue({});
-      mockHistoryRepo.save.mockResolvedValue({});
 
       const result = await service.addProduct('po-1', {
         productCode: 'PROD-001',
@@ -779,8 +810,6 @@ describe('PurchaseOrdersService', () => {
       };
       mockProductRepo.create.mockReturnValue(mockProduct);
       mockProductRepo.save.mockResolvedValue(mockProduct);
-      mockHistoryRepo.create.mockReturnValue({});
-      mockHistoryRepo.save.mockResolvedValue({});
 
       const result = await service.addProduct('po-1', {
         styleCode: 'STYLE-002',
@@ -1630,9 +1659,10 @@ describe('PurchaseOrdersService', () => {
       } as any;
 
       const result = await service.saveProductOperationSteps(
+        'po-1',
         'prod-1',
         dto,
-        'user-1',
+        ACTOR,
       );
 
       expect(result.map((s: any) => s.orderIndex)).toEqual([0, 1, 2, 3]);
@@ -1646,9 +1676,10 @@ describe('PurchaseOrdersService', () => {
       });
 
       await service.saveProductOperationSteps(
+        'po-1',
         'prod-1',
         { steps: [], cmBaseDays: 45 } as any,
-        'user-1',
+        ACTOR,
       );
 
       expect(mockProductRepo.save).toHaveBeenCalledWith(
@@ -1663,7 +1694,9 @@ describe('PurchaseOrdersService', () => {
       });
 
       await expect(
-        service.saveProductOperationSteps('prod-1', { steps: [] } as any),
+        service.saveProductOperationSteps('po-1', 'prod-1', {
+          steps: [],
+        } as any),
       ).rejects.toThrow(BadRequestException);
     });
   });
@@ -1759,6 +1792,7 @@ describe('PurchaseOrdersService', () => {
       ]);
 
       const result = await service.createProductSampleRound(
+        'po-1',
         'prod-1',
         {
           feedback: 'Fit ok',
@@ -1791,6 +1825,7 @@ describe('PurchaseOrdersService', () => {
       mockSampleImageQuery([]);
 
       const result = await service.createProductSampleRound(
+        'po-1',
         'prod-1',
         { images: [{ colorName: 'Red' }] } as any,
         'user-1',
@@ -1806,6 +1841,7 @@ describe('PurchaseOrdersService', () => {
       mockSampleImageQuery([]);
 
       const result = await service.createProductSampleRound(
+        'po-1',
         'prod-1',
         { feedback: '2nd round' } as any,
         'user-1',
@@ -1822,7 +1858,7 @@ describe('PurchaseOrdersService', () => {
       });
 
       await expect(
-        service.createProductSampleRound('prod-1', {} as any, 'user-1'),
+        service.createProductSampleRound('po-1', 'prod-1', {} as any, 'user-1'),
       ).rejects.toThrow(BadRequestException);
     });
   });
@@ -1925,6 +1961,684 @@ describe('PurchaseOrdersService', () => {
       );
 
       expect(result.url).toBe('https://s3.example/get');
+    });
+  });
+  describe('audit trail', () => {
+    it('writes nothing to the audit log when no actor is given', async () => {
+      mockProductRepo.findOne.mockResolvedValueOnce({
+        id: 'prod-1',
+        status: ProductStatus.DRAFT,
+      });
+      await service.saveProductOperationSteps('po-1', 'prod-1', {
+        steps: [{ stepName: 'Cắt' }],
+      } as any);
+      expect(mockAuditService.recordEntityChange).not.toHaveBeenCalled();
+    });
+
+    it('records one event per save of the steps table, counting created/updated/deleted rows', async () => {
+      mockProductRepo.findOne.mockResolvedValueOnce({
+        id: 'prod-1',
+        status: ProductStatus.DRAFT,
+        as3bCmBaseDays: 30,
+      });
+      mockExistingSteps = [
+        {
+          id: 'step-keep',
+          stepName: 'May cổ',
+          timePerPiece: '12.000',
+          ssv: '0.000',
+          targetTotal: 0,
+          orderIndex: 0,
+          isGroup: false,
+          parentStepId: null,
+        },
+        { id: 'step-gone', stepName: 'Vắt sổ', orderIndex: 1 },
+      ];
+
+      await service.saveProductOperationSteps(
+        'po-1',
+        'prod-1',
+        {
+          steps: [
+            { id: 'step-keep', stepName: 'May cổ', timePerPiece: 15 },
+            { stepName: 'Đóng nút' },
+          ],
+          cmBaseDays: 30,
+        } as any,
+        ACTOR,
+      );
+
+      expect(auditCalls()).toHaveLength(1);
+      const event = auditCalls()[0];
+      expect(event).toEqual(
+        expect.objectContaining({
+          aggregateType: 'PurchaseOrderProductOperationStep',
+          aggregateId: 'prod-1',
+          parentId: 'prod-1',
+          eventType: 'updated',
+          reason: 'Tạo mới 1 công đoạn; Cập nhật 1 công đoạn; Xoá 1 công đoạn',
+        }),
+      );
+      // "12.000" từ DB và 12 sau khi lưu không được tính là đổi.
+      expect(event.changes).toContainEqual({
+        fieldName: 'May cổ::timePerPiece',
+        oldValue: 12,
+        newValue: 15,
+      });
+      expect(
+        event.changes.some((c: any) => c.fieldName === 'as3bCmBaseDays'),
+      ).toBe(false);
+    });
+
+    it('records a PO status change with the action and the typed reason', async () => {
+      const po = {
+        id: 'po-1',
+        poCode: 'PO-001',
+        status: PoStatus.IN_PROGRESS,
+      };
+      mockPoRepo.findOne.mockResolvedValue(po);
+      mockPoRepo.save.mockResolvedValue(po);
+
+      await service.updateStatus(
+        'po-1',
+        { status: PoStatus.CANCELLED, reason: 'Khách huỷ đơn' },
+        'user-1',
+        ACTOR,
+      );
+
+      const event = auditCalls()[0];
+      expect(event).toEqual(
+        expect.objectContaining({
+          aggregateType: 'PurchaseOrder',
+          eventType: 'status_changed',
+          reason: 'Hủy đơn hàng PO: Khách huỷ đơn',
+        }),
+      );
+      expect(event.changes).toEqual(
+        expect.arrayContaining([
+          {
+            fieldName: 'status',
+            oldValue: 'in_progress',
+            newValue: 'cancelled',
+          },
+          {
+            fieldName: 'cancellationReason',
+            oldValue: null,
+            newValue: 'Khách huỷ đơn',
+          },
+        ]),
+      );
+    });
+
+    it('records size changes per color, grouped by color name', async () => {
+      mockProductRepo.findOne.mockResolvedValue({
+        id: 'prod-1',
+        purchaseOrderId: 'po-1',
+        productCode: 'P-1',
+        productName: 'Áo',
+        status: ProductStatus.DRAFT,
+      });
+      mockExistingColors = [
+        { id: 'c-1', productId: 'prod-1', colorName: 'Đen', orderIndex: 0 },
+        { id: 'c-2', productId: 'prod-1', colorName: 'Xanh', orderIndex: 1 },
+      ];
+      mockExistingColorSizes = [
+        { productColorId: 'c-1', sizeLabel: 'M', quantity: 10 },
+        { productColorId: 'c-2', sizeLabel: 'S', quantity: 5 },
+      ];
+
+      await service.updateProduct(
+        'po-1',
+        'prod-1',
+        {
+          colors: [
+            {
+              id: 'c-1',
+              colorName: 'Đen',
+              sizes: [{ sizeLabel: 'M', quantity: 20 }],
+            },
+          ],
+        },
+        'user-1',
+        ACTOR,
+      );
+
+      expect(auditCalls()[0].changes).toEqual([
+        { fieldName: 'Đen::sizes', oldValue: 'M: 10', newValue: 'M: 20' },
+        { fieldName: 'Xanh::sizes', oldValue: 'S: 5', newValue: null },
+      ]);
+    });
+
+    it('logs a removed sample image as "Xoá ảnh <file>", not as a deleted round', async () => {
+      mockProductRepo.findOne.mockResolvedValue({
+        id: 'prod-1',
+        purchaseOrderId: 'po-1',
+        status: ProductStatus.DRAFT,
+      });
+      mockPoRepo.findOne.mockResolvedValue({
+        id: 'po-1',
+        status: PoStatus.IN_PROGRESS,
+      });
+      mockGenericRepo.findOne
+        .mockResolvedValueOnce({
+          id: 'round-1',
+          productId: 'prod-1',
+          roundNo: 2,
+        })
+        .mockResolvedValueOnce({
+          id: 'img-1',
+          sampleRoundId: 'round-1',
+          documentVersionId: 'v-1',
+        });
+      mockDocVersionRepo.findOne.mockResolvedValueOnce({
+        id: 'v-1',
+        originalFileName: 'mau-2.jpg',
+      });
+
+      await service.removeProductSampleImage(
+        'po-1',
+        'prod-1',
+        'round-1',
+        'img-1',
+        ACTOR,
+      );
+
+      expect(auditCalls()[0]).toEqual(
+        expect.objectContaining({
+          aggregateType: 'PurchaseOrderProductSampleRound',
+          aggregateId: 'round-1',
+          parentId: 'prod-1',
+          targetLabel: 'Đợt may mẫu #2',
+          eventType: 'deleted',
+          reason: 'Xoá ảnh mau-2.jpg',
+        }),
+      );
+    });
+  });
+
+  describe('getProductDetail / getProductColors / getProductDocuments (per-tab split)', () => {
+    it('getProductDetail no longer returns colors/steps/sampleRounds/productionDocument/documents', async () => {
+      mockProductRepo.findOne.mockResolvedValueOnce({
+        id: 'prod-1',
+        purchaseOrderId: 'po-1',
+        productCode: 'SP-01',
+        productName: 'Áo thun',
+        sourceStyleId: null,
+      });
+
+      const result = await service.getProductDetail('po-1', 'prod-1');
+
+      expect(result).not.toHaveProperty('colors');
+      expect(result).not.toHaveProperty('operationSteps');
+      expect(result).not.toHaveProperty('sampleRounds');
+      expect(result).not.toHaveProperty('productionDocument');
+      expect(result).not.toHaveProperty('documents');
+      expect(result).not.toHaveProperty('totalQuantity');
+      expect(result.productCode).toBe('SP-01');
+    });
+
+    it('getProductColors returns colors with per-color size totals', async () => {
+      mockGenericRepo.find
+        .mockResolvedValueOnce([
+          { id: 'c-1', colorName: 'Đen', orderIndex: 0 },
+          { id: 'c-2', colorName: 'Trắng', orderIndex: 1 },
+        ])
+        .mockResolvedValueOnce([
+          {
+            id: 's-1',
+            productColorId: 'c-1',
+            sizeLabel: 'M',
+            quantity: 20,
+            orderIndex: 0,
+          },
+          {
+            id: 's-2',
+            productColorId: 'c-1',
+            sizeLabel: 'L',
+            quantity: 5,
+            orderIndex: 1,
+          },
+          {
+            id: 's-3',
+            productColorId: 'c-2',
+            sizeLabel: 'S',
+            quantity: 3,
+            orderIndex: 0,
+          },
+        ]);
+
+      const result = await service.getProductColors('prod-1');
+
+      expect(result.totalQuantity).toBe(28);
+      expect(result.colors).toEqual([
+        expect.objectContaining({ colorName: 'Đen', totalQuantity: 25 }),
+        expect.objectContaining({ colorName: 'Trắng', totalQuantity: 3 }),
+      ]);
+    });
+
+    it('getProductColors returns an empty list without querying sizes when the product has no colors', async () => {
+      mockGenericRepo.find.mockResolvedValueOnce([]);
+
+      const result = await service.getProductColors('prod-1');
+
+      expect(result).toEqual({ colors: [], totalQuantity: 0 });
+    });
+
+    it('getProductDocuments resolves a fresh presigned URL per document version', async () => {
+      mockGenericRepo.find.mockResolvedValueOnce([
+        {
+          documentId: 'doc-1',
+          productId: 'prod-1',
+          purpose: 'tech_pack',
+          linkedAt: new Date(),
+        },
+      ]);
+      mockDocRepo.find.mockResolvedValueOnce([
+        {
+          id: 'doc-1',
+          title: 'Techpack SP-01',
+          documentCode: 'DOC-1',
+          currentVersionId: 'v-1',
+        },
+      ]);
+      mockDocVersionRepo.find.mockResolvedValueOnce([
+        {
+          id: 'v-1',
+          documentId: 'doc-1',
+          versionNo: 1,
+          originalFileName: 'techpack.pdf',
+          storageKey: 'purchase-orders/prod-1/techpack.pdf',
+          byteSize: 1024,
+          mimeType: 'application/pdf',
+        },
+      ]);
+
+      const result = await service.getProductDocuments('prod-1');
+
+      expect(result).toEqual([
+        expect.objectContaining({
+          documentId: 'doc-1',
+          title: 'Techpack SP-01',
+          fileUrl: 'https://s3.example/get',
+          currentVersionNo: 1,
+        }),
+      ]);
+      expect(storageMock.getPresignedGetUrl).toHaveBeenCalled();
+    });
+
+    it('getProductDocuments returns an empty list without touching Document/DocumentVersion when nothing is linked', async () => {
+      mockGenericRepo.find.mockResolvedValueOnce([]);
+
+      const result = await service.getProductDocuments('prod-1');
+
+      expect(result).toEqual([]);
+      expect(mockDocRepo.find).not.toHaveBeenCalled();
+    });
+
+    it('getProductDocuments filters by purpose at the DB level, not just in the response, so the Bảng màu tab does not pay to presign every other document', async () => {
+      mockGenericRepo.find.mockResolvedValueOnce([]);
+
+      await service.getProductDocuments('prod-1', 'color_card');
+
+      expect(mockGenericRepo.find).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { productId: 'prod-1', purpose: 'color_card' },
+        }),
+      );
+    });
+
+    it('getProductDocuments rejects an unknown purpose value with a 400 instead of forwarding it to the DB', async () => {
+      await expect(
+        service.getProductDocuments('prod-1', '__proto__'),
+      ).rejects.toThrow(BadRequestException);
+      expect(mockGenericRepo.find).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('PO đã khóa/hủy — dữ liệu sản phẩm bên trong cũng bị đóng băng', () => {
+    const openProduct = {
+      id: 'prod-1',
+      purchaseOrderId: 'po-1',
+      productCode: 'P-1',
+      productName: 'Áo',
+      status: ProductStatus.DRAFT,
+    };
+
+    const productWrites: Array<[string, () => Promise<unknown>]> = [
+      [
+        'updateProduct',
+        () =>
+          service.updateProduct(
+            'po-1',
+            'prod-1',
+            { productName: 'X' } as any,
+            'user-1',
+          ),
+      ],
+      ['removeProduct', () => service.removeProduct('po-1', 'prod-1')],
+      [
+        'updateProductStatus',
+        () =>
+          service.updateProductStatus('po-1', 'prod-1', ProductStatus.DRAFT),
+      ],
+      [
+        'saveProductOperationSteps',
+        () =>
+          service.saveProductOperationSteps('po-1', 'prod-1', {
+            steps: [],
+          } as any),
+      ],
+      [
+        'createProductSampleRound',
+        () => service.createProductSampleRound('po-1', 'prod-1', {} as any),
+      ],
+      [
+        'updateProductProductionDoc',
+        () =>
+          service.updateProductProductionDoc('po-1', 'prod-1', {
+            section3Notes: 'x',
+          }),
+      ],
+      [
+        'linkProductDocument',
+        () => service.linkProductDocument('po-1', 'prod-1', 'doc-1'),
+      ],
+      [
+        'updateProductDocumentPurpose',
+        () =>
+          service.updateProductDocumentPurpose(
+            'po-1',
+            'prod-1',
+            'doc-1',
+            DocumentPurpose.TECH_PACK,
+          ),
+      ],
+      [
+        'unlinkProductDocument',
+        () => service.unlinkProductDocument('po-1', 'prod-1', 'doc-1'),
+      ],
+      [
+        'presignProductDocument',
+        () =>
+          service.presignProductDocument('po-1', 'prod-1', {
+            fileName: 'a.pdf',
+            mimeType: 'application/pdf',
+            sizeBytes: 10,
+            purpose: DocumentPurpose.TECH_PACK,
+          } as any),
+      ],
+    ];
+
+    it.each([
+      [PoStatus.CANCELLED, 'Đơn hàng PO đã hủy'],
+      [PoStatus.CLOSED, 'Đơn hàng PO đã khóa'],
+    ])('PO %s: mọi thao tác ghi cấp sản phẩm bị chặn', async (status, msg) => {
+      mockProductRepo.findOne.mockResolvedValue(openProduct);
+      mockPoRepo.findOne.mockResolvedValue({ id: 'po-1', status });
+
+      for (const [name, call] of productWrites) {
+        await expect(call()).rejects.toThrow(msg);
+        expect({
+          name,
+          tx: mockDataSource.transaction.mock.calls.length,
+        }).toEqual({
+          name,
+          tx: 0,
+        });
+      }
+      expect(storageMock.getPresignedPutUrl).not.toHaveBeenCalled();
+    });
+
+    it('từ chối sản phẩm không thuộc PO trên URL (không đi vòng qua PO đang mở)', async () => {
+      mockProductRepo.findOne.mockResolvedValue(null);
+
+      await expect(
+        service.saveProductOperationSteps('po-1', 'prod-of-other-po', {
+          steps: [],
+        } as any),
+      ).rejects.toThrow(NotFoundException);
+      expect(mockProductRepo.findOne).toHaveBeenCalledWith({
+        where: { id: 'prod-of-other-po', purchaseOrderId: 'po-1' },
+      });
+    });
+
+    it('tài liệu sản xuất của sản phẩm đã khóa không sửa được', async () => {
+      mockProductRepo.findOne.mockResolvedValue({
+        ...openProduct,
+        status: ProductStatus.CLOSED,
+      });
+
+      await expect(
+        service.updateProductProductionDoc('po-1', 'prod-1', {
+          section3Notes: 'x',
+        }),
+      ).rejects.toThrow('Sản phẩm đã bị khóa');
+      expect(mockDataSource.transaction).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('Tài liệu sản xuất PO — ảnh lưu object key, đọc thì ký lại', () => {
+    const signed = (key: string) =>
+      `https://bucket.s3.amazonaws.com/${key}?X-Amz-Credential=AKIA&X-Amz-Signature=abc`;
+
+    it('rút link S3 đã ký về object key trước khi lưu DB', async () => {
+      mockProductRepo.findOne.mockResolvedValue({
+        id: 'prod-1',
+        purchaseOrderId: 'po-1',
+        productCode: 'P-1',
+        status: ProductStatus.DRAFT,
+      });
+      mockGenericRepo.findOne.mockResolvedValueOnce({
+        id: 'doc-1',
+        productId: 'prod-1',
+        name: 'Doc',
+      });
+
+      await service.updateProductProductionDoc('po-1', 'prod-1', {
+        section1ImageUrl: signed('purchase-orders/prod-1/s1.png'),
+        sizeData: [{ imageUrl: signed('purchase-orders/prod-1/size.png') }],
+        sections: [
+          {
+            title: 'Mục 6',
+            imageGroups: [
+              { imageUrls: [signed('purchase-orders/prod-1/sec.png')] },
+            ],
+          },
+        ],
+      });
+
+      const saved = mockGenericRepo.save.mock.calls.map((c) => c[0]);
+      const savedDoc = saved.find((d) => d && d.id === 'doc-1');
+      expect(savedDoc.section1ImageUrl).toBe('purchase-orders/prod-1/s1.png');
+      expect(savedDoc.sizeData).toEqual([
+        { imageUrl: 'purchase-orders/prod-1/size.png' },
+      ]);
+      const savedSections = saved.find((d) => Array.isArray(d)) as any[];
+      expect(savedSections[0].imageGroups).toEqual([
+        { imageUrls: ['purchase-orders/prod-1/sec.png'] },
+      ]);
+      expect(JSON.stringify(saved)).not.toContain('X-Amz-Signature');
+    });
+
+    it('ký lại URL cho mọi ảnh khi đọc và không trả cột nội bộ', async () => {
+      mockGenericRepo.findOne.mockResolvedValueOnce({
+        id: 'doc-1',
+        productId: 'prod-1',
+        name: 'Doc',
+        rowVersion: '3',
+        createdBy: 'user-1',
+        section1ImageUrl: 'purchase-orders/prod-1/s1.png',
+        sizeData: [{ imageUrl: 'purchase-orders/prod-1/size.png' }],
+      });
+      mockGenericRepo.find
+        .mockResolvedValueOnce([
+          {
+            id: 'sec-1',
+            productionDocumentId: 'doc-1',
+            sectionCode: 'SEC_DYN_5',
+            title: 'Mục 6',
+            content: null,
+            imageGroups: [{ imageUrls: ['purchase-orders/prod-1/sec.png'] }],
+            orderIndex: 5,
+            isFixed: false,
+          },
+        ])
+        .mockResolvedValueOnce([
+          {
+            id: 'row-1',
+            productionDocumentId: 'doc-1',
+            sizeLabel: 'M',
+            measurementName: 'Dài áo',
+            measurementValue: '70',
+            tolerance: null,
+            orderIndex: 1,
+          },
+        ]);
+
+      const doc = await service.getProductProductionDoc('prod-1');
+
+      expect(doc?.section1ImageUrl).toBe('https://s3.example/get');
+      expect(doc?.sizeData).toEqual([{ imageUrl: 'https://s3.example/get' }]);
+      expect(doc?.sections[0].imageGroups[0].imageUrls).toEqual([
+        'https://s3.example/get',
+      ]);
+      expect(doc).not.toHaveProperty('rowVersion');
+      expect(doc).not.toHaveProperty('createdBy');
+      expect(doc?.sections[0]).not.toHaveProperty('productionDocumentId');
+      expect(doc?.sizeRows[0]).not.toHaveProperty('productionDocumentId');
+    });
+  });
+  describe('Xoá sản phẩm/PO đã có BOM và chống bấm đúp khi tạo đợt may mẫu', () => {
+    const txWithBom = (products: any[]) => {
+      const manager = {
+        findOne: jest
+          .fn()
+          .mockImplementation((entity: any) =>
+            Promise.resolve(
+              entity === Bom
+                ? { id: 'bom-1', purchaseOrderProductId: 'prod-1' }
+                : null,
+            ),
+          ),
+        find: jest.fn().mockResolvedValue(products),
+        delete: jest.fn(),
+      };
+      mockDataSource.transaction.mockImplementationOnce((cb: any) =>
+        cb(manager),
+      );
+      return manager;
+    };
+
+    it('chặn xoá sản phẩm đã có BOM với thông báo rõ ràng, không xoá gì', async () => {
+      mockProductRepo.findOne.mockResolvedValueOnce({
+        id: 'prod-1',
+        purchaseOrderId: 'po-1',
+        productCode: 'P-1',
+        status: ProductStatus.DRAFT,
+      });
+      const manager = txWithBom([]);
+
+      await expect(service.removeProduct('po-1', 'prod-1')).rejects.toThrow(
+        new ConflictException('Sản phẩm đã có BOM, không thể xóa.'),
+      );
+      expect(manager.delete).not.toHaveBeenCalled();
+    });
+
+    it('chặn xoá PO nháp khi có sản phẩm đã có BOM, nêu rõ mã sản phẩm', async () => {
+      mockPoRepo.findOne.mockResolvedValueOnce({
+        id: 'po-1',
+        poCode: 'PO-1',
+        status: PoStatus.DRAFT,
+      });
+      const manager = txWithBom([
+        { id: 'prod-0', productCode: 'P-0' },
+        { id: 'prod-1', productCode: 'P-1' },
+      ]);
+
+      await expect(service.remove('po-1')).rejects.toThrow(
+        'Sản phẩm P-1 đã có BOM, không thể xóa đơn hàng PO.',
+      );
+      expect(manager.delete).not.toHaveBeenCalled();
+    });
+
+    it('khoá dòng sản phẩm khi đánh số đợt may mẫu, để 2 request cùng lúc không trùng số', async () => {
+      mockProductRepo.findOne.mockResolvedValueOnce({
+        id: 'prod-1',
+        purchaseOrderId: 'po-1',
+        status: ProductStatus.DRAFT,
+      });
+      txSampleRoundRepoMock.count.mockResolvedValueOnce(2);
+      const manager = {
+        findOne: jest.fn().mockResolvedValue(null),
+        getRepository: jest
+          .fn()
+          .mockImplementation((entity: any) =>
+            entity === PurchaseOrderProductSampleRound
+              ? txSampleRoundRepoMock
+              : entity === PurchaseOrderProductSampleImage
+                ? txSampleImageRepoMock
+                : mockGenericRepo,
+          ),
+      };
+      mockDataSource.transaction.mockImplementationOnce((cb: any) =>
+        cb(manager),
+      );
+      const builder: any = {};
+      [
+        'innerJoin',
+        'where',
+        'andWhere',
+        'select',
+        'addSelect',
+        'orderBy',
+      ].forEach((m) => (builder[m] = jest.fn().mockReturnValue(builder)));
+      builder.getRawMany = jest.fn().mockResolvedValue([]);
+      mockGenericRepo.createQueryBuilder.mockReturnValueOnce(builder);
+
+      await service.createProductSampleRound('po-1', 'prod-1', {} as any);
+
+      expect(manager.findOne).toHaveBeenCalledWith(PurchaseOrderProduct, {
+        where: { id: 'prod-1' },
+        lock: { mode: 'pessimistic_write' },
+      });
+      expect(txSampleRoundRepoMock.create).toHaveBeenCalledWith(
+        expect.objectContaining({ roundNo: 3 }),
+      );
+    });
+  });
+  describe('Ảnh sản phẩm PO chỉ được trỏ tới object thuộc PO hoặc Mẫu Fit nguồn', () => {
+    const product = {
+      id: 'prod-1',
+      purchaseOrderId: 'po-1',
+      productCode: 'P-1',
+      productName: 'Áo',
+      status: ProductStatus.DRAFT,
+      sourceStyleId: 'style-1',
+    };
+
+    it.each([
+      ['purchase-orders/po-1/documents/sample_image/a.png'],
+      ['styles/style-1/documents/sample_image/base.png'],
+    ])('chấp nhận %s', async (key) => {
+      mockProductRepo.findOne.mockResolvedValueOnce({ ...product });
+      await expect(
+        service.updateProduct('po-1', 'prod-1', {
+          structureImageVersionId: key,
+        } as any),
+      ).resolves.toBeDefined();
+    });
+
+    it.each([
+      ['purchase-orders/po-OTHER/documents/sample_image/a.png'],
+      ['styles/style-OTHER/documents/x.png'],
+      ['users/u-1/avatar.png'],
+    ])('từ chối key ngoài phạm vi: %s', async (key) => {
+      mockProductRepo.findOne.mockResolvedValueOnce({ ...product });
+      await expect(
+        service.updateProduct('po-1', 'prod-1', {
+          structureImageVersionId: key,
+        } as any),
+      ).rejects.toThrow('Ảnh sản phẩm không hợp lệ.');
     });
   });
 });

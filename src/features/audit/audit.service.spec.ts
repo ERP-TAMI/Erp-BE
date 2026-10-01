@@ -302,6 +302,30 @@ describe('AuditService', () => {
       );
     });
 
+    it('builds the default reason from the real field label of bulk "<row>::<field>" changes, once each', async () => {
+      const { service } = buildAuditService();
+      const { manager, eventRepository } = buildManager();
+
+      await service.recordEntityChange(manager, {
+        aggregateType: 'PurchaseOrderProduct',
+        aggregateId: 'prod-1',
+        actorId: 'actor-1',
+        actorRole: 'SA',
+        eventType: AuditEventType.UPDATED,
+        changes: [
+          { fieldName: 'category', oldValue: null, newValue: 'Áo' },
+          { fieldName: 'Đen::sizes', oldValue: 'M: 10', newValue: 'M: 20' },
+          { fieldName: 'Trắng::sizes', oldValue: null, newValue: 'S: 3' },
+        ],
+      });
+
+      expect(eventRepository.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          reason: 'Cập nhật: Dòng sản phẩm, Size & số lượng',
+        }),
+      );
+    });
+
     it('records a creation event even with an empty diff', async () => {
       const { service } = buildAuditService();
       const { manager, eventRepository } = buildManager();
@@ -529,6 +553,15 @@ describe('AuditService', () => {
           STYLE_VIEWER,
         ),
       ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('lets any signed-in user read PO history, like the PO read endpoints', async () => {
+      const { service } = buildAuditService();
+      const result = await service.findEntityHistory(
+        { aggregateType: 'PurchaseOrder', aggregateId: 'po-1' },
+        [],
+      );
+      expect(result.items).toEqual([]);
     });
 
     it('rejects an unknown aggregateType, including prototype keys', async () => {
