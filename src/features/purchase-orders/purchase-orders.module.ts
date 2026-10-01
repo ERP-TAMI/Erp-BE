@@ -12,6 +12,7 @@ import { PurchaseOrdersController } from './purchase-orders.controller';
 import { PurchaseOrdersService } from './purchase-orders.service';
 import { PurchaseOrderWriteAccessGuard } from './guards/purchase-order-write-access.guard';
 import { PurchaseOrderFullAccessGuard } from '../../common/guards/purchase-order-full-access.guard';
+import { PurchaseOrderProductStatusGuard } from './guards/purchase-order-product-status.guard';
 
 @Module({
   imports: [
@@ -31,6 +32,7 @@ import { PurchaseOrderFullAccessGuard } from '../../common/guards/purchase-order
     PurchaseOrdersService,
     PurchaseOrderWriteAccessGuard,
     PurchaseOrderFullAccessGuard,
+    PurchaseOrderProductStatusGuard,
   ],
   exports: [PurchaseOrdersService],
 })

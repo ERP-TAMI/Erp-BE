@@ -54,6 +54,7 @@ import {
 import { PurchaseOrder } from './entities/PurchaseOrder.entity';
 import { PurchaseOrderProduct } from './entities/PurchaseOrderProduct.entity';
 import { PurchaseOrderWriteAccessGuard } from './guards/purchase-order-write-access.guard';
+import { PurchaseOrderProductStatusGuard } from './guards/purchase-order-product-status.guard';
 import { PurchaseOrderFullAccessGuard } from '../../common/guards/purchase-order-full-access.guard';
 import { AuditActor } from '../audit/audit-actor.type';
 import { UpdateStyleProductionDocDto } from '../production/dto/update-style-production-doc.dto';
@@ -283,7 +284,7 @@ export class PurchaseOrdersController {
   }
 
   @Patch(':id/products/:productId/status')
-  @UseGuards(PurchaseOrderWriteAccessGuard)
+  @UseGuards(PurchaseOrderProductStatusGuard)
   @ApiOperation({ summary: 'Cập nhật trạng thái sản phẩm PO' })
   @ApiResponse({ status: 200, description: 'Đã cập nhật trạng thái sản phẩm' })
   async updateProductStatus(
