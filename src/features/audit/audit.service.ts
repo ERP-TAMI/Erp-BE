@@ -440,6 +440,7 @@ export class AuditService {
   async findEntityHistory(
     query: QueryEntityHistoryDto,
     requesterPermissions: string[],
+    requesterUserId: string,
   ): Promise<PaginatedEntityHistory> {
     if (!query.aggregateId && !query.parentId) {
       throw new BadRequestException(
@@ -450,9 +451,15 @@ export class AuditService {
       throw new BadRequestException('Loại dữ liệu không hỗ trợ xem lịch sử.');
     }
     const requiredPermission = getHistoryViewPermission(query.aggregateType);
+    const isOwnUserHistory =
+      query.aggregateType === 'User' &&
+      Boolean(query.aggregateId) &&
+      !query.parentId &&
+      query.aggregateId?.toLowerCase() === requesterUserId.toLowerCase();
     if (
       requiredPermission &&
-      !requesterPermissions.includes(requiredPermission)
+      !requesterPermissions.includes(requiredPermission) &&
+      !isOwnUserHistory
     ) {
       throw new ForbiddenException(
         'Bạn không có quyền xem lịch sử dữ liệu này.',

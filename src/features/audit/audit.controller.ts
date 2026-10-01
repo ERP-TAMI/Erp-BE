@@ -38,6 +38,10 @@ export class AuditController {
     @Query() query: QueryEntityHistoryDto,
     @Req() req: AuthenticatedRequest,
   ): Promise<PaginatedEntityHistory> {
-    return this.auditService.findEntityHistory(query, req.user.permissions);
+    return this.auditService.findEntityHistory(
+      query,
+      req.user.permissions,
+      req.user.id,
+    );
   }
 }
