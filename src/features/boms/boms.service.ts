@@ -329,18 +329,12 @@ export class BomsService {
       );
     }
 
-    const needsColorJoin =
-      Boolean(query.color?.trim()) || Boolean(query.search?.trim());
-    if (needsColorJoin) {
-      qb.leftJoin(
-        'purchase_order_product_colors',
-        'popc',
-        'pop.id = popc.product_id',
-      );
-    }
+    // EXISTS thay vì join để 1 BOM không bị nhân thành nhiều dòng theo số màu
+    const colorExists = (param: string) =>
+      `EXISTS (SELECT 1 FROM purchase_order_product_colors popc WHERE popc.product_id = pop.id AND popc.color_name ILIKE :${param})`;
 
     if (query.color?.trim()) {
-      qb.andWhere('popc.color_name ILIKE :colorFilter', {
+      qb.andWhere(colorExists('colorFilter'), {
         colorFilter: `%${query.color.trim()}%`,
       });
     }
@@ -354,7 +348,7 @@ export class BomsService {
           OR po.po_code ILIKE :search
           OR pop.product_code ILIKE :search
           OR pop.product_name ILIKE :search
-          OR popc.color_name ILIKE :search
+          OR ${colorExists('search')}
         )`,
         { search: `%${query.search.trim()}%` },
       );
@@ -375,7 +369,7 @@ export class BomsService {
       query.sortOrder?.toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
 
     qb.orderBy(sortColumn, sortDirection).addOrderBy('bom.id', 'DESC');
-    qb.skip(skip).take(limit);
+    qb.offset(skip).limit(limit);
 
     // Fetch BOM entities
     const [boms, total] = await qb.getManyAndCount();
@@ -396,55 +390,55 @@ export class BomsService {
       .map((b) => b.currentRevisionId)
       .filter((id): id is string => Boolean(id));
 
-    const costPerUnitsMap =
-      isCostVisible && revisionIds.length > 0
-        ? await this.bomCostService.calculateCostPerUnits(revisionIds)
-        : new Map<string, number | null>();
-
-    // 2. Bulk calculate currentOrderQuantity for PO products
     const poProductIds = boms
       .filter((b) => b.bomType === BomType.PO && b.purchaseOrderProductId)
       .map((b) => b.purchaseOrderProductId as string);
-
-    const quantitiesMap =
-      poProductIds.length > 0
-        ? await this.bomCostService.calculateCurrentOrderQuantities(
-            poProductIds,
-          )
-        : new Map<string, number>();
-
-    // 3. Bulk fetch product colors for PO products
-    const colorsMap = new Map<string, string[]>();
-    if (poProductIds.length > 0) {
-      const colors = await this.poColorRepository.find({
-        where: { productId: In(poProductIds) },
-        order: { orderIndex: 'ASC' },
-      });
-      for (const c of colors) {
-        if (!colorsMap.has(c.productId)) {
-          colorsMap.set(c.productId, []);
-        }
-        colorsMap.get(c.productId)!.push(c.colorName);
-      }
-    }
-
-    // 4. Bulk fetch related entities (styles, purchaseOrderProducts, purchaseOrders, revisions)
     const styleIds = boms
       .filter((b) => b.bomType === BomType.FIT && b.styleId)
       .map((b) => b.styleId as string);
-    const styles =
-      styleIds.length > 0
-        ? await this.styleRepository.find({ where: { id: In(styleIds) } })
-        : [];
-    const stylesMap = new Map(styles.map((s) => [s.id, s]));
 
-    const poProducts =
+    // Các truy vấn dưới đây độc lập nhau nên chạy song song
+    const [
+      costPerUnitsMap,
+      quantitiesMap,
+      colors,
+      styles,
+      poProducts,
+      revisions,
+    ] = await Promise.all([
+      isCostVisible && revisionIds.length > 0
+        ? this.bomCostService.calculateCostPerUnits(revisionIds)
+        : Promise.resolve(new Map<string, number | null>()),
       poProductIds.length > 0
-        ? await this.poProductRepository.find({
-            where: { id: In(poProductIds) },
+        ? this.bomCostService.calculateCurrentOrderQuantities(poProductIds)
+        : Promise.resolve(new Map<string, number>()),
+      poProductIds.length > 0
+        ? this.poColorRepository.find({
+            where: { productId: In(poProductIds) },
+            order: { orderIndex: 'ASC' },
           })
-        : [];
+        : Promise.resolve<PurchaseOrderProductColor[]>([]),
+      styleIds.length > 0
+        ? this.styleRepository.find({ where: { id: In(styleIds) } })
+        : Promise.resolve<Style[]>([]),
+      poProductIds.length > 0
+        ? this.poProductRepository.find({ where: { id: In(poProductIds) } })
+        : Promise.resolve<PurchaseOrderProduct[]>([]),
+      revisionIds.length > 0
+        ? this.bomRevisionRepository.find({ where: { id: In(revisionIds) } })
+        : Promise.resolve<BomRevision[]>([]),
+    ]);
+
+    const colorsMap = new Map<string, string[]>();
+    for (const c of colors) {
+      if (!colorsMap.has(c.productId)) {
+        colorsMap.set(c.productId, []);
+      }
+      colorsMap.get(c.productId)!.push(c.colorName);
+    }
+    const stylesMap = new Map(styles.map((s) => [s.id, s]));
     const poProductsMap = new Map(poProducts.map((p) => [p.id, p]));
+    const revisionsMap = new Map(revisions.map((r) => [r.id, r]));
 
     const poIds = poProducts
       .map((p) => p.purchaseOrderId)
@@ -454,14 +448,6 @@ export class BomsService {
         ? await this.poRepository.find({ where: { id: In(poIds) } })
         : [];
     const poMap = new Map(purchaseOrders.map((po) => [po.id, po]));
-
-    const revisions =
-      revisionIds.length > 0
-        ? await this.bomRevisionRepository.find({
-            where: { id: In(revisionIds) },
-          })
-        : [];
-    const revisionsMap = new Map(revisions.map((r) => [r.id, r]));
 
     // ─── Map to Response DTOs ─────────────────────────────────────────────
     const data: BomListItemDto[] = boms.map((bom) => {
@@ -587,6 +573,38 @@ export class BomsService {
     };
   }
 
+  private async loadPoProductData(purchaseOrderProductId: string): Promise<{
+    poProduct: PurchaseOrderProduct | null;
+    po: PurchaseOrder | null;
+    colors: PurchaseOrderProductColor[];
+    allSizes: PurchaseOrderProductColorSize[];
+  }> {
+    const [poProduct, colors] = await Promise.all([
+      this.poProductRepository.findOne({
+        where: { id: purchaseOrderProductId },
+      }),
+      this.poColorRepository.find({
+        where: { productId: purchaseOrderProductId },
+        order: { orderIndex: 'ASC' },
+      }),
+    ]);
+    const colorIds = colors.map((c) => c.id);
+    const [po, allSizes] = await Promise.all([
+      poProduct?.purchaseOrderId
+        ? this.poRepository.findOne({
+            where: { id: poProduct.purchaseOrderId },
+          })
+        : Promise.resolve<PurchaseOrder | null>(null),
+      colorIds.length > 0
+        ? this.poColorSizeRepository.find({
+            where: { productColorId: In(colorIds) },
+            order: { orderIndex: 'ASC' },
+          })
+        : Promise.resolve<PurchaseOrderProductColorSize[]>([]),
+    ]);
+    return { poProduct, po, colors, allSizes };
+  }
+
   /**
    * Retrieves full details of a single BOM by ID.
    * Loads current revision lines keeping orderIndex, calculates dynamic costs,
@@ -603,60 +621,41 @@ export class BomsService {
 
     const isCostVisible = this.bomCostService.isCostVisible(userRole);
 
-    // 1. Load Current Revision & Lines
-    let currentRevision: BomRevision | null = null;
-    let lines: BomLine[] = [];
+    // 1-3. Revision, lines, style and PO data are independent: load together
+    const poProductId =
+      bom.bomType === BomType.PO ? bom.purchaseOrderProductId : null;
+    const [currentRevision, lines, style, poData] = await Promise.all([
+      bom.currentRevisionId
+        ? this.bomRevisionRepository.findOne({
+            where: { id: bom.currentRevisionId },
+          })
+        : Promise.resolve<BomRevision | null>(null),
+      bom.currentRevisionId
+        ? this.bomLineRepository.find({
+            where: { revisionId: bom.currentRevisionId },
+            order: { orderIndex: 'ASC' },
+          })
+        : Promise.resolve<BomLine[]>([]),
+      bom.bomType === BomType.FIT && bom.styleId
+        ? this.styleRepository.findOne({ where: { id: bom.styleId } })
+        : Promise.resolve<Style | null>(null),
+      poProductId
+        ? this.loadPoProductData(poProductId)
+        : Promise.resolve<{
+            poProduct: PurchaseOrderProduct | null;
+            po: PurchaseOrder | null;
+            colors: PurchaseOrderProductColor[];
+            allSizes: PurchaseOrderProductColorSize[];
+          } | null>(null),
+    ]);
 
-    if (bom.currentRevisionId) {
-      currentRevision = await this.bomRevisionRepository.findOne({
-        where: { id: bom.currentRevisionId },
-      });
-
-      lines = await this.bomLineRepository.find({
-        where: { revisionId: bom.currentRevisionId },
-        order: { orderIndex: 'ASC' },
-      });
-    }
-
-    // 2. Load Style for Fit BOM
-    let style: Style | null = null;
-    if (bom.bomType === BomType.FIT && bom.styleId) {
-      style = await this.styleRepository.findOne({
-        where: { id: bom.styleId },
-      });
-    }
-
-    // 3. Load Live PO / Product / Colors / Sizes for PO BOM
-    let poProduct: PurchaseOrderProduct | null = null;
-    let po: PurchaseOrder | null = null;
+    const poProduct = poData?.poProduct ?? null;
+    const po = poData?.po ?? null;
     const colorsWithSizes: any[] = [];
     let currentOrderQuantity: number | null = null;
 
-    if (bom.bomType === BomType.PO && bom.purchaseOrderProductId) {
-      poProduct = await this.poProductRepository.findOne({
-        where: { id: bom.purchaseOrderProductId },
-      });
-
-      if (poProduct?.purchaseOrderId) {
-        po = await this.poRepository.findOne({
-          where: { id: poProduct.purchaseOrderId },
-        });
-      }
-
-      // Load all colors and their sizes
-      const colors = await this.poColorRepository.find({
-        where: { productId: bom.purchaseOrderProductId },
-        order: { orderIndex: 'ASC' },
-      });
-
-      const colorIds = colors.map((c) => c.id);
-      const allSizes =
-        colorIds.length > 0
-          ? await this.poColorSizeRepository.find({
-              where: { productColorId: In(colorIds) },
-              order: { orderIndex: 'ASC' },
-            })
-          : [];
+    if (poData) {
+      const { colors, allSizes } = poData;
 
       for (const c of colors) {
         const sizes = allSizes.filter((s) => s.productColorId === c.id);
@@ -678,11 +677,10 @@ export class BomsService {
         });
       }
 
-      // Calculate live dynamic quantity
-      currentOrderQuantity =
-        await this.bomCostService.calculateCurrentOrderQuantity(
-          bom.purchaseOrderProductId,
-        );
+      currentOrderQuantity = colorsWithSizes.reduce(
+        (sum, c) => sum + c.totalQuantity,
+        0,
+      );
     }
 
     // 4. Calculate Costs
@@ -840,11 +838,15 @@ export class BomsService {
     this.applyCreatedAtRangeFilter(qb, query);
 
     const rows = await qb
-      .select('bom.discontinued_at', 'discontinuedAt')
+      .select('(bom.discontinued_at IS NOT NULL)', 'discontinued')
       .addSelect('rev.status', 'status')
+      .addSelect('COUNT(*)::int', 'count')
+      .groupBy('(bom.discontinued_at IS NOT NULL)')
+      .addGroupBy('rev.status')
       .getRawMany<{
-        discontinuedAt: Date | null;
+        discontinued: boolean;
         status: BomRevisionStatus | null;
+        count: number | string;
       }>();
 
     let total = 0;
@@ -871,20 +873,21 @@ export class BomsService {
     ]);
 
     for (const r of rows) {
-      total++;
-      if (r.discontinuedAt) {
-        discontinuedCount++;
-        byStatus.discontinued = (byStatus.discontinued || 0) + 1;
+      const n = Number(r.count) || 0;
+      total += n;
+      if (r.discontinued) {
+        discontinuedCount += n;
+        byStatus.discontinued = (byStatus.discontinued || 0) + n;
       } else {
         const st = r.status || BomRevisionStatus.WAIT_NVKH;
-        byStatus[st] = (byStatus[st] || 0) + 1;
+        byStatus[st] = (byStatus[st] || 0) + n;
 
         if (st === BomRevisionStatus.WAIT_NVKH) {
-          draftCount++;
+          draftCount += n;
         } else if (pendingStatuses.has(st)) {
-          pendingCount++;
+          pendingCount += n;
         } else if (st === BomRevisionStatus.CLOSED) {
-          approvedCount++;
+          approvedCount += n;
         }
       }
     }
