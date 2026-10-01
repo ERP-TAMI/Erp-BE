@@ -5,8 +5,9 @@ import { BomLine } from './entities/BomLine.entity';
 import { PurchaseOrderProductColorSize } from '../purchase-orders/entities/PurchaseOrderProductColorSize.entity';
 import { PurchaseOrderProductColor } from '../purchase-orders/entities/PurchaseOrderProductColor.entity';
 import { BomType } from '../../common/enums/database.enums';
+import { COST_VISIBLE_ROLES, isCostVisibleRole } from './bom-cost-visibility';
 
-export const COST_VISIBLE_ROLES = new Set(['SA', 'ACCOUNTING']);
+export { COST_VISIBLE_ROLES };
 
 @Injectable()
 export class BomCostService {
@@ -25,8 +26,7 @@ export class BomCostService {
    * Unauthorized roles: NVKH, RD, TPKH, IT, etc.
    */
   isCostVisible(roleCode?: string | null): boolean {
-    if (!roleCode) return false;
-    return COST_VISIBLE_ROLES.has(roleCode.trim().toUpperCase());
+    return isCostVisibleRole(roleCode);
   }
 
   /**

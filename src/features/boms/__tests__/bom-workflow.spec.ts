@@ -1,3 +1,5 @@
+import { BomAuditService } from '../bom-audit.service';
+import { createBomAuditServiceMock } from './bom-audit.mock';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
@@ -211,6 +213,7 @@ describe('BOM V2 Workflow State Machine: Forward, Reject, Approve (PR-04 Specifi
       providers: [
         BomsService,
         BomCostService,
+        { provide: BomAuditService, useValue: createBomAuditServiceMock() },
         { provide: getRepositoryToken(Bom), useValue: bomRepoMock },
         {
           provide: getRepositoryToken(BomRevision),

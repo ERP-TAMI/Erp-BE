@@ -137,6 +137,11 @@ const LINE_UNIT_COST_MUTATION_ROLES = new Set<string>([
   UserRoleCode.ACCOUNTING,
 ]);
 
+const WAIT_NVKH_LINE_ROLES = new Set<string>([
+  UserRoleCode.NVKH,
+  UserRoleCode.TPKH,
+]);
+
 function assertBomNotDiscontinuedForLine(bom: Bom): void {
   if (bom.discontinuedAt || (bom as any).status === 'discontinued') {
     throw new BadRequestException({
@@ -202,9 +207,9 @@ export function assertCanAddLine(
   }
 
   if (currentRev?.status === BomRevisionStatus.WAIT_NVKH) {
-    if (roleUpper !== UserRoleCode.NVKH) {
+    if (!WAIT_NVKH_LINE_ROLES.has(roleUpper)) {
       forbidden(
-        'Chỉ Nhân viên Kế hoạch (NVKH) mới có quyền thêm dòng vật tư ở bước N1 (wait_nvkh).',
+        'Chỉ NVKH hoặc Trưởng phòng Kế hoạch (TPKH) mới có quyền thêm dòng vật tư ở bước N1 (wait_nvkh).',
       );
     }
     return;
@@ -290,9 +295,9 @@ export function assertCanUpdateLine(
     }
 
     if (currentRev?.status === BomRevisionStatus.WAIT_NVKH) {
-      if (roleUpper !== UserRoleCode.NVKH) {
+      if (!WAIT_NVKH_LINE_ROLES.has(roleUpper)) {
         forbidden(
-          'Chỉ Nhân viên Kế hoạch (NVKH) mới có quyền cập nhật thông số kỹ thuật ở bước N1 (wait_nvkh).',
+          'Chỉ NVKH hoặc Trưởng phòng Kế hoạch (TPKH) mới có quyền cập nhật thông số kỹ thuật ở bước N1 (wait_nvkh).',
         );
       }
       return;
@@ -349,9 +354,9 @@ export function assertCanDeleteLine(
   }
 
   if (currentRev?.status === BomRevisionStatus.WAIT_NVKH) {
-    if (roleUpper !== UserRoleCode.NVKH) {
+    if (!WAIT_NVKH_LINE_ROLES.has(roleUpper)) {
       forbidden(
-        'Chỉ Nhân viên Kế hoạch (NVKH) mới có quyền xóa dòng vật tư ở bước N1 (wait_nvkh).',
+        'Chỉ NVKH hoặc Trưởng phòng Kế hoạch (TPKH) mới có quyền xóa dòng vật tư ở bước N1 (wait_nvkh).',
       );
     }
     return;
@@ -409,9 +414,9 @@ export function assertCanReorderLines(
   }
 
   if (currentRev?.status === BomRevisionStatus.WAIT_NVKH) {
-    if (roleUpper !== UserRoleCode.NVKH) {
+    if (!WAIT_NVKH_LINE_ROLES.has(roleUpper)) {
       forbidden(
-        'Chỉ Nhân viên Kế hoạch (NVKH) mới có quyền sắp xếp lại dòng vật tư ở bước N1 (wait_nvkh).',
+        'Chỉ NVKH hoặc Trưởng phòng Kế hoạch (TPKH) mới có quyền sắp xếp lại dòng vật tư ở bước N1 (wait_nvkh).',
       );
     }
     return;
@@ -804,6 +809,24 @@ export function assertCanCreateRevision(
   if (!REVISION_CREATOR_ROLES.has(roleUpper)) {
     forbidden(
       'Chỉ Nhân viên Kế hoạch (NVKH), Trưởng phòng Kế hoạch (TPKH) hoặc Quản trị hệ thống (SA) mới có quyền tạo revision mới.',
+    );
+  }
+}
+
+export function assertCanPromoteRevision(
+  actorRole: string | null | undefined,
+  bom: Bom,
+): void {
+  if (bom.discontinuedAt || (bom as any).status === 'discontinued') {
+    throw new BadRequestException({
+      code: ErrorCode.BAD_REQUEST,
+      message: 'Không thể đổi phiên bản hiện hành của BOM đã ngừng sử dụng.',
+    });
+  }
+
+  if (!actorRole || actorRole.trim().toUpperCase() !== UserRoleCode.SA) {
+    forbidden(
+      'Chỉ Quản trị hệ thống (SA) mới có quyền đổi phiên bản hiện hành.',
     );
   }
 }

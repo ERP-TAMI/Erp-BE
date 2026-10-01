@@ -440,6 +440,7 @@ export class AuditService {
   async findEntityHistory(
     query: QueryEntityHistoryDto,
     requesterPermissions: string[],
+    requesterRole?: string | null,
   ): Promise<PaginatedEntityHistory> {
     if (!query.aggregateId && !query.parentId) {
       throw new BadRequestException(
@@ -517,6 +518,7 @@ export class AuditService {
     const canViewSensitive = canViewSensitiveFields(
       query.aggregateType,
       requesterPermissions,
+      requesterRole,
     );
 
     const actorIds = [

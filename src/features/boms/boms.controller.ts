@@ -35,6 +35,10 @@ import {
   UpdateBomLineDto,
   ReorderBomLinesDto,
   DeleteBomLineDto,
+  SaveBomLinesDto,
+  SaveBomLinesResponseDto,
+  SaveBomCostsDto,
+  PromoteRevisionDto,
   BomLineResponseDto,
   ForwardBomDto,
   RejectBomDto,
@@ -201,6 +205,7 @@ export class BomsController {
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
     summary: 'Thêm dòng vật tư mới vào working revision của BOM',
+    deprecated: true,
   })
   @ApiResponse({
     status: 201,
@@ -226,11 +231,52 @@ export class BomsController {
     return this.bomsService.addLine(id, dto, userId, roleCode);
   }
 
+  @Put(':id/lines')
+  @UseGuards(PurchaseOrderBomWriteAccessGuard)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Lưu toàn bộ bảng dòng vật tư của working revision (thêm/sửa/xoá/đổi thứ tự trong 1 lần)',
+  })
+  @ApiResponse({ status: 200, description: 'Lưu bảng dòng thành công' })
+  @ApiResponse({ status: 400, description: 'Bảng có dòng không hợp lệ' })
+  @ApiResponse({ status: 403, description: 'Không có quyền sửa bảng dòng' })
+  @ApiResponse({ status: 404, description: 'Không tìm thấy BOM hoặc vật tư' })
+  async saveLines(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: SaveBomLinesDto,
+    @Req() req?: any,
+  ): Promise<SaveBomLinesResponseDto> {
+    const userId = req?.user?.id || req?.user?.sub;
+    const roleCode = req?.user?.roleCode;
+    return this.bomsService.saveLines(id, dto, userId, roleCode);
+  }
+
+  @Patch(':id/lines/costs')
+  @UseGuards(PurchaseOrderBomWriteAccessGuard)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Kế toán lưu đơn giá nhiều dòng vật tư ở bước wait_accounting',
+  })
+  @ApiResponse({ status: 200, description: 'Lưu đơn giá thành công' })
+  @ApiResponse({ status: 403, description: 'Không có quyền nhập đơn giá' })
+  @ApiResponse({ status: 404, description: 'Không tìm thấy BOM hoặc dòng' })
+  async saveCosts(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: SaveBomCostsDto,
+    @Req() req?: any,
+  ): Promise<SaveBomLinesResponseDto> {
+    const userId = req?.user?.id || req?.user?.sub;
+    const roleCode = req?.user?.roleCode;
+    return this.bomsService.saveCosts(id, dto, userId, roleCode);
+  }
+
   @Put(':id/lines/reorder')
   @UseGuards(PurchaseOrderBomWriteAccessGuard)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Sắp xếp lại thứ tự các dòng vật tư trong working revision',
+    deprecated: true,
   })
   @ApiResponse({
     status: 200,
@@ -263,6 +309,7 @@ export class BomsController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Cập nhật thông tin dòng vật tư trong working revision',
+    deprecated: true,
   })
   @ApiResponse({
     status: 200,
@@ -295,7 +342,10 @@ export class BomsController {
   @Delete(':id/lines/:lineId')
   @UseGuards(PurchaseOrderBomWriteAccessGuard)
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Xóa dòng vật tư khỏi working revision' })
+  @ApiOperation({
+    summary: 'Xóa dòng vật tư khỏi working revision',
+    deprecated: true,
+  })
   @ApiResponse({ status: 200, description: 'Xóa dòng vật tư thành công' })
   @ApiResponse({
     status: 400,
@@ -437,6 +487,42 @@ export class BomsController {
     const userId = req?.user?.id || req?.user?.sub;
     const roleCode = req?.user?.roleCode;
     return this.bomsService.createRevision(id, dto, userId, roleCode);
+  }
+
+  @Post(':id/revisions/:revisionId/promote')
+  @UseGuards(PurchaseOrderBomWriteAccessGuard)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'SA đổi phiên bản hiện hành của BOM về một phiên bản khác',
+  })
+  @ApiResponse({ status: 200, description: 'Đã đổi phiên bản hiện hành' })
+  @ApiResponse({
+    status: 400,
+    description: 'Lý do rỗng hoặc đã là bản hiện hành',
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'Chỉ SA được đổi phiên bản hiện hành',
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Không tìm thấy BOM hoặc phiên bản',
+  })
+  async promoteRevision(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('revisionId', ParseUUIDPipe) revisionId: string,
+    @Body() dto: PromoteRevisionDto,
+    @Req() req?: any,
+  ): Promise<BomDetailDto> {
+    const userId = req?.user?.id || req?.user?.sub;
+    const roleCode = req?.user?.roleCode;
+    return this.bomsService.promoteRevision(
+      id,
+      revisionId,
+      dto,
+      userId,
+      roleCode,
+    );
   }
 
   @Get(':id/revisions')

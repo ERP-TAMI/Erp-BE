@@ -1,8 +1,11 @@
+import { COST_VISIBLE_ROLES } from '../boms/bom-cost-visibility';
+
 export type EntityAuditConfig = {
   fieldLabels: Record<string, string>;
-  /** Field names whose old/new values are masked unless the requester holds `sensitiveFieldsPermission`. */
+  /** Field names whose old/new values are masked unless the requester holds `sensitiveFieldsPermission` or one of `sensitiveFieldsRoles`. */
   sensitiveFields?: string[];
   sensitiveFieldsPermission?: string;
+  sensitiveFieldsRoles?: readonly string[];
   /** Nhãn tiếng Việt cho giá trị enum/mã nội bộ của 1 field (VD status,
    * purpose) — không có thì oldValue/newValue hiện thẳng mã gốc (tiếng Anh)
    * ra UI lịch sử, rất khó hiểu với người dùng không kỹ thuật. */
@@ -223,6 +226,41 @@ export const ENTITY_AUDIT_CONFIG: Record<string, EntityAuditConfig> = {
       },
     },
   },
+  Bom: {
+    fieldLabels: {
+      deadline: 'Hạn hoàn thành',
+      rdNote: 'Ghi chú R&D',
+      discontinuedReason: 'Lý do ngừng sử dụng',
+      currentRevisionNo: 'Phiên bản hiện hành',
+      revisionNo: 'Phiên bản',
+      sourceRevisionNo: 'Tạo từ phiên bản',
+      changeReason: 'Lý do tạo phiên bản',
+    },
+  },
+  // Mọi sự kiện của 1 revision (dòng + chuyển bước) dùng chung aggregate này
+  // để drawer lịch sử gộp được vào 1 timeline.
+  BomRevision: {
+    sensitiveFields: ['unitCost'],
+    sensitiveFieldsRoles: [...COST_VISIBLE_ROLES],
+    fieldLabels: {
+      status: 'Trạng thái',
+      materialName: 'Vật tư',
+      consumption: 'Định mức',
+      unitCost: 'Đơn giá',
+      note: 'Ghi chú',
+      orderIndex: 'Thứ tự',
+    },
+    fieldValueLabels: {
+      status: {
+        wait_nvkh: 'Chờ NVKH',
+        wait_rd: 'Chờ R&D',
+        wait_tpkh_confirm: 'Chờ TPKH xác nhận',
+        wait_accounting: 'Chờ Kế toán',
+        wait_sa_approve: 'Chờ SA duyệt',
+        closed: 'Đã duyệt',
+      },
+    },
+  },
 };
 
 /**
@@ -289,6 +327,8 @@ const HISTORY_VIEW_PERMISSIONS: Record<string, string | null> = {
   PurchaseOrderProductSampleRound: null,
   PurchaseOrderProductionDocument: null,
   PurchaseOrderProductDocument: null,
+  Bom: null,
+  BomRevision: null,
   User: 'system.users.manage',
 };
 
@@ -329,9 +369,16 @@ export function isSensitiveField(
 export function canViewSensitiveFields(
   aggregateType: string,
   requesterPermissions: string[],
+  requesterRole?: string | null,
 ): boolean {
-  const permission =
-    ENTITY_AUDIT_CONFIG[aggregateType]?.sensitiveFieldsPermission;
+  const config = ENTITY_AUDIT_CONFIG[aggregateType];
+  if (config?.sensitiveFieldsRoles) {
+    return (
+      !!requesterRole &&
+      config.sensitiveFieldsRoles.includes(requesterRole.trim().toUpperCase())
+    );
+  }
+  const permission = config?.sensitiveFieldsPermission;
   if (!permission) return true;
   return requesterPermissions.includes(permission);
 }

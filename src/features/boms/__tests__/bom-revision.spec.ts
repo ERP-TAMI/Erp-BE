@@ -1,9 +1,10 @@
+import { BomAuditService } from '../bom-audit.service';
+import { createBomAuditServiceMock } from './bom-audit.mock';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import {
   BadRequestException,
-  ConflictException,
   ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
@@ -112,6 +113,12 @@ describe('BOM V2 Revision Management + History + Detail + Diff (PR-05 Specificat
     // Setup transaction mock
     dataSourceMock.transaction.mockImplementation(async (cb: any) => {
       const managerMock = {
+        maximum: jest.fn().mockImplementation((entityClass, _column, where) => {
+          const nums = mockRevisions
+            .filter((r) => r.bomId === where.bomId)
+            .map((r) => r.revisionNo);
+          return Promise.resolve(nums.length ? Math.max(...nums) : null);
+        }),
         findOne: jest.fn().mockImplementation((entityClass, options) => {
           if (entityClass === Bom) {
             if (options?.where?.id === mockBom.id)
@@ -278,6 +285,7 @@ describe('BOM V2 Revision Management + History + Detail + Diff (PR-05 Specificat
       providers: [
         BomsService,
         BomCostService,
+        { provide: BomAuditService, useValue: createBomAuditServiceMock() },
         { provide: getRepositoryToken(Bom), useValue: bomRepoMock },
         {
           provide: getRepositoryToken(BomRevision),
@@ -484,10 +492,9 @@ describe('BOM V2 Revision Management + History + Detail + Diff (PR-05 Specificat
       ).rejects.toThrow(BadRequestException);
     });
 
-    it('rejects duplicate revision number with ConflictException (409 Conflict)', async () => {
+    it('numbers the new revision as MAX(revisionNo)+1 when a newer revision exists but is not current (after promote)', async () => {
       setupRevisionEnv();
 
-      // Pre-seed Rev 2 into mockRevisions so nextRevisionNo = 2 collides
       const existingRev2 = new BomRevision();
       existingRev2.id = 'rev-uuid-existing-2';
       existingRev2.bomId = mockBom.id;
@@ -495,14 +502,16 @@ describe('BOM V2 Revision Management + History + Detail + Diff (PR-05 Specificat
       existingRev2.status = BomRevisionStatus.WAIT_NVKH;
       mockRevisions.push(existingRev2);
 
-      await expect(
-        service.createRevision(
-          mockBom.id,
-          { reason: 'Duplicate collision test' },
-          'user-nvkh-1',
-          UserRoleCode.NVKH,
-        ),
-      ).rejects.toThrow(ConflictException);
+      await service.createRevision(
+        mockBom.id,
+        { reason: 'Create after promote' },
+        'user-nvkh-1',
+        UserRoleCode.NVKH,
+      );
+
+      const created = mockRevisions.find((r) => r.revisionNo === 3);
+      expect(created).toBeDefined();
+      expect(created!.sourceRevisionId).toBe('rev-uuid-1');
     });
   });
 

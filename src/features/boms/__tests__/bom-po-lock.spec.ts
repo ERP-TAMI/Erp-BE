@@ -1,3 +1,4 @@
+import { createBomAuditServiceMock } from './bom-audit.mock';
 import { BadRequestException } from '@nestjs/common';
 import { BomsService } from '../boms.service';
 import { Bom } from '../entities/Bom.entity';
@@ -82,6 +83,7 @@ describe('BOM của sản phẩm PO đóng băng khi sản phẩm hoặc PO đã
       repo,
       repo,
       {} as any,
+      createBomAuditServiceMock() as any,
       dataSource as any,
     );
   });

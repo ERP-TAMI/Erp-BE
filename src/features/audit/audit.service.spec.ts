@@ -345,6 +345,75 @@ describe('AuditService', () => {
     });
   });
 
+  describe('findEntityHistory unit-cost masking for BomRevision', () => {
+    const run = async (roleCode: string | null) => {
+      const { service, auditEvents, auditEventChanges } = buildAuditService();
+      (auditEvents.createQueryBuilder as jest.Mock).mockReturnValue(
+        buildMockQueryBuilder(
+          [
+            {
+              id: 'event-1',
+              occurredAt: new Date('2026-01-01T00:00:00.000Z'),
+              eventType: AuditEventType.UPDATED,
+              actorUserId: 'actor-1',
+              actorRole: 'ACCOUNTING',
+              targetLabel: 'Đơn giá vật tư',
+              reason: 'Cập nhật đơn giá 1 dòng',
+            },
+          ],
+          1,
+        ),
+      );
+      (auditEventChanges.find as jest.Mock).mockResolvedValue([
+        {
+          auditEventId: 'event-1',
+          fieldName: 'Vải chính::unitCost',
+          oldValue: '1000',
+          newValue: '1200',
+        },
+        {
+          auditEventId: 'event-1',
+          fieldName: 'Vải chính::consumption',
+          oldValue: '1',
+          newValue: '2',
+        },
+      ]);
+      return service.findEntityHistory(
+        { aggregateType: 'BomRevision', parentId: 'rev-1' },
+        [],
+        roleCode,
+      );
+    };
+
+    it('shows unit costs to SA and ACCOUNTING', async () => {
+      for (const role of ['SA', 'ACCOUNTING', 'accounting']) {
+        const result = await run(role);
+        expect(result.items[0].changes[0]).toMatchObject({
+          fieldLabel: 'Đơn giá',
+          groupLabel: 'Vải chính',
+          oldValue: '1000',
+          newValue: '1200',
+        });
+      }
+    });
+
+    it('masks unit costs for every other role but keeps other fields', async () => {
+      for (const role of ['NVKH', 'RD', 'TPKH', 'IT', null]) {
+        const result = await run(role);
+        expect(result.items[0].changes[0]).toMatchObject({
+          fieldLabel: 'Đơn giá',
+          oldValue: '***',
+          newValue: '***',
+        });
+        expect(result.items[0].changes[1]).toMatchObject({
+          fieldLabel: 'Định mức',
+          oldValue: '1',
+          newValue: '2',
+        });
+      }
+    });
+  });
+
   describe('findEntityHistory', () => {
     it('joins events with their field changes and resolves a human-readable label', async () => {
       const { service, auditEvents, auditEventChanges } = buildAuditService();
