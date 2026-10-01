@@ -4,6 +4,7 @@ import { AuditService } from '../audit/audit.service';
 import { AuditActor } from '../audit/audit-actor.type';
 import { EntityFieldChange } from '../audit/entity-diff.util';
 import { AuditEventType } from '../../common/enums/database.enums';
+import { getFieldValueLabel } from '../audit/entity-audit.config';
 import { LineAuditResult } from './bom-lines-plan';
 
 const BOM_AGGREGATE = 'Bom';
@@ -118,7 +119,7 @@ export class BomAuditService {
       actorRole: actor.roleCode,
       targetLabel: `Phiên bản ${revision.revisionNo}`,
       eventType: WORKFLOW_EVENT_TYPE[action],
-      reason: reason?.trim() || undefined,
+      reason: this.workflowReason(oldStatus, newStatus, reason),
       changes: [
         { fieldName: 'status', oldValue: oldStatus, newValue: newStatus },
       ],
@@ -239,6 +240,18 @@ export class BomAuditService {
       reason,
       changes,
     });
+  }
+
+  private workflowReason(
+    oldStatus: string | null,
+    newStatus: string,
+    note?: string | null,
+  ): string {
+    const label = (status: string) =>
+      getFieldValueLabel(REVISION_AGGREGATE, 'status', status) ?? status;
+    const move = `${oldStatus ? label(oldStatus) : 'Khởi tạo'} → ${label(newStatus)}`;
+    const text = note?.trim();
+    return text ? `${move}: ${text}` : move;
   }
 
   private linesEventType(result: LineAuditResult): AuditEventType {
