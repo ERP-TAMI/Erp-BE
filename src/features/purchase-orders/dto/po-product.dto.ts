@@ -130,13 +130,13 @@ export class CreatePoProductDto {
   @IsString()
   status?: string;
 
-  @ApiPropertyOptional({
+  @ApiProperty({
     description: 'Hạn giao hàng của sản phẩm',
     example: '2026-10-15',
   })
-  @IsOptional()
+  @IsNotEmpty({ message: 'Hạn giao (deadline) là bắt buộc khi tạo sản phẩm.' })
   @IsDateString({}, { message: 'deadline phải là định dạng ngày YYYY-MM-DD' })
-  deadline?: string;
+  deadline: string;
 
   @ApiPropertyOptional({
     description: 'Số ngày chu kỳ CM cơ bản',

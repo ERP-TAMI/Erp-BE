@@ -224,6 +224,20 @@ function toYmdString(val: string | Date): string {
   return String(val).slice(0, 10);
 }
 
+function getVietnamBusinessDateYmd(now = new Date()): string {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Ho_Chi_Minh',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(now);
+  const values = Object.fromEntries(
+    parts.map(({ type, value }) => [type, value]),
+  );
+
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
 const AUDIT_TYPE = {
   PO: 'PurchaseOrder',
   PO_DOCUMENT: 'PurchaseOrderDocument',
@@ -2576,6 +2590,17 @@ export class PurchaseOrdersService {
       );
     }
 
+    if (typeof dto.deadline !== 'string' || !dto.deadline.trim()) {
+      throw new BadRequestException(
+        'Hạn giao (deadline) là bắt buộc khi tạo sản phẩm.',
+      );
+    }
+    if (toYmdString(dto.deadline) < getVietnamBusinessDateYmd()) {
+      throw new BadRequestException(
+        'Hạn giao sản phẩm không được là ngày trong quá khứ.',
+      );
+    }
+
     const rawCode = (dto.productCode || dto.styleCode || '').trim();
     if (!rawCode) {
       throw new BadRequestException(
@@ -2612,7 +2637,7 @@ export class PurchaseOrdersService {
       sourceStyle?.styleName ||
       rawCode
     ).trim();
-    const targetDeadline = dto.deadline ? new Date(dto.deadline) : null;
+    const targetDeadline = new Date(dto.deadline);
     const targetCmDays =
       dto.as3bCmBaseDays || sourceStyle?.as3bCmBaseDays || 30;
 
@@ -2625,7 +2650,7 @@ export class PurchaseOrdersService {
         productName: targetName,
         category: targetCategory,
         materialNote: dto.materialNote || dto.colorName || undefined,
-        deadline: targetDeadline || undefined,
+        deadline: targetDeadline,
         structureImageVersionId:
           this.toProductImageKey(
             dto.structureImageVersionId,

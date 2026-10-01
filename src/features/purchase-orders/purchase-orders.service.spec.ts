@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import { PurchaseOrdersService } from './purchase-orders.service';
 import { SaveProductOperationStepsDto } from './dto';
+import { CreatePoProductDto } from './dto/po-product.dto';
 import { PurchaseOrder } from './entities/PurchaseOrder.entity';
 import { PurchaseOrderDocument } from './entities/PurchaseOrderDocument.entity';
 import { PurchaseOrderProduct } from './entities/PurchaseOrderProduct.entity';
@@ -768,6 +769,30 @@ describe('PurchaseOrdersService', () => {
   });
 
   describe('PO Products Management', () => {
+    it('rejects creating a product without a deadline', async () => {
+      mockPoRepo.findOne.mockResolvedValueOnce({
+        id: 'po-1',
+        status: PoStatus.DRAFT,
+      });
+
+      await expect(
+        service.addProduct('po-1', {
+          productCode: 'PROD-001',
+          productName: 'Áo Polo',
+        } as CreatePoProductDto),
+      ).rejects.toThrow('Hạn giao (deadline) là bắt buộc khi tạo sản phẩm.');
+    });
+
+    it('rejects creating a product with a deadline in the past', async () => {
+      await expect(
+        service.addProduct('po-1', {
+          productCode: 'PROD-PAST-DEADLINE',
+          productName: 'Áo Polo',
+          deadline: '2000-01-01',
+        }),
+      ).rejects.toThrow('Hạn giao sản phẩm không được là ngày trong quá khứ.');
+    });
+
     it('should add product to PO if PO is active and productCode is unique', async () => {
       mockPoRepo.findOne.mockResolvedValueOnce({
         id: 'po-1',
@@ -787,6 +812,7 @@ describe('PurchaseOrdersService', () => {
       const result = await service.addProduct('po-1', {
         productCode: 'PROD-001',
         productName: 'Áo Polo',
+        deadline: '2999-12-23',
       });
 
       expect(result.productCode).toBe('PROD-001');
@@ -816,6 +842,7 @@ describe('PurchaseOrdersService', () => {
         styleId: 'd9b2d63d-a233-4f9e-a89e-2938804918e7',
         colorName: 'Đỏ',
         productName: 'Áo T-Shirt',
+        deadline: '2999-12-23',
       });
 
       expect(mockProductRepo.create).toHaveBeenCalledWith(
@@ -845,6 +872,7 @@ describe('PurchaseOrdersService', () => {
           productCode: 'PROD-003',
           productName: 'Áo Polo',
           sourceStyleId: 'd9b2d63d-a233-4f9e-a89e-2938804918e7',
+          deadline: '2999-12-23',
         },
         'user-42',
       );
@@ -893,6 +921,7 @@ describe('PurchaseOrdersService', () => {
           productCode: 'PROD-004',
           productName: 'Áo Polo',
           sourceStyleId: 'd9b2d63d-a233-4f9e-a89e-2938804918e7',
+          deadline: '2999-12-23',
         },
         'user-1',
       );
@@ -977,6 +1006,7 @@ describe('PurchaseOrdersService', () => {
           productCode: 'PROD-005',
           productName: 'Áo Polo',
           sourceStyleId: 'd9b2d63d-a233-4f9e-a89e-2938804918e7',
+          deadline: '2999-12-23',
           importOptions: { copyDocuments: false },
         },
         'user-1',
@@ -996,6 +1026,7 @@ describe('PurchaseOrdersService', () => {
         service.addProduct('po-1', {
           productCode: 'PROD-001',
           productName: 'Áo Polo',
+          deadline: '2999-12-23',
         }),
       ).rejects.toThrow(BadRequestException);
     });
@@ -1219,6 +1250,7 @@ describe('PurchaseOrdersService', () => {
         service.addProduct('po-1', {
           productCode: 'PROD-001',
           productName: 'Áo Polo',
+          deadline: '2999-12-23',
         }),
       ).rejects.toThrow('Đơn hàng PO đã hủy, không thể thêm sản phẩm mới.');
     });
