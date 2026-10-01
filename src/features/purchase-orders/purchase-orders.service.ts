@@ -413,6 +413,26 @@ export class PurchaseOrdersService {
     }
   }
 
+  /** Ảnh sản phẩm chỉ được trỏ tới object của chính PO này, hoặc ảnh gốc của
+   * Mẫu Fit nguồn (khi import). Không thì client có thể gán key bất kỳ trong
+   * bucket rồi để BE ký URL đọc nó. */
+  private toProductImageKey(
+    value: string | null | undefined,
+    poId: string,
+    sourceStyleId?: string | null,
+  ): string | null {
+    const key = this.toStoredImageRef(value);
+    if (!key) return null;
+    const inScope =
+      isObjectKeyInScope(key, `purchase-orders/${poId}/`) ||
+      (Boolean(sourceStyleId) &&
+        isObjectKeyInScope(key, `styles/${sourceStyleId}/`));
+    if (!inScope) {
+      throw new BadRequestException('Ảnh sản phẩm không hợp lệ.');
+    }
+    return key;
+  }
+
   private toStoredImageRef(value: string | null | undefined): string | null {
     if (!value) return null;
     return this.toAuditImageRef(value.trim()) as string;
@@ -2607,7 +2627,13 @@ export class PurchaseOrdersService {
         materialNote: dto.materialNote || dto.colorName || undefined,
         deadline: targetDeadline || undefined,
         structureImageVersionId:
-          dto.structureImageVersionId || sourceStyle?.baseImageKey || null,
+          this.toProductImageKey(
+            dto.structureImageVersionId,
+            poId,
+            sourceStyleId,
+          ) ||
+          sourceStyle?.baseImageKey ||
+          null,
         status: ProductStatus.DRAFT,
         as3bCmBaseDays: targetCmDays,
         importedAt: sourceStyleId ? new Date() : undefined,
@@ -2997,8 +3023,11 @@ export class PurchaseOrdersService {
     if (dto.as3bCmBaseDays !== undefined)
       product.as3bCmBaseDays = Number(dto.as3bCmBaseDays);
     if (dto.structureImageVersionId !== undefined)
-      product.structureImageVersionId =
-        dto.structureImageVersionId?.trim() || null;
+      product.structureImageVersionId = this.toProductImageKey(
+        dto.structureImageVersionId,
+        poId,
+        product.sourceStyleId,
+      );
 
     product.updatedBy = userId || product.updatedBy;
     product.updatedAt = new Date();

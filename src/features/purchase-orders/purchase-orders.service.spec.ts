@@ -2606,4 +2606,39 @@ describe('PurchaseOrdersService', () => {
       );
     });
   });
+  describe('Ảnh sản phẩm PO chỉ được trỏ tới object thuộc PO hoặc Mẫu Fit nguồn', () => {
+    const product = {
+      id: 'prod-1',
+      purchaseOrderId: 'po-1',
+      productCode: 'P-1',
+      productName: 'Áo',
+      status: ProductStatus.DRAFT,
+      sourceStyleId: 'style-1',
+    };
+
+    it.each([
+      ['purchase-orders/po-1/documents/sample_image/a.png'],
+      ['styles/style-1/documents/sample_image/base.png'],
+    ])('chấp nhận %s', async (key) => {
+      mockProductRepo.findOne.mockResolvedValueOnce({ ...product });
+      await expect(
+        service.updateProduct('po-1', 'prod-1', {
+          structureImageVersionId: key,
+        } as any),
+      ).resolves.toBeDefined();
+    });
+
+    it.each([
+      ['purchase-orders/po-OTHER/documents/sample_image/a.png'],
+      ['styles/style-OTHER/documents/x.png'],
+      ['users/u-1/avatar.png'],
+    ])('từ chối key ngoài phạm vi: %s', async (key) => {
+      mockProductRepo.findOne.mockResolvedValueOnce({ ...product });
+      await expect(
+        service.updateProduct('po-1', 'prod-1', {
+          structureImageVersionId: key,
+        } as any),
+      ).rejects.toThrow('Ảnh sản phẩm không hợp lệ.');
+    });
+  });
 });
