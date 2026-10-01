@@ -1,3 +1,5 @@
+import { BomAuditService } from '../bom-audit.service';
+import { createBomAuditServiceMock } from './bom-audit.mock';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
@@ -361,6 +363,7 @@ describe('BOM V2 Copy Fit BOM -> PO BOM (PR-06 Specification)', () => {
       providers: [
         BomsService,
         BomCostService,
+        { provide: BomAuditService, useValue: createBomAuditServiceMock() },
         { provide: getRepositoryToken(Bom), useValue: bomRepoMock },
         {
           provide: getRepositoryToken(BomRevision),

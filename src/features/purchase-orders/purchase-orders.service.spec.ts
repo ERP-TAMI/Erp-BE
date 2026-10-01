@@ -2571,7 +2571,7 @@ describe('PurchaseOrdersService', () => {
       const manager = txWithBom([]);
 
       await expect(service.removeProduct('po-1', 'prod-1')).rejects.toThrow(
-        new ConflictException('Sản phẩm đã có BOM, không thể xóa.'),
+        new ConflictException('Sản phẩm đã có NPL, không thể xóa.'),
       );
       expect(manager.delete).not.toHaveBeenCalled();
     });
@@ -2588,7 +2588,7 @@ describe('PurchaseOrdersService', () => {
       ]);
 
       await expect(service.remove('po-1')).rejects.toThrow(
-        'Sản phẩm P-1 đã có BOM, không thể xóa đơn hàng PO.',
+        'Sản phẩm P-1 đã có NPL, không thể xóa đơn hàng PO.',
       );
       expect(manager.delete).not.toHaveBeenCalled();
     });

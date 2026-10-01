@@ -24,7 +24,7 @@ export enum AggregateBreakdownType {
 
 export class QueryBomAggregateDto {
   @ApiPropertyOptional({
-    description: 'Filter BOMs by creation month in YYYY-MM format',
+    description: 'Filter NPLs by creation month in YYYY-MM format',
     example: '2026-09',
   })
   @IsOptional()
@@ -35,7 +35,7 @@ export class QueryBomAggregateDto {
   month?: string;
 
   @ApiPropertyOptional({
-    description: 'Filter BOMs by creation year in YYYY format',
+    description: 'Filter NPLs by creation year in YYYY format',
     example: '2026',
   })
   @IsOptional()
@@ -46,7 +46,7 @@ export class QueryBomAggregateDto {
   year?: string;
 
   @ApiPropertyOptional({
-    description: 'Filter BOMs created on or after this UTC date (YYYY-MM-DD)',
+    description: 'Filter NPLs created on or after this UTC date (YYYY-MM-DD)',
     example: '2026-09-01',
   })
   @IsOptional()
@@ -56,7 +56,7 @@ export class QueryBomAggregateDto {
   startDate?: string;
 
   @ApiPropertyOptional({
-    description: 'Filter BOMs created through this UTC date (YYYY-MM-DD)',
+    description: 'Filter NPLs created through this UTC date (YYYY-MM-DD)',
     example: '2026-09-30',
   })
   @IsOptional()
@@ -66,7 +66,7 @@ export class QueryBomAggregateDto {
   endDate?: string;
 
   @ApiPropertyOptional({
-    description: 'Filter by exact BOM UUID',
+    description: 'Filter by exact NPL UUID',
   })
   @IsOptional()
   @IsString()

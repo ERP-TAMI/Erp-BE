@@ -441,7 +441,12 @@ export class AuditService {
     query: QueryEntityHistoryDto,
     requesterPermissions: string[],
     requesterUserId: string,
+    requesterRole?: string | null,
   ): Promise<PaginatedEntityHistory> {
+    const isBomTimeline = query.aggregateType === 'BomTimeline';
+    if (isBomTimeline && (!query.parentId || query.aggregateId)) {
+      throw new BadRequestException('Lịch sử NPL cần parentId là ID của NPL.');
+    }
     if (!query.aggregateId && !query.parentId) {
       throw new BadRequestException(
         'Cần truyền aggregateId (1 bản ghi) hoặc parentId (mọi bản ghi con của 1 cha).',
@@ -470,18 +475,26 @@ export class AuditService {
     const limit = Math.max(1, Math.min(100, query.limit ?? 20));
     const skip = (page - 1) * limit;
 
-    const qb = this.auditEvents
-      .createQueryBuilder('event')
-      .where('event.aggregateType = :aggregateType', {
+    const qb = this.auditEvents.createQueryBuilder('event');
+    if (isBomTimeline) {
+      qb.where(
+        `((event.aggregateType = :bomType AND event.aggregateId = :bomId)
+          OR (event.aggregateType = :revisionType AND event.aggregateId IN
+            (SELECT revision.id FROM bom_revisions revision WHERE revision.bom_id = :bomId)))`,
+        { bomType: 'Bom', revisionType: 'BomRevision', bomId: query.parentId },
+      );
+    } else {
+      qb.where('event.aggregateType = :aggregateType', {
         aggregateType: query.aggregateType,
       });
-    if (query.aggregateId) {
-      qb.andWhere('event.aggregateId = :aggregateId', {
-        aggregateId: query.aggregateId,
-      });
-    }
-    if (query.parentId) {
-      qb.andWhere('event.parentId = :parentId', { parentId: query.parentId });
+      if (query.aggregateId) {
+        qb.andWhere('event.aggregateId = :aggregateId', {
+          aggregateId: query.aggregateId,
+        });
+      }
+      if (query.parentId) {
+        qb.andWhere('event.parentId = :parentId', { parentId: query.parentId });
+      }
     }
     if (query.search) {
       qb.andWhere('event.targetLabel ILIKE :search', {
@@ -521,9 +534,24 @@ export class AuditService {
       changesByEvent.set(change.auditEventId, list);
     }
 
-    const canViewSensitive = canViewSensitiveFields(
-      query.aggregateType,
-      requesterPermissions,
+    const revisionIds = isBomTimeline
+      ? [
+          ...new Set(
+            events
+              .filter((event) => event.aggregateType === 'BomRevision')
+              .map((event) => event.aggregateId),
+          ),
+        ]
+      : [];
+    const revisionRows: { id: string; revision_no: number }[] =
+      revisionIds.length
+        ? await this.auditEvents.manager.query(
+            'SELECT id, revision_no FROM bom_revisions WHERE id = ANY($1::uuid[])',
+            [revisionIds],
+          )
+        : [];
+    const revisionNoById = new Map(
+      revisionRows.map((row) => [row.id, row.revision_no]),
     );
 
     const actorIds = [
@@ -544,52 +572,67 @@ export class AuditService {
       actors.map((actor) => [actor.id, actor.fullName || actor.email]),
     );
 
-    const items = events.map((event) => ({
-      id: event.id,
-      occurredAt: event.occurredAt,
-      eventType: event.eventType,
-      actorUserId: event.actorUserId,
-      actorName: event.actorUserId
-        ? (actorNameById.get(event.actorUserId) ?? null)
-        : null,
-      actorRole: event.actorRole,
-      targetLabel: event.targetLabel,
-      reason: event.reason,
-      changes: (changesByEvent.get(event.id) ?? [])
-        .filter((change) => {
-          const bulk = splitBulkFieldName(change.fieldName);
-          const realFieldName = bulk ? bulk.realFieldName : change.fieldName;
-          return !isHiddenField(query.aggregateType, realFieldName);
-        })
-        .map((change) => {
-          const bulk = splitBulkFieldName(change.fieldName);
-          const realFieldName = bulk ? bulk.realFieldName : change.fieldName;
-          const sensitive = isSensitiveField(
-            query.aggregateType,
-            realFieldName,
-          );
-          const masked = sensitive && !canViewSensitive;
-          return {
-            fieldName: change.fieldName,
-            fieldLabel: getFieldLabel(query.aggregateType, realFieldName),
-            groupLabel: bulk?.rowLabel,
-            oldValue: masked
-              ? SENSITIVE_MASK
-              : translateFieldValue(
-                  query.aggregateType,
-                  realFieldName,
-                  change.oldValue,
-                ),
-            newValue: masked
-              ? SENSITIVE_MASK
-              : translateFieldValue(
-                  query.aggregateType,
-                  realFieldName,
-                  change.newValue,
-                ),
-          };
-        }),
-    }));
+    const items = events.map((event) => {
+      const entryAggregateType = event.aggregateType || query.aggregateType;
+      const versionLabel = `Phiên bản ${revisionNoById.get(event.aggregateId) ?? '?'}`;
+      return {
+        id: event.id,
+        occurredAt: event.occurredAt,
+        eventType: event.eventType,
+        actorUserId: event.actorUserId,
+        actorName: event.actorUserId
+          ? (actorNameById.get(event.actorUserId) ?? null)
+          : null,
+        actorRole: event.actorRole,
+        targetLabel:
+          isBomTimeline && event.aggregateType === 'BomRevision'
+            ? event.targetLabel === versionLabel
+              ? versionLabel
+              : `${versionLabel} · ${event.targetLabel ?? 'Thay đổi định mức'}`
+            : event.targetLabel,
+        reason: event.reason,
+        changes: (changesByEvent.get(event.id) ?? [])
+          .filter((change) => {
+            const bulk = splitBulkFieldName(change.fieldName);
+            const realFieldName = bulk ? bulk.realFieldName : change.fieldName;
+            return !isHiddenField(entryAggregateType, realFieldName);
+          })
+          .map((change) => {
+            const bulk = splitBulkFieldName(change.fieldName);
+            const realFieldName = bulk ? bulk.realFieldName : change.fieldName;
+            const sensitive = isSensitiveField(
+              entryAggregateType,
+              realFieldName,
+            );
+            const masked =
+              sensitive &&
+              !canViewSensitiveFields(
+                entryAggregateType,
+                requesterPermissions,
+                requesterRole,
+              );
+            return {
+              fieldName: change.fieldName,
+              fieldLabel: getFieldLabel(entryAggregateType, realFieldName),
+              groupLabel: bulk?.rowLabel,
+              oldValue: masked
+                ? SENSITIVE_MASK
+                : translateFieldValue(
+                    entryAggregateType,
+                    realFieldName,
+                    change.oldValue,
+                  ),
+              newValue: masked
+                ? SENSITIVE_MASK
+                : translateFieldValue(
+                    entryAggregateType,
+                    realFieldName,
+                    change.newValue,
+                  ),
+            };
+          }),
+      };
+    });
 
     return {
       items,

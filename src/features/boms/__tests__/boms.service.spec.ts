@@ -1,3 +1,5 @@
+import { BomAuditService } from '../bom-audit.service';
+import { createBomAuditServiceMock } from './bom-audit.mock';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
@@ -81,6 +83,7 @@ describe('BomsService (Read Model & Anti N+1 Tests)', () => {
       providers: [
         BomsService,
         BomCostService,
+        { provide: BomAuditService, useValue: createBomAuditServiceMock() },
         {
           provide: getRepositoryToken(Bom),
           useValue: bomRepoMock,
@@ -162,6 +165,8 @@ describe('BomsService (Read Model & Anti N+1 Tests)', () => {
         addOrderBy: jest.fn().mockReturnThis(),
         skip: jest.fn().mockReturnThis(),
         take: jest.fn().mockReturnThis(),
+        offset: jest.fn().mockReturnThis(),
+        limit: jest.fn().mockReturnThis(),
         getManyAndCount: jest
           .fn()
           .mockResolvedValue([[mockBomPo, mockBomFit], 2]),
@@ -245,7 +250,7 @@ describe('BomsService (Read Model & Anti N+1 Tests)', () => {
       ]);
     });
 
-    it('search: ORs across bom code/style/PO/product/color in one clause and joins colors only once', async () => {
+    it('search: ORs across bom code/style/PO/product/color in one clause and matches colors with EXISTS (no row-multiplying join)', async () => {
       const qbMock = {
         leftJoin: jest.fn().mockReturnThis(),
         leftJoinAndSelect: jest.fn().mockReturnThis(),
@@ -254,18 +259,18 @@ describe('BomsService (Read Model & Anti N+1 Tests)', () => {
         addOrderBy: jest.fn().mockReturnThis(),
         skip: jest.fn().mockReturnThis(),
         take: jest.fn().mockReturnThis(),
+        offset: jest.fn().mockReturnThis(),
+        limit: jest.fn().mockReturnThis(),
         getManyAndCount: jest.fn().mockResolvedValue([[], 0]),
       };
       bomRepoMock.createQueryBuilder.mockReturnValue(qbMock);
 
       await service.findAll({ search: 'cotton' }, 'SA');
 
-      // Guards against double-joining 'popc' when both `color` and `search`
-      // would otherwise each try to add the same left join independently.
       const colorJoinCalls = qbMock.leftJoin.mock.calls.filter(
         ([table]) => table === 'purchase_order_product_colors',
       );
-      expect(colorJoinCalls).toHaveLength(1);
+      expect(colorJoinCalls).toHaveLength(0);
 
       const searchWhereCall = qbMock.andWhere.mock.calls.find(
         ([sql]) =>
@@ -283,6 +288,11 @@ describe('BomsService (Read Model & Anti N+1 Tests)', () => {
         expect.stringContaining('pop.product_code ILIKE :search'),
       );
       expect(searchWhereCall?.[0]).toEqual(
+        expect.stringContaining(
+          'EXISTS (SELECT 1 FROM purchase_order_product_colors popc',
+        ),
+      );
+      expect(searchWhereCall?.[0]).toEqual(
         expect.stringContaining('popc.color_name ILIKE :search'),
       );
     });
@@ -296,6 +306,8 @@ describe('BomsService (Read Model & Anti N+1 Tests)', () => {
         addOrderBy: jest.fn().mockReturnThis(),
         skip: jest.fn().mockReturnThis(),
         take: jest.fn().mockReturnThis(),
+        offset: jest.fn().mockReturnThis(),
+        limit: jest.fn().mockReturnThis(),
         getManyAndCount: jest.fn().mockResolvedValue([[], 0]),
       };
       bomRepoMock.createQueryBuilder.mockReturnValue(qbMock);
@@ -323,6 +335,8 @@ describe('BomsService (Read Model & Anti N+1 Tests)', () => {
         addOrderBy: jest.fn().mockReturnThis(),
         skip: jest.fn().mockReturnThis(),
         take: jest.fn().mockReturnThis(),
+        offset: jest.fn().mockReturnThis(),
+        limit: jest.fn().mockReturnThis(),
         getManyAndCount: jest.fn().mockResolvedValue([[], 0]),
       };
       bomRepoMock.createQueryBuilder.mockReturnValue(qbMock);
@@ -357,6 +371,8 @@ describe('BomsService (Read Model & Anti N+1 Tests)', () => {
         addOrderBy: jest.fn().mockReturnThis(),
         skip: jest.fn().mockReturnThis(),
         take: jest.fn().mockReturnThis(),
+        offset: jest.fn().mockReturnThis(),
+        limit: jest.fn().mockReturnThis(),
         getManyAndCount: jest.fn().mockResolvedValue([[mockBomPo], 1]),
       };
       bomRepoMock.createQueryBuilder.mockReturnValue(qbMock);
@@ -572,14 +588,36 @@ describe('BomsService (Read Model & Anti N+1 Tests)', () => {
         andWhere: jest.fn().mockReturnThis(),
         select: jest.fn().mockReturnThis(),
         addSelect: jest.fn().mockReturnThis(),
+        groupBy: jest.fn().mockReturnThis(),
+        addGroupBy: jest.fn().mockReturnThis(),
         getRawMany: jest.fn().mockResolvedValue([
-          { discontinuedAt: null, status: BomRevisionStatus.WAIT_NVKH },
-          { discontinuedAt: null, status: BomRevisionStatus.WAIT_RD },
-          { discontinuedAt: null, status: BomRevisionStatus.WAIT_TPKH_CONFIRM },
-          { discontinuedAt: null, status: BomRevisionStatus.WAIT_ACCOUNTING },
-          { discontinuedAt: null, status: BomRevisionStatus.WAIT_SA_APPROVE },
-          { discontinuedAt: null, status: BomRevisionStatus.CLOSED },
-          { discontinuedAt: new Date(), status: BomRevisionStatus.WAIT_RD }, // Discontinued
+          {
+            discontinued: false,
+            status: BomRevisionStatus.WAIT_NVKH,
+            count: 1,
+          },
+          {
+            discontinued: false,
+            status: BomRevisionStatus.WAIT_RD,
+            count: '1',
+          },
+          {
+            discontinued: false,
+            status: BomRevisionStatus.WAIT_TPKH_CONFIRM,
+            count: 1,
+          },
+          {
+            discontinued: false,
+            status: BomRevisionStatus.WAIT_ACCOUNTING,
+            count: 1,
+          },
+          {
+            discontinued: false,
+            status: BomRevisionStatus.WAIT_SA_APPROVE,
+            count: 1,
+          },
+          { discontinued: false, status: BomRevisionStatus.CLOSED, count: 1 },
+          { discontinued: true, status: BomRevisionStatus.WAIT_RD, count: 1 }, // Discontinued
         ]),
       };
       bomRepoMock.createQueryBuilder.mockReturnValue(qbMock);

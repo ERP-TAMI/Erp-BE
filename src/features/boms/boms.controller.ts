@@ -35,6 +35,10 @@ import {
   UpdateBomLineDto,
   ReorderBomLinesDto,
   DeleteBomLineDto,
+  SaveBomLinesDto,
+  SaveBomLinesResponseDto,
+  SaveBomCostsDto,
+  PromoteRevisionDto,
   BomLineResponseDto,
   ForwardBomDto,
   RejectBomDto,
@@ -63,20 +67,20 @@ export class BomsController {
   @Post()
   @UseGuards(PurchaseOrderBomWriteAccessGuard)
   @HttpCode(HttpStatus.CREATED)
-  @ApiOperation({ summary: 'Khởi tạo BOM mới (Fit BOM hoặc PO BOM)' })
+  @ApiOperation({ summary: 'Khởi tạo NPL mới (Fit NPL hoặc PO NPL)' })
   @ApiResponse({
     status: 201,
-    description: 'BOM đã được tạo thành công với Revision 1 (wait_nvkh)',
+    description: 'NPL đã được tạo thành công với Revision 1 (wait_nvkh)',
   })
   @ApiResponse({ status: 400, description: 'Dữ liệu không hợp lệ' })
-  @ApiResponse({ status: 403, description: 'Không có quyền tạo BOM' })
+  @ApiResponse({ status: 403, description: 'Không có quyền tạo NPL' })
   @ApiResponse({
     status: 404,
     description: 'Không tìm thấy Style hoặc PO Product',
   })
   @ApiResponse({
     status: 409,
-    description: 'BOM đã tồn tại cho Style hoặc PO Product',
+    description: 'NPL đã tồn tại cho Style hoặc PO Product',
   })
   async create(
     @Body() dto: CreateBomDto,
@@ -88,10 +92,10 @@ export class BomsController {
   }
 
   @Get('stats')
-  @ApiOperation({ summary: 'Thống kê số lượng BOM theo các nấc trạng thái' })
+  @ApiOperation({ summary: 'Thống kê số lượng NPL theo các nấc trạng thái' })
   @ApiResponse({
     status: 200,
-    description: 'Thống kê số lượng BOM',
+    description: 'Thống kê số lượng NPL',
   })
   async getStats(@Query() query: QueryBomStatsDto): Promise<BomStatsDto> {
     return this.bomsService.getStats(query);
@@ -100,11 +104,11 @@ export class BomsController {
   @Get()
   @ApiOperation({
     summary:
-      'Lấy danh sách BOM (phân trang, lọc theo type, status, mã PO, style/sản phẩm)',
+      'Lấy danh sách NPL (phân trang, lọc theo type, status, mã PO, style/sản phẩm)',
   })
   @ApiResponse({
     status: 200,
-    description: 'Danh sách BOM phân trang',
+    description: 'Danh sách NPL phân trang',
   })
   async findAll(
     @Query() query: QueryBomsDto,
@@ -117,7 +121,7 @@ export class BomsController {
   @Get('aggregate')
   @ApiOperation({
     summary:
-      'Tổng hợp nhu cầu nguyên phụ liệu (NPL Aggregate) từ các PO BOM đã duyệt (closed)',
+      'Tổng hợp nhu cầu nguyên phụ liệu (NPL Aggregate) từ các PO NPL đã duyệt (closed)',
   })
   @ApiResponse({
     status: 200,
@@ -134,15 +138,15 @@ export class BomsController {
   @Get(':id')
   @ApiOperation({
     summary:
-      'Lấy chi tiết BOM kèm thông tin live PO/Product, working revision, danh sách vật tư và chi phí',
+      'Lấy chi tiết NPL kèm thông tin live PO/Product, working revision, danh sách vật tư và chi phí',
   })
   @ApiResponse({
     status: 200,
-    description: 'Chi tiết BOM',
+    description: 'Chi tiết NPL',
   })
   @ApiResponse({
     status: 404,
-    description: 'Không tìm thấy BOM',
+    description: 'Không tìm thấy NPL',
   })
   async findOne(
     @Param('id', ParseUUIDPipe) id: string,
@@ -154,17 +158,17 @@ export class BomsController {
 
   @Patch(':id')
   @UseGuards(PurchaseOrderBomWriteAccessGuard)
-  @ApiOperation({ summary: 'Cập nhật thông tin header BOM (deadline, rdNote)' })
+  @ApiOperation({ summary: 'Cập nhật thông tin header NPL (deadline, rdNote)' })
   @ApiResponse({ status: 200, description: 'Cập nhật thành công' })
   @ApiResponse({
     status: 400,
-    description: 'Dữ liệu không hợp lệ hoặc BOM đã ngừng sử dụng',
+    description: 'Dữ liệu không hợp lệ hoặc NPL đã ngừng sử dụng',
   })
   @ApiResponse({
     status: 403,
     description: 'Không có quyền sửa trường tương ứng',
   })
-  @ApiResponse({ status: 404, description: 'Không tìm thấy BOM' })
+  @ApiResponse({ status: 404, description: 'Không tìm thấy NPL' })
   async update(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateBomDto,
@@ -178,14 +182,14 @@ export class BomsController {
   @Post(':id/discontinue')
   @UseGuards(PurchaseOrderBomWriteAccessGuard)
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Ngừng sử dụng BOM (Discontinue)' })
-  @ApiResponse({ status: 200, description: 'BOM đã ngừng sử dụng' })
+  @ApiOperation({ summary: 'Ngừng sử dụng NPL (Discontinue)' })
+  @ApiResponse({ status: 200, description: 'NPL đã ngừng sử dụng' })
   @ApiResponse({
     status: 400,
-    description: 'Lý do rỗng hoặc BOM đã ngừng sử dụng',
+    description: 'Lý do rỗng hoặc NPL đã ngừng sử dụng',
   })
-  @ApiResponse({ status: 403, description: 'Không có quyền ngừng sử dụng BOM' })
-  @ApiResponse({ status: 404, description: 'Không tìm thấy BOM' })
+  @ApiResponse({ status: 403, description: 'Không có quyền ngừng sử dụng NPL' })
+  @ApiResponse({ status: 404, description: 'Không tìm thấy NPL' })
   async discontinue(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: DiscontinueBomDto,
@@ -200,7 +204,8 @@ export class BomsController {
   @UseGuards(PurchaseOrderBomWriteAccessGuard)
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
-    summary: 'Thêm dòng vật tư mới vào working revision của BOM',
+    summary: 'Thêm dòng vật tư mới vào working revision của NPL',
+    deprecated: true,
   })
   @ApiResponse({
     status: 201,
@@ -208,10 +213,10 @@ export class BomsController {
   })
   @ApiResponse({
     status: 400,
-    description: 'Dữ liệu không hợp lệ hoặc BOM/Revision đã đóng/ngừng sử dụng',
+    description: 'Dữ liệu không hợp lệ hoặc NPL/Revision đã đóng/ngừng sử dụng',
   })
   @ApiResponse({ status: 403, description: 'Không có quyền thêm dòng vật tư' })
-  @ApiResponse({ status: 404, description: 'Không tìm thấy BOM hoặc vật tư' })
+  @ApiResponse({ status: 404, description: 'Không tìm thấy NPL hoặc vật tư' })
   @ApiResponse({
     status: 409,
     description: 'Vật tư đã tồn tại trong revision này',
@@ -226,11 +231,52 @@ export class BomsController {
     return this.bomsService.addLine(id, dto, userId, roleCode);
   }
 
+  @Put(':id/lines')
+  @UseGuards(PurchaseOrderBomWriteAccessGuard)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Lưu toàn bộ bảng dòng vật tư của working revision (thêm/sửa/xoá/đổi thứ tự trong 1 lần)',
+  })
+  @ApiResponse({ status: 200, description: 'Lưu bảng dòng thành công' })
+  @ApiResponse({ status: 400, description: 'Bảng có dòng không hợp lệ' })
+  @ApiResponse({ status: 403, description: 'Không có quyền sửa bảng dòng' })
+  @ApiResponse({ status: 404, description: 'Không tìm thấy NPL hoặc vật tư' })
+  async saveLines(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: SaveBomLinesDto,
+    @Req() req?: any,
+  ): Promise<SaveBomLinesResponseDto> {
+    const userId = req?.user?.id || req?.user?.sub;
+    const roleCode = req?.user?.roleCode;
+    return this.bomsService.saveLines(id, dto, userId, roleCode);
+  }
+
+  @Patch(':id/lines/costs')
+  @UseGuards(PurchaseOrderBomWriteAccessGuard)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Kế toán lưu đơn giá nhiều dòng vật tư ở bước wait_accounting',
+  })
+  @ApiResponse({ status: 200, description: 'Lưu đơn giá thành công' })
+  @ApiResponse({ status: 403, description: 'Không có quyền nhập đơn giá' })
+  @ApiResponse({ status: 404, description: 'Không tìm thấy NPL hoặc dòng' })
+  async saveCosts(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: SaveBomCostsDto,
+    @Req() req?: any,
+  ): Promise<SaveBomLinesResponseDto> {
+    const userId = req?.user?.id || req?.user?.sub;
+    const roleCode = req?.user?.roleCode;
+    return this.bomsService.saveCosts(id, dto, userId, roleCode);
+  }
+
   @Put(':id/lines/reorder')
   @UseGuards(PurchaseOrderBomWriteAccessGuard)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Sắp xếp lại thứ tự các dòng vật tư trong working revision',
+    deprecated: true,
   })
   @ApiResponse({
     status: 200,
@@ -246,7 +292,7 @@ export class BomsController {
   })
   @ApiResponse({
     status: 404,
-    description: 'Không tìm thấy BOM hoặc dòng vật tư',
+    description: 'Không tìm thấy NPL hoặc dòng vật tư',
   })
   async reorderLines(
     @Param('id', ParseUUIDPipe) id: string,
@@ -263,6 +309,7 @@ export class BomsController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Cập nhật thông tin dòng vật tư trong working revision',
+    deprecated: true,
   })
   @ApiResponse({
     status: 200,
@@ -270,7 +317,7 @@ export class BomsController {
   })
   @ApiResponse({
     status: 400,
-    description: 'Dữ liệu không hợp lệ hoặc BOM/Revision đã đóng/ngừng sử dụng',
+    description: 'Dữ liệu không hợp lệ hoặc NPL/Revision đã đóng/ngừng sử dụng',
   })
   @ApiResponse({
     status: 403,
@@ -278,7 +325,7 @@ export class BomsController {
   })
   @ApiResponse({
     status: 404,
-    description: 'Không tìm thấy BOM hoặc dòng vật tư',
+    description: 'Không tìm thấy NPL hoặc dòng vật tư',
   })
   @ApiResponse({ status: 409, description: 'Vật tư mới bị trùng lặp' })
   async updateLine(
@@ -295,16 +342,19 @@ export class BomsController {
   @Delete(':id/lines/:lineId')
   @UseGuards(PurchaseOrderBomWriteAccessGuard)
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Xóa dòng vật tư khỏi working revision' })
+  @ApiOperation({
+    summary: 'Xóa dòng vật tư khỏi working revision',
+    deprecated: true,
+  })
   @ApiResponse({ status: 200, description: 'Xóa dòng vật tư thành công' })
   @ApiResponse({
     status: 400,
-    description: 'BOM hoặc revision đã đóng/ngừng sử dụng',
+    description: 'NPL hoặc revision đã đóng/ngừng sử dụng',
   })
   @ApiResponse({ status: 403, description: 'Không có quyền xóa dòng vật tư' })
   @ApiResponse({
     status: 404,
-    description: 'Không tìm thấy BOM hoặc dòng vật tư',
+    description: 'Không tìm thấy NPL hoặc dòng vật tư',
   })
   async deleteLine(
     @Param('id', ParseUUIDPipe) id: string,
@@ -321,7 +371,7 @@ export class BomsController {
   @UseGuards(PurchaseOrderBomWriteAccessGuard)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'Chuyển BOM sang bước tiếp theo trong quy trình workflow',
+    summary: 'Chuyển NPL sang bước tiếp theo trong quy trình workflow',
   })
   @ApiResponse({
     status: 200,
@@ -330,13 +380,13 @@ export class BomsController {
   @ApiResponse({
     status: 400,
     description:
-      'Chuyển bước sai tuần tự hoặc BOM/Revision đã đóng/ngừng sử dụng',
+      'Chuyển bước sai tuần tự hoặc NPL/Revision đã đóng/ngừng sử dụng',
   })
   @ApiResponse({
     status: 403,
     description: 'Vai trò người dùng không có quyền forward tại trạng thái này',
   })
-  @ApiResponse({ status: 404, description: 'Không tìm thấy BOM' })
+  @ApiResponse({ status: 404, description: 'Không tìm thấy NPL' })
   async forward(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: ForwardBomDto,
@@ -351,22 +401,22 @@ export class BomsController {
   @UseGuards(PurchaseOrderBomWriteAccessGuard)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'Từ chối / trả lại BOM về các bước trước trong quy trình workflow',
+    summary: 'Từ chối / trả lại NPL về các bước trước trong quy trình workflow',
   })
   @ApiResponse({
     status: 200,
-    description: 'Trả lại BOM thành công',
+    description: 'Trả lại NPL thành công',
   })
   @ApiResponse({
     status: 400,
     description:
-      'Trạng thái đích không hợp lệ, lý do rỗng hoặc BOM/Revision đã đóng/ngừng sử dụng',
+      'Trạng thái đích không hợp lệ, lý do rỗng hoặc NPL/Revision đã đóng/ngừng sử dụng',
   })
   @ApiResponse({
     status: 403,
     description: 'Vai trò người dùng không có quyền reject tại trạng thái này',
   })
-  @ApiResponse({ status: 404, description: 'Không tìm thấy BOM' })
+  @ApiResponse({ status: 404, description: 'Không tìm thấy NPL' })
   async reject(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: RejectBomDto,
@@ -382,22 +432,22 @@ export class BomsController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary:
-      'Phê duyệt đóng BOM (chỉ dành cho Quản trị hệ thống SA tại wait_sa_approve)',
+      'Phê duyệt đóng NPL (chỉ dành cho Quản trị hệ thống SA tại wait_sa_approve)',
   })
   @ApiResponse({
     status: 200,
-    description: 'Phê duyệt đóng BOM thành công (status = closed)',
+    description: 'Phê duyệt đóng NPL thành công (status = closed)',
   })
   @ApiResponse({
     status: 400,
     description:
-      'BOM không ở trạng thái wait_sa_approve hoặc BOM đã đóng/ngừng sử dụng',
+      'NPL không ở trạng thái wait_sa_approve hoặc NPL đã đóng/ngừng sử dụng',
   })
   @ApiResponse({
     status: 403,
-    description: 'Chỉ Quản trị hệ thống (SA) mới có quyền phê duyệt đóng BOM',
+    description: 'Chỉ Quản trị hệ thống (SA) mới có quyền phê duyệt đóng NPL',
   })
-  @ApiResponse({ status: 404, description: 'Không tìm thấy BOM' })
+  @ApiResponse({ status: 404, description: 'Không tìm thấy NPL' })
   async approve(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: ApproveBomDto,
@@ -421,13 +471,13 @@ export class BomsController {
   @ApiResponse({
     status: 400,
     description:
-      'Lý do rỗng hoặc revision hiện tại chưa đóng hoặc BOM đã ngừng sử dụng',
+      'Lý do rỗng hoặc revision hiện tại chưa đóng hoặc NPL đã ngừng sử dụng',
   })
   @ApiResponse({
     status: 403,
     description: 'Không có quyền tạo revision mới',
   })
-  @ApiResponse({ status: 404, description: 'Không tìm thấy BOM' })
+  @ApiResponse({ status: 404, description: 'Không tìm thấy NPL' })
   @ApiResponse({ status: 409, description: 'Revision number bị trùng lặp' })
   async createRevision(
     @Param('id', ParseUUIDPipe) id: string,
@@ -439,15 +489,51 @@ export class BomsController {
     return this.bomsService.createRevision(id, dto, userId, roleCode);
   }
 
+  @Post(':id/revisions/:revisionId/promote')
+  @UseGuards(PurchaseOrderBomWriteAccessGuard)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'SA đổi phiên bản hiện hành của NPL về một phiên bản khác',
+  })
+  @ApiResponse({ status: 200, description: 'Đã đổi phiên bản hiện hành' })
+  @ApiResponse({
+    status: 400,
+    description: 'Lý do rỗng hoặc đã là bản hiện hành',
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'Chỉ SA được đổi phiên bản hiện hành',
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Không tìm thấy NPL hoặc phiên bản',
+  })
+  async promoteRevision(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('revisionId', ParseUUIDPipe) revisionId: string,
+    @Body() dto: PromoteRevisionDto,
+    @Req() req?: any,
+  ): Promise<BomDetailDto> {
+    const userId = req?.user?.id || req?.user?.sub;
+    const roleCode = req?.user?.roleCode;
+    return this.bomsService.promoteRevision(
+      id,
+      revisionId,
+      dto,
+      userId,
+      roleCode,
+    );
+  }
+
   @Get(':id/revisions')
   @ApiOperation({
-    summary: 'Lấy danh sách các phiên bản (revisions) của BOM',
+    summary: 'Lấy danh sách các phiên bản (revisions) của NPL',
   })
   @ApiResponse({
     status: 200,
-    description: 'Danh sách các revision của BOM sắp xếp mới nhất lên đầu',
+    description: 'Danh sách các revision của NPL sắp xếp mới nhất lên đầu',
   })
-  @ApiResponse({ status: 404, description: 'Không tìm thấy BOM' })
+  @ApiResponse({ status: 404, description: 'Không tìm thấy NPL' })
   async getRevisions(
     @Param('id', ParseUUIDPipe) id: string,
   ): Promise<RevisionListItemDto[]> {
@@ -463,7 +549,7 @@ export class BomsController {
     status: 200,
     description: 'Chi tiết revision',
   })
-  @ApiResponse({ status: 404, description: 'Không tìm thấy BOM hoặc revision' })
+  @ApiResponse({ status: 404, description: 'Không tìm thấy NPL hoặc revision' })
   async getRevisionDetail(
     @Param('id', ParseUUIDPipe) id: string,
     @Param('revisionId', ParseUUIDPipe) revisionId: string,
@@ -481,7 +567,7 @@ export class BomsController {
     status: 200,
     description: 'Danh sách các bước chuyển trạng thái của revision',
   })
-  @ApiResponse({ status: 404, description: 'Không tìm thấy BOM hoặc revision' })
+  @ApiResponse({ status: 404, description: 'Không tìm thấy NPL hoặc revision' })
   async getRevisionHistory(
     @Param('id', ParseUUIDPipe) id: string,
     @Param('revisionId', ParseUUIDPipe) revisionId: string,
@@ -499,7 +585,7 @@ export class BomsController {
     description: 'Chi tiết so sánh (ADDED, REMOVED, CHANGED, UNCHANGED)',
   })
   @ApiResponse({ status: 400, description: 'Không thể so sánh diff' })
-  @ApiResponse({ status: 404, description: 'Không tìm thấy BOM hoặc revision' })
+  @ApiResponse({ status: 404, description: 'Không tìm thấy NPL hoặc revision' })
   async getRevisionDiff(
     @Param('id', ParseUUIDPipe) id: string,
     @Param('revisionId', ParseUUIDPipe) revisionId: string,
@@ -520,28 +606,28 @@ export class BomsController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary:
-      'Sao chép cấu trúc vật tư từ một phiên bản đóng (closed) của Fit BOM sang PO BOM hiện tại (wait_nvkh)',
+      'Sao chép cấu trúc vật tư từ một phiên bản đóng (closed) của Fit NPL sang PO NPL hiện tại (wait_nvkh)',
   })
   @ApiResponse({
     status: 200,
-    description: 'Sao chép thành công cấu trúc vật tư sang PO BOM',
+    description: 'Sao chép thành công cấu trúc vật tư sang PO NPL',
   })
   @ApiResponse({
     status: 400,
     description:
-      'Dữ liệu không hợp lệ, BOM không phải loại PO, hoặc trạng thái revision không hợp lệ',
+      'Dữ liệu không hợp lệ, NPL không phải loại PO, hoặc trạng thái revision không hợp lệ',
   })
   @ApiResponse({
     status: 403,
-    description: 'Không có quyền sao chép Fit BOM sang PO BOM',
+    description: 'Không có quyền sao chép Fit NPL sang PO NPL',
   })
   @ApiResponse({
     status: 404,
-    description: 'Không tìm thấy PO BOM hoặc Fit BOM nguồn',
+    description: 'Không tìm thấy PO NPL hoặc Fit NPL nguồn',
   })
   @ApiResponse({
     status: 409,
-    description: 'Xung đột: PO BOM hiện tại đã có dòng vật tư (chống ghi đè)',
+    description: 'Xung đột: PO NPL hiện tại đã có dòng vật tư (chống ghi đè)',
   })
   async copyFromFit(
     @Param('id', ParseUUIDPipe) id: string,

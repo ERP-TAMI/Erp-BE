@@ -25,6 +25,13 @@ import { Material } from '../master-data/entities/Material.entity';
 import { MaterialGroup } from '../master-data/entities/MaterialGroup.entity';
 import { Unit } from '../master-data/entities/Unit.entity';
 import { BomCostService } from './bom-cost.service';
+import { BomAuditService } from './bom-audit.service';
+import {
+  AfterLine,
+  buildLineAuditChanges,
+  LineSnapshot,
+  planLinesSave,
+} from './bom-lines-plan';
 import {
   QueryBomsDto,
   QueryBomStatsDto,
@@ -38,6 +45,10 @@ import {
   UpdateBomLineDto,
   ReorderBomLinesDto,
   DeleteBomLineDto,
+  SaveBomLinesDto,
+  SaveBomLinesResponseDto,
+  SaveBomCostsDto,
+  PromoteRevisionDto,
   BomLineResponseDto,
   ForwardBomDto,
   RejectBomDto,
@@ -61,17 +72,21 @@ import {
   assertCanRejectBom,
   assertCanApproveBom,
   assertCanCreateRevision,
+  assertCanPromoteRevision,
   assertCanCopyFitToPo,
   assertRevisionDataReadyForForward,
   assertRevisionDataReadyForApprove,
 } from './boms.policy';
 import {
+  AuditEventType,
   BomRevisionStatus,
   BomType,
   PoStatus,
   ProductStatus,
 } from '../../common/enums/database.enums';
 import { stripHtmlTags } from '../../common/utils/sanitize-text.util';
+import { AuditActor } from '../audit/audit-actor.type';
+import { diffEntity } from '../audit/entity-diff.util';
 
 export interface PaginatedResult<T> {
   data: T[];
@@ -111,8 +126,16 @@ export class BomsService {
     @InjectRepository(PurchaseOrderProductColorSize)
     private readonly poColorSizeRepository: Repository<PurchaseOrderProductColorSize>,
     private readonly bomCostService: BomCostService,
+    private readonly bomAuditService: BomAuditService,
     private readonly dataSource: DataSource,
   ) {}
+
+  private toActor(
+    userId?: string,
+    roleCode?: string | null,
+  ): AuditActor | undefined {
+    return userId ? { id: userId, roleCode: roleCode ?? '' } : undefined;
+  }
 
   private assertExpectedRowVersion(
     currentRev: BomRevision,
@@ -122,7 +145,7 @@ export class BomsService {
     if (currentRowVersion !== Number(expectedRowVersion)) {
       throw new ConflictException({
         message:
-          'BOM đã được cập nhật bởi người khác. Hãy tải lại dữ liệu trước khi tiếp tục.',
+          'NPL đã được cập nhật bởi người khác. Hãy tải lại dữ liệu trước khi tiếp tục.',
         expectedRowVersion: Number(expectedRowVersion),
         currentRowVersion,
       });
@@ -155,7 +178,12 @@ export class BomsService {
     if (!product) return;
     if (product.status === ProductStatus.CLOSED) {
       throw new BadRequestException(
-        'Sản phẩm đã bị khóa, không thể chỉnh sửa BOM.',
+        'Sản phẩm đã bị khóa, không thể chỉnh sửa NPL.',
+      );
+    }
+    if (product.status === ProductStatus.CANCELLED) {
+      throw new BadRequestException(
+        'Sản phẩm đã hủy, không thể chỉnh sửa NPL.',
       );
     }
     const po = await manager.findOne(PurchaseOrder, {
@@ -163,12 +191,12 @@ export class BomsService {
     });
     if (po?.status === PoStatus.CLOSED) {
       throw new BadRequestException(
-        'Đơn hàng PO đã khóa, không thể chỉnh sửa BOM.',
+        'Đơn hàng PO đã khóa, không thể chỉnh sửa NPL.',
       );
     }
     if (po?.status === PoStatus.CANCELLED) {
       throw new BadRequestException(
-        'Đơn hàng PO đã hủy, không thể chỉnh sửa BOM.',
+        'Đơn hàng PO đã hủy, không thể chỉnh sửa NPL.',
       );
     }
   }
@@ -306,18 +334,12 @@ export class BomsService {
       );
     }
 
-    const needsColorJoin =
-      Boolean(query.color?.trim()) || Boolean(query.search?.trim());
-    if (needsColorJoin) {
-      qb.leftJoin(
-        'purchase_order_product_colors',
-        'popc',
-        'pop.id = popc.product_id',
-      );
-    }
+    // EXISTS thay vì join để 1 BOM không bị nhân thành nhiều dòng theo số màu
+    const colorExists = (param: string) =>
+      `EXISTS (SELECT 1 FROM purchase_order_product_colors popc WHERE popc.product_id = pop.id AND popc.color_name ILIKE :${param})`;
 
     if (query.color?.trim()) {
-      qb.andWhere('popc.color_name ILIKE :colorFilter', {
+      qb.andWhere(colorExists('colorFilter'), {
         colorFilter: `%${query.color.trim()}%`,
       });
     }
@@ -331,7 +353,7 @@ export class BomsService {
           OR po.po_code ILIKE :search
           OR pop.product_code ILIKE :search
           OR pop.product_name ILIKE :search
-          OR popc.color_name ILIKE :search
+          OR ${colorExists('search')}
         )`,
         { search: `%${query.search.trim()}%` },
       );
@@ -352,7 +374,7 @@ export class BomsService {
       query.sortOrder?.toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
 
     qb.orderBy(sortColumn, sortDirection).addOrderBy('bom.id', 'DESC');
-    qb.skip(skip).take(limit);
+    qb.offset(skip).limit(limit);
 
     // Fetch BOM entities
     const [boms, total] = await qb.getManyAndCount();
@@ -373,55 +395,55 @@ export class BomsService {
       .map((b) => b.currentRevisionId)
       .filter((id): id is string => Boolean(id));
 
-    const costPerUnitsMap =
-      isCostVisible && revisionIds.length > 0
-        ? await this.bomCostService.calculateCostPerUnits(revisionIds)
-        : new Map<string, number | null>();
-
-    // 2. Bulk calculate currentOrderQuantity for PO products
     const poProductIds = boms
       .filter((b) => b.bomType === BomType.PO && b.purchaseOrderProductId)
       .map((b) => b.purchaseOrderProductId as string);
-
-    const quantitiesMap =
-      poProductIds.length > 0
-        ? await this.bomCostService.calculateCurrentOrderQuantities(
-            poProductIds,
-          )
-        : new Map<string, number>();
-
-    // 3. Bulk fetch product colors for PO products
-    const colorsMap = new Map<string, string[]>();
-    if (poProductIds.length > 0) {
-      const colors = await this.poColorRepository.find({
-        where: { productId: In(poProductIds) },
-        order: { orderIndex: 'ASC' },
-      });
-      for (const c of colors) {
-        if (!colorsMap.has(c.productId)) {
-          colorsMap.set(c.productId, []);
-        }
-        colorsMap.get(c.productId)!.push(c.colorName);
-      }
-    }
-
-    // 4. Bulk fetch related entities (styles, purchaseOrderProducts, purchaseOrders, revisions)
     const styleIds = boms
       .filter((b) => b.bomType === BomType.FIT && b.styleId)
       .map((b) => b.styleId as string);
-    const styles =
-      styleIds.length > 0
-        ? await this.styleRepository.find({ where: { id: In(styleIds) } })
-        : [];
-    const stylesMap = new Map(styles.map((s) => [s.id, s]));
 
-    const poProducts =
+    // Các truy vấn dưới đây độc lập nhau nên chạy song song
+    const [
+      costPerUnitsMap,
+      quantitiesMap,
+      colors,
+      styles,
+      poProducts,
+      revisions,
+    ] = await Promise.all([
+      isCostVisible && revisionIds.length > 0
+        ? this.bomCostService.calculateCostPerUnits(revisionIds)
+        : Promise.resolve(new Map<string, number | null>()),
       poProductIds.length > 0
-        ? await this.poProductRepository.find({
-            where: { id: In(poProductIds) },
+        ? this.bomCostService.calculateCurrentOrderQuantities(poProductIds)
+        : Promise.resolve(new Map<string, number>()),
+      poProductIds.length > 0
+        ? this.poColorRepository.find({
+            where: { productId: In(poProductIds) },
+            order: { orderIndex: 'ASC' },
           })
-        : [];
+        : Promise.resolve<PurchaseOrderProductColor[]>([]),
+      styleIds.length > 0
+        ? this.styleRepository.find({ where: { id: In(styleIds) } })
+        : Promise.resolve<Style[]>([]),
+      poProductIds.length > 0
+        ? this.poProductRepository.find({ where: { id: In(poProductIds) } })
+        : Promise.resolve<PurchaseOrderProduct[]>([]),
+      revisionIds.length > 0
+        ? this.bomRevisionRepository.find({ where: { id: In(revisionIds) } })
+        : Promise.resolve<BomRevision[]>([]),
+    ]);
+
+    const colorsMap = new Map<string, string[]>();
+    for (const c of colors) {
+      if (!colorsMap.has(c.productId)) {
+        colorsMap.set(c.productId, []);
+      }
+      colorsMap.get(c.productId)!.push(c.colorName);
+    }
+    const stylesMap = new Map(styles.map((s) => [s.id, s]));
     const poProductsMap = new Map(poProducts.map((p) => [p.id, p]));
+    const revisionsMap = new Map(revisions.map((r) => [r.id, r]));
 
     const poIds = poProducts
       .map((p) => p.purchaseOrderId)
@@ -431,14 +453,6 @@ export class BomsService {
         ? await this.poRepository.find({ where: { id: In(poIds) } })
         : [];
     const poMap = new Map(purchaseOrders.map((po) => [po.id, po]));
-
-    const revisions =
-      revisionIds.length > 0
-        ? await this.bomRevisionRepository.find({
-            where: { id: In(revisionIds) },
-          })
-        : [];
-    const revisionsMap = new Map(revisions.map((r) => [r.id, r]));
 
     // ─── Map to Response DTOs ─────────────────────────────────────────────
     const data: BomListItemDto[] = boms.map((bom) => {
@@ -564,6 +578,38 @@ export class BomsService {
     };
   }
 
+  private async loadPoProductData(purchaseOrderProductId: string): Promise<{
+    poProduct: PurchaseOrderProduct | null;
+    po: PurchaseOrder | null;
+    colors: PurchaseOrderProductColor[];
+    allSizes: PurchaseOrderProductColorSize[];
+  }> {
+    const [poProduct, colors] = await Promise.all([
+      this.poProductRepository.findOne({
+        where: { id: purchaseOrderProductId },
+      }),
+      this.poColorRepository.find({
+        where: { productId: purchaseOrderProductId },
+        order: { orderIndex: 'ASC' },
+      }),
+    ]);
+    const colorIds = colors.map((c) => c.id);
+    const [po, allSizes] = await Promise.all([
+      poProduct?.purchaseOrderId
+        ? this.poRepository.findOne({
+            where: { id: poProduct.purchaseOrderId },
+          })
+        : Promise.resolve<PurchaseOrder | null>(null),
+      colorIds.length > 0
+        ? this.poColorSizeRepository.find({
+            where: { productColorId: In(colorIds) },
+            order: { orderIndex: 'ASC' },
+          })
+        : Promise.resolve<PurchaseOrderProductColorSize[]>([]),
+    ]);
+    return { poProduct, po, colors, allSizes };
+  }
+
   /**
    * Retrieves full details of a single BOM by ID.
    * Loads current revision lines keeping orderIndex, calculates dynamic costs,
@@ -575,65 +621,46 @@ export class BomsService {
     });
 
     if (!bom) {
-      throw new NotFoundException(`Không tìm thấy BOM với ID: ${id}`);
+      throw new NotFoundException(`Không tìm thấy NPL với ID: ${id}`);
     }
 
     const isCostVisible = this.bomCostService.isCostVisible(userRole);
 
-    // 1. Load Current Revision & Lines
-    let currentRevision: BomRevision | null = null;
-    let lines: BomLine[] = [];
+    // 1-3. Revision, lines, style and PO data are independent: load together
+    const poProductId =
+      bom.bomType === BomType.PO ? bom.purchaseOrderProductId : null;
+    const [currentRevision, lines, style, poData] = await Promise.all([
+      bom.currentRevisionId
+        ? this.bomRevisionRepository.findOne({
+            where: { id: bom.currentRevisionId },
+          })
+        : Promise.resolve<BomRevision | null>(null),
+      bom.currentRevisionId
+        ? this.bomLineRepository.find({
+            where: { revisionId: bom.currentRevisionId },
+            order: { orderIndex: 'ASC' },
+          })
+        : Promise.resolve<BomLine[]>([]),
+      bom.bomType === BomType.FIT && bom.styleId
+        ? this.styleRepository.findOne({ where: { id: bom.styleId } })
+        : Promise.resolve<Style | null>(null),
+      poProductId
+        ? this.loadPoProductData(poProductId)
+        : Promise.resolve<{
+            poProduct: PurchaseOrderProduct | null;
+            po: PurchaseOrder | null;
+            colors: PurchaseOrderProductColor[];
+            allSizes: PurchaseOrderProductColorSize[];
+          } | null>(null),
+    ]);
 
-    if (bom.currentRevisionId) {
-      currentRevision = await this.bomRevisionRepository.findOne({
-        where: { id: bom.currentRevisionId },
-      });
-
-      lines = await this.bomLineRepository.find({
-        where: { revisionId: bom.currentRevisionId },
-        order: { orderIndex: 'ASC' },
-      });
-    }
-
-    // 2. Load Style for Fit BOM
-    let style: Style | null = null;
-    if (bom.bomType === BomType.FIT && bom.styleId) {
-      style = await this.styleRepository.findOne({
-        where: { id: bom.styleId },
-      });
-    }
-
-    // 3. Load Live PO / Product / Colors / Sizes for PO BOM
-    let poProduct: PurchaseOrderProduct | null = null;
-    let po: PurchaseOrder | null = null;
+    const poProduct = poData?.poProduct ?? null;
+    const po = poData?.po ?? null;
     const colorsWithSizes: any[] = [];
     let currentOrderQuantity: number | null = null;
 
-    if (bom.bomType === BomType.PO && bom.purchaseOrderProductId) {
-      poProduct = await this.poProductRepository.findOne({
-        where: { id: bom.purchaseOrderProductId },
-      });
-
-      if (poProduct?.purchaseOrderId) {
-        po = await this.poRepository.findOne({
-          where: { id: poProduct.purchaseOrderId },
-        });
-      }
-
-      // Load all colors and their sizes
-      const colors = await this.poColorRepository.find({
-        where: { productId: bom.purchaseOrderProductId },
-        order: { orderIndex: 'ASC' },
-      });
-
-      const colorIds = colors.map((c) => c.id);
-      const allSizes =
-        colorIds.length > 0
-          ? await this.poColorSizeRepository.find({
-              where: { productColorId: In(colorIds) },
-              order: { orderIndex: 'ASC' },
-            })
-          : [];
+    if (poData) {
+      const { colors, allSizes } = poData;
 
       for (const c of colors) {
         const sizes = allSizes.filter((s) => s.productColorId === c.id);
@@ -655,11 +682,10 @@ export class BomsService {
         });
       }
 
-      // Calculate live dynamic quantity
-      currentOrderQuantity =
-        await this.bomCostService.calculateCurrentOrderQuantity(
-          bom.purchaseOrderProductId,
-        );
+      currentOrderQuantity = colorsWithSizes.reduce(
+        (sum, c) => sum + c.totalQuantity,
+        0,
+      );
     }
 
     // 4. Calculate Costs
@@ -817,11 +843,15 @@ export class BomsService {
     this.applyCreatedAtRangeFilter(qb, query);
 
     const rows = await qb
-      .select('bom.discontinued_at', 'discontinuedAt')
+      .select('(bom.discontinued_at IS NOT NULL)', 'discontinued')
       .addSelect('rev.status', 'status')
+      .addSelect('COUNT(*)::int', 'count')
+      .groupBy('(bom.discontinued_at IS NOT NULL)')
+      .addGroupBy('rev.status')
       .getRawMany<{
-        discontinuedAt: Date | null;
+        discontinued: boolean;
         status: BomRevisionStatus | null;
+        count: number | string;
       }>();
 
     let total = 0;
@@ -848,20 +878,21 @@ export class BomsService {
     ]);
 
     for (const r of rows) {
-      total++;
-      if (r.discontinuedAt) {
-        discontinuedCount++;
-        byStatus.discontinued = (byStatus.discontinued || 0) + 1;
+      const n = Number(r.count) || 0;
+      total += n;
+      if (r.discontinued) {
+        discontinuedCount += n;
+        byStatus.discontinued = (byStatus.discontinued || 0) + n;
       } else {
         const st = r.status || BomRevisionStatus.WAIT_NVKH;
-        byStatus[st] = (byStatus[st] || 0) + 1;
+        byStatus[st] = (byStatus[st] || 0) + n;
 
         if (st === BomRevisionStatus.WAIT_NVKH) {
-          draftCount++;
+          draftCount += n;
         } else if (pendingStatuses.has(st)) {
-          pendingCount++;
+          pendingCount += n;
         } else if (st === BomRevisionStatus.CLOSED) {
-          approvedCount++;
+          approvedCount += n;
         }
       }
     }
@@ -889,31 +920,31 @@ export class BomsService {
 
     if (dto.type === BomType.FIT) {
       if (!dto.styleId) {
-        throw new BadRequestException('styleId là bắt buộc đối với Fit BOM.');
+        throw new BadRequestException('styleId là bắt buộc đối với Fit NPL.');
       }
       if (dto.purchaseOrderProductId) {
         throw new BadRequestException(
-          'purchaseOrderProductId không được phép truyền cho Fit BOM.',
+          'purchaseOrderProductId không được phép truyền cho Fit NPL.',
         );
       }
     } else if (dto.type === BomType.PO) {
       if (!dto.purchaseOrderProductId) {
         throw new BadRequestException(
-          'purchaseOrderProductId là bắt buộc đối với PO BOM.',
+          'purchaseOrderProductId là bắt buộc đối với PO NPL.',
         );
       }
       if (dto.styleId) {
         throw new BadRequestException(
-          'styleId không được phép truyền cho PO BOM.',
+          'styleId không được phép truyền cho PO NPL.',
         );
       }
     } else {
-      throw new BadRequestException('Loại BOM không hợp lệ.');
+      throw new BadRequestException('Loại NPL không hợp lệ.');
     }
 
     if ((dto as any).productColorId) {
       throw new BadRequestException(
-        'productColorId không còn được hỗ trợ. BOM thuộc về Product trong PO.',
+        'productColorId không còn được hỗ trợ. NPL thuộc về Product trong PO.',
       );
     }
 
@@ -939,11 +970,11 @@ export class BomsService {
           });
           if (existingFitBom) {
             throw new ConflictException(
-              'Mẫu Fit này đã có BOM (FIT BOM đã tồn tại).',
+              'Mẫu Fit này đã có NPL (FIT NPL đã tồn tại).',
             );
           }
 
-          bomCode = `BOM-FIT-${style.styleCode.trim()}`;
+          bomCode = `NPL-FIT-${style.styleCode.trim()}`;
         } else {
           purchaseOrderProductId = dto.purchaseOrderProductId!;
           const pop = await manager.findOne(PurchaseOrderProduct, {
@@ -973,11 +1004,11 @@ export class BomsService {
           });
           if (existingPoBom) {
             throw new ConflictException(
-              'Sản phẩm trong đơn hàng này đã có BOM (PO BOM đã tồn tại).',
+              'Sản phẩm trong đơn hàng này đã có NPL (PO NPL đã tồn tại).',
             );
           }
 
-          bomCode = `BOM-${po.poCode.trim()}-${pop.productCode.trim()}`;
+          bomCode = `NPL-${po.poCode.trim()}-${pop.productCode.trim()}`;
         }
 
         const codeCollision = await manager.findOne(Bom, {
@@ -985,7 +1016,7 @@ export class BomsService {
         });
         if (codeCollision) {
           throw new ConflictException(
-            `Mã BOM "${bomCode}" đã tồn tại trong hệ thống.`,
+            `Mã NPL "${bomCode}" đã tồn tại trong hệ thống.`,
           );
         }
 
@@ -1028,6 +1059,15 @@ export class BomsService {
         savedBom.currentRevisionId = savedRevision.id;
         await manager.save(Bom, savedBom);
 
+        await this.bomAuditService.recordHeaderChange(
+          manager,
+          this.toActor(userId, roleCode),
+          savedBom,
+          [],
+          AuditEventType.CREATED,
+          'Tạo NPL',
+        );
+
         return savedBom.id;
       } catch (err: any) {
         if (err?.code === '23505') {
@@ -1036,7 +1076,7 @@ export class BomsService {
             err.constraint?.includes('uq_boms_fit_style')
           ) {
             throw new ConflictException(
-              'Mẫu Fit này đã có BOM (FIT BOM đã tồn tại).',
+              'Mẫu Fit này đã có NPL (FIT NPL đã tồn tại).',
             );
           }
           if (
@@ -1044,16 +1084,16 @@ export class BomsService {
             err.constraint?.includes('uq_boms_po_product')
           ) {
             throw new ConflictException(
-              'Sản phẩm trong đơn hàng này đã có BOM (PO BOM đã tồn tại).',
+              'Sản phẩm trong đơn hàng này đã có NPL (PO NPL đã tồn tại).',
             );
           }
           if (
             err.detail?.includes('bom_code') ||
             err.constraint?.includes('boms_bom_code_key')
           ) {
-            throw new ConflictException('Mã BOM đã tồn tại trong hệ thống.');
+            throw new ConflictException('Mã NPL đã tồn tại trong hệ thống.');
           }
-          throw new ConflictException('BOM đã tồn tại trong hệ thống.');
+          throw new ConflictException('NPL đã tồn tại trong hệ thống.');
         }
         throw err;
       }
@@ -1081,7 +1121,7 @@ export class BomsService {
         lock: { mode: 'pessimistic_write' },
       });
       if (!bom) {
-        throw new NotFoundException(`Không tìm thấy BOM với ID: ${id}`);
+        throw new NotFoundException(`Không tìm thấy NPL với ID: ${id}`);
       }
       await this.assertPoProductBomWritable(
         manager,
@@ -1104,6 +1144,8 @@ export class BomsService {
         );
       }
 
+      const headerBefore = { deadline: bom.deadline, rdNote: bom.rdNote };
+
       if (dto.deadline !== undefined) {
         bom.deadline = dto.deadline ? new Date(dto.deadline) : null;
       }
@@ -1111,6 +1153,13 @@ export class BomsService {
       if (dto.rdNote !== undefined) {
         bom.rdNote = dto.rdNote ? stripHtmlTags(dto.rdNote.trim()) : null;
       }
+
+      await this.bomAuditService.recordHeaderChange(
+        manager,
+        this.toActor(userId, roleCode),
+        bom,
+        diffEntity(headerBefore, bom, ['deadline', 'rdNote']),
+      );
 
       if (currentRev) {
         currentRev.rowVersion = Number(currentRev.rowVersion) + 1;
@@ -1143,7 +1192,7 @@ export class BomsService {
         lock: { mode: 'pessimistic_write' },
       });
       if (!bom) {
-        throw new NotFoundException(`Không tìm thấy BOM với ID: ${id}`);
+        throw new NotFoundException(`Không tìm thấy NPL với ID: ${id}`);
       }
       await this.assertPoProductBomWritable(
         manager,
@@ -1151,7 +1200,7 @@ export class BomsService {
       );
 
       if (!bom.currentRevisionId) {
-        throw new BadRequestException('BOM chưa có revision hiện tại.');
+        throw new BadRequestException('NPL chưa có revision hiện tại.');
       }
 
       const currentRev = await manager.findOne(BomRevision, {
@@ -1160,7 +1209,7 @@ export class BomsService {
       });
       if (!currentRev || currentRev.bomId !== bom.id) {
         throw new BadRequestException(
-          'Current revision không hợp lệ hoặc không thuộc BOM này.',
+          'Current revision không hợp lệ hoặc không thuộc NPL này.',
         );
       }
 
@@ -1184,6 +1233,21 @@ export class BomsService {
 
       await manager.save(BomRevision, currentRev);
       await manager.save(Bom, bom);
+
+      await this.bomAuditService.recordHeaderChange(
+        manager,
+        this.toActor(userId, roleCode),
+        bom,
+        [
+          {
+            fieldName: 'discontinuedReason',
+            oldValue: null,
+            newValue: cleanReason,
+          },
+        ],
+        AuditEventType.UPDATED,
+        `Ngừng sử dụng NPL: ${cleanReason}`,
+      );
     });
 
     return this.findOne(id, roleCode);
@@ -1225,7 +1289,7 @@ export class BomsService {
   async addLine(
     bomId: string,
     dto: CreateBomLineDto,
-    _userId?: string,
+    userId?: string,
     userRole?: string | null,
   ): Promise<BomLineResponseDto> {
     return this.dataSource.transaction(async (manager) => {
@@ -1234,7 +1298,7 @@ export class BomsService {
         lock: { mode: 'pessimistic_write' },
       });
       if (!bom) {
-        throw new NotFoundException(`Không tìm thấy BOM với ID: ${bomId}`);
+        throw new NotFoundException(`Không tìm thấy NPL với ID: ${bomId}`);
       }
       await this.assertPoProductBomWritable(
         manager,
@@ -1242,7 +1306,7 @@ export class BomsService {
       );
 
       if (!bom.currentRevisionId) {
-        throw new BadRequestException('BOM chưa có revision hiện tại.');
+        throw new BadRequestException('NPL chưa có revision hiện tại.');
       }
 
       const currentRev = await manager.findOne(BomRevision, {
@@ -1251,7 +1315,7 @@ export class BomsService {
       });
       if (!currentRev || currentRev.bomId !== bom.id) {
         throw new BadRequestException(
-          'Current revision không hợp lệ hoặc không thuộc BOM này.',
+          'Current revision không hợp lệ hoặc không thuộc NPL này.',
         );
       }
 
@@ -1276,7 +1340,7 @@ export class BomsService {
       });
       if (existingLine) {
         throw new ConflictException(
-          'Vật tư này đã tồn tại trong BOM revision hiện tại.',
+          'Vật tư này đã tồn tại trong NPL revision hiện tại.',
         );
       }
 
@@ -1357,6 +1421,26 @@ export class BomsService {
         bom.rowVersion = Number(bom.rowVersion) + 1;
         await manager.save(BomRevision, currentRev);
         await manager.save(Bom, bom);
+        await this.bomAuditService.recordSingleLineChange(
+          manager,
+          this.toActor(userId, userRole),
+          currentRev,
+          savedLine.materialNameSnapshot,
+          AuditEventType.CREATED,
+          [
+            {
+              fieldName: 'materialName',
+              oldValue: null,
+              newValue: savedLine.materialNameSnapshot,
+            },
+            {
+              fieldName: 'consumption',
+              oldValue: null,
+              newValue: Number(savedLine.consumption),
+            },
+          ],
+          'Thêm vật tư',
+        );
         return this.mapLineToDto(savedLine, userRole);
       } catch (err: any) {
         if (err?.code === '23505') {
@@ -1378,7 +1462,7 @@ export class BomsService {
     bomId: string,
     lineId: string,
     dto: UpdateBomLineDto,
-    _userId?: string,
+    userId?: string,
     userRole?: string | null,
   ): Promise<BomLineResponseDto> {
     return this.dataSource.transaction(async (manager) => {
@@ -1387,7 +1471,7 @@ export class BomsService {
         lock: { mode: 'pessimistic_write' },
       });
       if (!bom) {
-        throw new NotFoundException(`Không tìm thấy BOM với ID: ${bomId}`);
+        throw new NotFoundException(`Không tìm thấy NPL với ID: ${bomId}`);
       }
       await this.assertPoProductBomWritable(
         manager,
@@ -1395,7 +1479,7 @@ export class BomsService {
       );
 
       if (!bom.currentRevisionId) {
-        throw new BadRequestException('BOM chưa có revision hiện tại.');
+        throw new BadRequestException('NPL chưa có revision hiện tại.');
       }
 
       const currentRev = await manager.findOne(BomRevision, {
@@ -1404,7 +1488,7 @@ export class BomsService {
       });
       if (!currentRev || currentRev.bomId !== bom.id) {
         throw new BadRequestException(
-          'Current revision không hợp lệ hoặc không thuộc BOM này.',
+          'Current revision không hợp lệ hoặc không thuộc NPL này.',
         );
       }
 
@@ -1423,9 +1507,16 @@ export class BomsService {
 
       if (line.revisionId !== currentRev.id) {
         throw new NotFoundException(
-          'Dòng vật tư không thuộc revision hiện tại của BOM này.',
+          'Dòng vật tư không thuộc revision hiện tại của NPL này.',
         );
       }
+
+      const lineBefore = {
+        materialName: line.materialNameSnapshot,
+        consumption: Number(line.consumption),
+        unitCost: line.unitCost === null ? null : Number(line.unitCost),
+        note: line.note,
+      };
 
       // 1. Material change
       if (dto.materialId !== undefined && dto.materialId !== line.materialId) {
@@ -1443,7 +1534,7 @@ export class BomsService {
         });
         if (dup && dup.id !== line.id) {
           throw new ConflictException(
-            'Vật tư mới đã tồn tại trong BOM revision hiện tại.',
+            'Vật tư mới đã tồn tại trong NPL revision hiện tại.',
           );
         }
 
@@ -1490,6 +1581,25 @@ export class BomsService {
         bom.rowVersion = Number(bom.rowVersion) + 1;
         await manager.save(BomRevision, currentRev);
         await manager.save(Bom, bom);
+        await this.bomAuditService.recordSingleLineChange(
+          manager,
+          this.toActor(userId, userRole),
+          currentRev,
+          lineBefore.materialName,
+          AuditEventType.UPDATED,
+          diffEntity(
+            lineBefore,
+            {
+              materialName: savedLine.materialNameSnapshot,
+              consumption: Number(savedLine.consumption),
+              unitCost:
+                savedLine.unitCost === null ? null : Number(savedLine.unitCost),
+              note: savedLine.note,
+            },
+            ['materialName', 'consumption', 'unitCost', 'note'],
+          ),
+          'Sửa vật tư',
+        );
         return this.mapLineToDto(savedLine, userRole);
       } catch (err: any) {
         if (err?.code === '23505') {
@@ -1509,7 +1619,7 @@ export class BomsService {
     bomId: string,
     lineId: string,
     dto?: DeleteBomLineDto,
-    _userId?: string,
+    userId?: string,
     userRole?: string | null,
   ): Promise<{ success: boolean; message: string }> {
     return this.dataSource.transaction(async (manager) => {
@@ -1518,7 +1628,7 @@ export class BomsService {
         lock: { mode: 'pessimistic_write' },
       });
       if (!bom) {
-        throw new NotFoundException(`Không tìm thấy BOM với ID: ${bomId}`);
+        throw new NotFoundException(`Không tìm thấy NPL với ID: ${bomId}`);
       }
       await this.assertPoProductBomWritable(
         manager,
@@ -1526,7 +1636,7 @@ export class BomsService {
       );
 
       if (!bom.currentRevisionId) {
-        throw new BadRequestException('BOM chưa có revision hiện tại.');
+        throw new BadRequestException('NPL chưa có revision hiện tại.');
       }
 
       const currentRev = await manager.findOne(BomRevision, {
@@ -1535,7 +1645,7 @@ export class BomsService {
       });
       if (!currentRev || currentRev.bomId !== bom.id) {
         throw new BadRequestException(
-          'Current revision không hợp lệ hoặc không thuộc BOM này.',
+          'Current revision không hợp lệ hoặc không thuộc NPL này.',
         );
       }
 
@@ -1554,7 +1664,7 @@ export class BomsService {
 
       if (line.revisionId !== currentRev.id) {
         throw new NotFoundException(
-          'Dòng vật tư không thuộc revision hiện tại của BOM này.',
+          'Dòng vật tư không thuộc revision hiện tại của NPL này.',
         );
       }
 
@@ -1585,6 +1695,22 @@ export class BomsService {
       await manager.save(BomRevision, currentRev);
       await manager.save(Bom, bom);
 
+      await this.bomAuditService.recordSingleLineChange(
+        manager,
+        this.toActor(userId, userRole),
+        currentRev,
+        line.materialNameSnapshot,
+        AuditEventType.DELETED,
+        [
+          {
+            fieldName: 'materialName',
+            oldValue: line.materialNameSnapshot,
+            newValue: null,
+          },
+        ],
+        'Xoá vật tư',
+      );
+
       return { success: true, message: 'Đã xóa dòng vật tư thành công.' };
     });
   }
@@ -1595,7 +1721,7 @@ export class BomsService {
   async reorderLines(
     bomId: string,
     dto: ReorderBomLinesDto,
-    _userId?: string,
+    userId?: string,
     userRole?: string | null,
   ): Promise<BomLineResponseDto[]> {
     return this.dataSource.transaction(async (manager) => {
@@ -1604,7 +1730,7 @@ export class BomsService {
         lock: { mode: 'pessimistic_write' },
       });
       if (!bom) {
-        throw new NotFoundException(`Không tìm thấy BOM với ID: ${bomId}`);
+        throw new NotFoundException(`Không tìm thấy NPL với ID: ${bomId}`);
       }
       await this.assertPoProductBomWritable(
         manager,
@@ -1612,7 +1738,7 @@ export class BomsService {
       );
 
       if (!bom.currentRevisionId) {
-        throw new BadRequestException('BOM chưa có revision hiện tại.');
+        throw new BadRequestException('NPL chưa có revision hiện tại.');
       }
 
       const currentRev = await manager.findOne(BomRevision, {
@@ -1621,7 +1747,7 @@ export class BomsService {
       });
       if (!currentRev || currentRev.bomId !== bom.id) {
         throw new BadRequestException(
-          'Current revision không hợp lệ hoặc không thuộc BOM này.',
+          'Current revision không hợp lệ hoặc không thuộc NPL này.',
         );
       }
 
@@ -1717,8 +1843,420 @@ export class BomsService {
       await manager.save(BomRevision, currentRev);
       await manager.save(Bom, bom);
 
+      const newIndexById = new Map(
+        dto.items.map((item) => [item.lineId, item.orderIndex]),
+      );
+      const orderChanges = lines.flatMap((movedLine) => {
+        const newIndex = newIndexById.get(movedLine.id);
+        if (newIndex === undefined || newIndex === movedLine.orderIndex) {
+          return [];
+        }
+        return [
+          {
+            fieldName: `${movedLine.materialNameSnapshot}::orderIndex`,
+            oldValue: movedLine.orderIndex + 1,
+            newValue: newIndex + 1,
+          },
+        ];
+      });
+      await this.bomAuditService.recordLineEvent(
+        manager,
+        this.toActor(userId, userRole),
+        currentRev,
+        AuditEventType.UPDATED,
+        orderChanges,
+        'Đổi thứ tự',
+      );
+
       return updatedLines.map((l) => this.mapLineToDto(l, userRole));
     });
+  }
+
+  private async lockBomAndCurrentRevision(
+    manager: EntityManager,
+    bomId: string,
+  ): Promise<{ bom: Bom; rev: BomRevision }> {
+    const bom = await manager.findOne(Bom, {
+      where: { id: bomId },
+      lock: { mode: 'pessimistic_write' },
+    });
+    if (!bom) {
+      throw new NotFoundException(`Không tìm thấy NPL với ID: ${bomId}`);
+    }
+    await this.assertPoProductBomWritable(manager, bom.purchaseOrderProductId);
+    if (!bom.currentRevisionId) {
+      throw new BadRequestException('NPL chưa có revision hiện tại.');
+    }
+    const rev = await manager.findOne(BomRevision, {
+      where: { id: bom.currentRevisionId },
+      lock: { mode: 'pessimistic_write' },
+    });
+    if (!rev || rev.bomId !== bom.id) {
+      throw new BadRequestException(
+        'Current revision không hợp lệ hoặc không thuộc NPL này.',
+      );
+    }
+    return { bom, rev };
+  }
+
+  private bumpVersions(bom: Bom, rev: BomRevision, userId?: string): void {
+    rev.rowVersion = Number(rev.rowVersion) + 1;
+    bom.rowVersion = Number(bom.rowVersion) + 1;
+    bom.updatedBy = userId ?? null;
+  }
+
+  /**
+   * Saves the whole technical line table of the current revision in one
+   * transaction: lines with lineId are updated, lines without are created,
+   * lines missing from the payload are deleted, array order is orderIndex.
+   * Last write wins; a stale expectedRowVersion is only flagged in the audit.
+   */
+  async saveLines(
+    bomId: string,
+    dto: SaveBomLinesDto,
+    userId?: string,
+    userRole?: string | null,
+  ): Promise<SaveBomLinesResponseDto> {
+    return this.dataSource.transaction(async (manager) => {
+      const { bom, rev } = await this.lockBomAndCurrentRevision(manager, bomId);
+      const current = await manager.find(BomLine, {
+        where: { revisionId: rev.id },
+        order: { orderIndex: 'ASC' },
+      });
+      const plan = planLinesSave(current as LineSnapshot[], dto.lines);
+
+      if (plan.unchanged) {
+        return {
+          rowVersion: Number(rev.rowVersion),
+          lines: current.map((l) => this.mapLineToDto(l, userRole)),
+        };
+      }
+
+      if (plan.creates.length > 0) assertCanAddLine(userRole, bom, rev);
+      if (plan.deletes.length > 0) assertCanDeleteLine(userRole, bom, rev);
+      if (plan.reordered) assertCanReorderLines(userRole, bom, rev);
+      if (plan.updates.length > 0) {
+        const changedFields: UpdateBomLineDto = {};
+        for (const { patch } of plan.updates) {
+          if (patch.materialId !== undefined)
+            changedFields.materialId = patch.materialId;
+          if (patch.consumption !== undefined)
+            changedFields.consumption = patch.consumption;
+          if (patch.note !== undefined) changedFields.note = patch.note;
+        }
+        assertCanUpdateLine(userRole, bom, rev, changedFields);
+      }
+
+      const overwrote =
+        dto.expectedRowVersion !== undefined &&
+        Number(rev.rowVersion) !== Number(dto.expectedRowVersion);
+
+      const materialIds = [
+        ...plan.creates.map((c) => c.input.materialId as string),
+        ...plan.updates.flatMap((u) =>
+          u.patch.materialId ? [u.patch.materialId] : [],
+        ),
+      ];
+      const materials = materialIds.length
+        ? await manager.find(Material, { where: { id: In(materialIds) } })
+        : [];
+      const materialById = new Map(materials.map((m) => [m.id, m]));
+      const missingMaterial = materialIds.find((id) => !materialById.has(id));
+      if (missingMaterial) {
+        throw new NotFoundException(
+          `Không tìm thấy vật tư với ID: ${missingMaterial}`,
+        );
+      }
+      const groupIds = [
+        ...new Set(materials.flatMap((m) => m.materialGroupId ?? [])),
+      ];
+      const unitIds = [
+        ...new Set(materials.flatMap((m) => m.defaultUnitId ?? [])),
+      ];
+      const groupNameById = new Map(
+        (groupIds.length
+          ? await manager.find(MaterialGroup, { where: { id: In(groupIds) } })
+          : []
+        ).map((g) => [g.id, g.name]),
+      );
+      const unitNameById = new Map(
+        (unitIds.length
+          ? await manager.find(Unit, { where: { id: In(unitIds) } })
+          : []
+        ).map((u) => [u.id, u.name]),
+      );
+      const snapshotOf = (m: Material) => ({
+        materialId: m.id,
+        materialNameSnapshot: m.materialName,
+        materialGroupId: m.materialGroupId || null,
+        materialGroupSnapshot: m.materialGroupId
+          ? (groupNameById.get(m.materialGroupId) ?? null)
+          : null,
+        unitId: m.defaultUnitId || null,
+        unitSnapshot: m.defaultUnitId
+          ? (unitNameById.get(m.defaultUnitId) ?? '')
+          : '',
+      });
+
+      let createdEntities: BomLine[] = [];
+      try {
+        if (plan.deletes.length > 0) {
+          await manager.delete(BomLine, {
+            id: In(plan.deletes.map((l) => l.id)),
+          });
+        }
+        const materialChanged = plan.updates.filter(
+          (u) => u.patch.materialId !== undefined,
+        );
+        if (materialChanged.length > 0) {
+          await manager.update(
+            BomLine,
+            { id: In(materialChanged.map((u) => u.line.id)) },
+            { materialId: null },
+          );
+        }
+        const shift =
+          plan.kept.length > 0 && (plan.creates.length > 0 || plan.reindex);
+        if (shift) {
+          await manager.query(
+            'UPDATE bom_lines SET order_index = order_index + 1000000 WHERE revision_id = $1',
+            [rev.id],
+          );
+        }
+        createdEntities = plan.creates.map(({ index, input }) =>
+          manager.create(BomLine, {
+            revisionId: rev.id,
+            ...snapshotOf(
+              materialById.get(input.materialId as string) as Material,
+            ),
+            consumption: input.consumption ?? 0,
+            unitCost: null,
+            note: input.note ?? null,
+            orderIndex: index,
+          }),
+        );
+        if (createdEntities.length > 0) {
+          createdEntities = await manager.save(BomLine, createdEntities);
+        }
+        if (shift) {
+          const params: unknown[] = [rev.id];
+          const tuples = plan.kept.map(({ line, index }, i) => {
+            params.push(line.id, index);
+            return `($${i * 2 + 2}::uuid, $${i * 2 + 3}::int)`;
+          });
+          await manager.query(
+            `UPDATE bom_lines AS l SET order_index = v.idx FROM (VALUES ${tuples.join(',')}) AS v(id, idx) WHERE l.id = v.id AND l.revision_id = $1`,
+            params,
+          );
+        }
+        for (const { line, patch } of plan.updates) {
+          const set: Partial<BomLine> = {};
+          if (patch.materialId !== undefined) {
+            Object.assign(
+              set,
+              snapshotOf(materialById.get(patch.materialId) as Material),
+            );
+          }
+          if (patch.consumption !== undefined)
+            set.consumption = patch.consumption;
+          if (patch.note !== undefined) set.note = patch.note;
+          await manager.update(BomLine, { id: line.id }, set);
+        }
+
+        this.bumpVersions(bom, rev, userId);
+        await manager.save(BomRevision, rev);
+        await manager.save(Bom, bom);
+      } catch (err: any) {
+        if (err?.code === '23505') {
+          throw new ConflictException(
+            'Xảy ra xung đột thứ tự dòng hoặc vật tư đã tồn tại.',
+          );
+        }
+        throw err;
+      }
+
+      const lines = await manager.find(BomLine, {
+        where: { revisionId: rev.id },
+        order: { orderIndex: 'ASC' },
+      });
+
+      const updatedAfter = new Map<string, AfterLine>(
+        plan.updates.map(({ line, patch }) => [
+          line.id,
+          {
+            materialName: patch.materialId
+              ? (materialById.get(patch.materialId) as Material).materialName
+              : line.materialNameSnapshot,
+            consumption: patch.consumption ?? line.consumption,
+            note: patch.note !== undefined ? patch.note : line.note,
+          },
+        ]),
+      );
+      await this.bomAuditService.recordLinesSaved(
+        manager,
+        this.toActor(userId, userRole),
+        rev,
+        buildLineAuditChanges({
+          plan,
+          createdAfter: createdEntities.map((e) => ({
+            materialName: e.materialNameSnapshot,
+            consumption: e.consumption,
+            note: e.note,
+          })),
+          updatedAfter,
+          finalIndexById: new Map(
+            plan.kept.map(({ line, index }) => [line.id, index]),
+          ),
+        }),
+        overwrote,
+      );
+
+      return {
+        rowVersion: Number(rev.rowVersion),
+        lines: lines.map((l) => this.mapLineToDto(l, userRole)),
+      };
+    });
+  }
+
+  /** Accounting-only: saves unit costs of many lines at wait_accounting. */
+  async saveCosts(
+    bomId: string,
+    dto: SaveBomCostsDto,
+    userId?: string,
+    userRole?: string | null,
+  ): Promise<SaveBomLinesResponseDto> {
+    return this.dataSource.transaction(async (manager) => {
+      const { bom, rev } = await this.lockBomAndCurrentRevision(manager, bomId);
+      assertCanUpdateLine(userRole, bom, rev, { unitCost: 0 });
+
+      const ids = dto.items.map((item) => item.lineId);
+      if (new Set(ids).size !== ids.length) {
+        throw new BadRequestException('Danh sách đơn giá có lineId bị lặp.');
+      }
+      const allLines = await manager.find(BomLine, {
+        where: { revisionId: rev.id },
+        order: { orderIndex: 'ASC' },
+      });
+      const lineById = new Map(allLines.map((l) => [l.id, l]));
+      if (ids.some((id) => !lineById.has(id))) {
+        throw new NotFoundException(
+          'Một hoặc nhiều dòng vật tư không thuộc revision hiện tại.',
+        );
+      }
+
+      const changed = dto.items.filter((item) => {
+        const line = lineById.get(item.lineId) as BomLine;
+        const old = line.unitCost === null ? null : Number(line.unitCost);
+        return old !== item.unitCost;
+      });
+      if (changed.length === 0) {
+        return {
+          rowVersion: Number(rev.rowVersion),
+          lines: allLines.map((l) => this.mapLineToDto(l, userRole)),
+        };
+      }
+
+      const overwrote =
+        dto.expectedRowVersion !== undefined &&
+        Number(rev.rowVersion) !== Number(dto.expectedRowVersion);
+
+      const params: unknown[] = [rev.id];
+      const tuples = changed.map((item, i) => {
+        params.push(item.lineId, item.unitCost);
+        return `($${i * 2 + 2}::uuid, $${i * 2 + 3}::numeric)`;
+      });
+      await manager.query(
+        `UPDATE bom_lines AS l SET unit_cost = v.cost FROM (VALUES ${tuples.join(',')}) AS v(id, cost) WHERE l.id = v.id AND l.revision_id = $1`,
+        params,
+      );
+
+      this.bumpVersions(bom, rev, userId);
+      await manager.save(BomRevision, rev);
+      await manager.save(Bom, bom);
+
+      await this.bomAuditService.recordCostsSaved(
+        manager,
+        this.toActor(userId, userRole),
+        rev,
+        changed.map((item) => {
+          const line = lineById.get(item.lineId) as BomLine;
+          return {
+            fieldName: `${line.materialNameSnapshot} [${line.id}]::unitCost`,
+            oldValue: line.unitCost === null ? null : Number(line.unitCost),
+            newValue: item.unitCost,
+          };
+        }),
+        overwrote,
+      );
+
+      const lines = await manager.find(BomLine, {
+        where: { revisionId: rev.id },
+        order: { orderIndex: 'ASC' },
+      });
+      return {
+        rowVersion: Number(rev.rowVersion),
+        lines: lines.map((l) => this.mapLineToDto(l, userRole)),
+      };
+    });
+  }
+
+  /** SA-only: points the BOM at another revision; no revision is changed or deleted. */
+  async promoteRevision(
+    bomId: string,
+    revisionId: string,
+    dto: PromoteRevisionDto,
+    userId?: string,
+    roleCode?: string,
+  ): Promise<BomDetailDto> {
+    await this.dataSource.transaction(async (manager) => {
+      const bom = await manager.findOne(Bom, {
+        where: { id: bomId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!bom) {
+        throw new NotFoundException(`Không tìm thấy NPL với ID: ${bomId}`);
+      }
+      assertCanPromoteRevision(roleCode, bom);
+      await this.assertPoProductBomWritable(
+        manager,
+        bom.purchaseOrderProductId,
+      );
+
+      const target = await manager.findOne(BomRevision, {
+        where: { id: revisionId },
+      });
+      if (!target || target.bomId !== bom.id) {
+        throw new NotFoundException('Không tìm thấy phiên bản này trong NPL.');
+      }
+      if (bom.currentRevisionId === target.id) {
+        throw new BadRequestException(
+          'Phiên bản này đang là phiên bản hiện hành.',
+        );
+      }
+      const from = bom.currentRevisionId
+        ? await manager.findOne(BomRevision, {
+            where: { id: bom.currentRevisionId },
+          })
+        : null;
+
+      bom.currentRevisionId = target.id;
+      bom.updatedBy = userId ?? null;
+      bom.rowVersion = Number(bom.rowVersion) + 1;
+      target.rowVersion = Number(target.rowVersion) + 1;
+      await manager.save(BomRevision, target);
+      await manager.save(Bom, bom);
+
+      await this.bomAuditService.recordPromote(
+        manager,
+        this.toActor(userId, roleCode),
+        bom,
+        from?.revisionNo ?? target.revisionNo,
+        target.revisionNo,
+        dto.reason,
+      );
+    });
+
+    return this.findOne(bomId, roleCode);
   }
 
   /**
@@ -1741,7 +2279,7 @@ export class BomsService {
       });
 
       if (!bom) {
-        throw new NotFoundException(`Không tìm thấy BOM với ID: ${id}`);
+        throw new NotFoundException(`Không tìm thấy NPL với ID: ${id}`);
       }
       await this.assertPoProductBomWritable(
         manager,
@@ -1749,7 +2287,7 @@ export class BomsService {
       );
 
       if (!bom.currentRevisionId) {
-        throw new BadRequestException('BOM chưa có revision hiện tại.');
+        throw new BadRequestException('NPL chưa có revision hiện tại.');
       }
 
       const currentRev = await manager.findOne(BomRevision, {
@@ -1759,7 +2297,7 @@ export class BomsService {
 
       if (!currentRev || currentRev.bomId !== bom.id) {
         throw new BadRequestException(
-          'Current revision không hợp lệ hoặc không thuộc BOM này.',
+          'Current revision không hợp lệ hoặc không thuộc NPL này.',
         );
       }
 
@@ -1794,6 +2332,15 @@ export class BomsService {
         changedAt: new Date(),
       });
       await manager.save(BomRevisionStatusHistory, history);
+      await this.bomAuditService.recordWorkflow(
+        manager,
+        this.toActor(userId, roleCode),
+        currentRev,
+        'forward',
+        oldStatus,
+        nextStatus,
+        history.reason,
+      );
     });
 
     return this.findOne(id, roleCode);
@@ -1819,7 +2366,7 @@ export class BomsService {
       });
 
       if (!bom) {
-        throw new NotFoundException(`Không tìm thấy BOM với ID: ${id}`);
+        throw new NotFoundException(`Không tìm thấy NPL với ID: ${id}`);
       }
       await this.assertPoProductBomWritable(
         manager,
@@ -1827,7 +2374,7 @@ export class BomsService {
       );
 
       if (!bom.currentRevisionId) {
-        throw new BadRequestException('BOM chưa có revision hiện tại.');
+        throw new BadRequestException('NPL chưa có revision hiện tại.');
       }
 
       const currentRev = await manager.findOne(BomRevision, {
@@ -1837,7 +2384,7 @@ export class BomsService {
 
       if (!currentRev || currentRev.bomId !== bom.id) {
         throw new BadRequestException(
-          'Current revision không hợp lệ hoặc không thuộc BOM này.',
+          'Current revision không hợp lệ hoặc không thuộc NPL này.',
         );
       }
 
@@ -1878,6 +2425,15 @@ export class BomsService {
         changedAt: new Date(),
       });
       await manager.save(BomRevisionStatusHistory, history);
+      await this.bomAuditService.recordWorkflow(
+        manager,
+        this.toActor(userId, roleCode),
+        currentRev,
+        'reject',
+        oldStatus,
+        dto.targetStatus,
+        cleanReason,
+      );
     });
 
     return this.findOne(id, roleCode);
@@ -1904,7 +2460,7 @@ export class BomsService {
       });
 
       if (!bom) {
-        throw new NotFoundException(`Không tìm thấy BOM với ID: ${id}`);
+        throw new NotFoundException(`Không tìm thấy NPL với ID: ${id}`);
       }
       await this.assertPoProductBomWritable(
         manager,
@@ -1912,7 +2468,7 @@ export class BomsService {
       );
 
       if (!bom.currentRevisionId) {
-        throw new BadRequestException('BOM chưa có revision hiện tại.');
+        throw new BadRequestException('NPL chưa có revision hiện tại.');
       }
 
       const currentRev = await manager.findOne(BomRevision, {
@@ -1922,7 +2478,7 @@ export class BomsService {
 
       if (!currentRev || currentRev.bomId !== bom.id) {
         throw new BadRequestException(
-          'Current revision không hợp lệ hoặc không thuộc BOM này.',
+          'Current revision không hợp lệ hoặc không thuộc NPL này.',
         );
       }
 
@@ -1957,6 +2513,15 @@ export class BomsService {
         changedAt: new Date(),
       });
       await manager.save(BomRevisionStatusHistory, history);
+      await this.bomAuditService.recordWorkflow(
+        manager,
+        this.toActor(userId, roleCode),
+        currentRev,
+        'approve',
+        oldStatus,
+        BomRevisionStatus.CLOSED,
+        history.reason,
+      );
     });
 
     return this.findOne(id, roleCode);
@@ -1989,7 +2554,7 @@ export class BomsService {
       });
 
       if (!bom) {
-        throw new NotFoundException(`Không tìm thấy BOM với ID: ${id}`);
+        throw new NotFoundException(`Không tìm thấy NPL với ID: ${id}`);
       }
       await this.assertPoProductBomWritable(
         manager,
@@ -1997,7 +2562,7 @@ export class BomsService {
       );
 
       if (!bom.currentRevisionId) {
-        throw new BadRequestException('BOM chưa có revision hiện tại.');
+        throw new BadRequestException('NPL chưa có revision hiện tại.');
       }
 
       const currentRev = await manager.findOne(BomRevision, {
@@ -2007,13 +2572,17 @@ export class BomsService {
 
       if (!currentRev || currentRev.bomId !== bom.id) {
         throw new BadRequestException(
-          'Current revision không hợp lệ hoặc không thuộc BOM này.',
+          'Current revision không hợp lệ hoặc không thuộc NPL này.',
         );
       }
 
       assertCanCreateRevision(roleCode, bom, currentRev);
 
-      const nextRevisionNo = currentRev.revisionNo + 1;
+      const maxRevisionNo =
+        (await manager.maximum(BomRevision, 'revisionNo', {
+          bomId: bom.id,
+        })) ?? currentRev.revisionNo;
+      const nextRevisionNo = Math.max(maxRevisionNo, currentRev.revisionNo) + 1;
 
       // Check unique constraint preemptively
       const existing = await manager.findOne(BomRevision, {
@@ -2021,7 +2590,7 @@ export class BomsService {
       });
       if (existing) {
         throw new ConflictException(
-          `Revision số ${nextRevisionNo} đã tồn tại cho BOM này.`,
+          `Revision số ${nextRevisionNo} đã tồn tại cho NPL này.`,
         );
       }
 
@@ -2043,7 +2612,7 @@ export class BomsService {
       } catch (err: any) {
         if (err?.code === '23505') {
           throw new ConflictException(
-            `Revision số ${nextRevisionNo} đã tồn tại cho BOM này.`,
+            `Revision số ${nextRevisionNo} đã tồn tại cho NPL này.`,
           );
         }
         throw err;
@@ -2092,6 +2661,25 @@ export class BomsService {
       bom.updatedBy = userId ?? null;
       bom.rowVersion = Number(bom.rowVersion) + 1;
       await manager.save(Bom, bom);
+
+      const actor = this.toActor(userId, roleCode);
+      await this.bomAuditService.recordRevisionCreated(
+        manager,
+        actor,
+        bom,
+        savedRevision,
+        currentRev.revisionNo,
+        cleanReason,
+      );
+      await this.bomAuditService.recordWorkflow(
+        manager,
+        actor,
+        savedRevision,
+        'create',
+        null,
+        BomRevisionStatus.WAIT_NVKH,
+        cleanReason,
+      );
     });
 
     return this.findOne(id, roleCode);
@@ -2104,7 +2692,7 @@ export class BomsService {
   async getRevisions(bomId: string): Promise<RevisionListItemDto[]> {
     const bom = await this.bomRepository.findOne({ where: { id: bomId } });
     if (!bom) {
-      throw new NotFoundException(`Không tìm thấy BOM với ID: ${bomId}`);
+      throw new NotFoundException(`Không tìm thấy NPL với ID: ${bomId}`);
     }
 
     const revisions = await this.bomRevisionRepository.find({
@@ -2137,7 +2725,7 @@ export class BomsService {
   ): Promise<RevisionDetailDto> {
     const bom = await this.bomRepository.findOne({ where: { id: bomId } });
     if (!bom) {
-      throw new NotFoundException(`Không tìm thấy BOM với ID: ${bomId}`);
+      throw new NotFoundException(`Không tìm thấy NPL với ID: ${bomId}`);
     }
 
     const revision = await this.bomRevisionRepository.findOne({
@@ -2145,7 +2733,7 @@ export class BomsService {
     });
     if (!revision || revision.bomId !== bom.id) {
       throw new NotFoundException(
-        `Không tìm thấy revision với ID: ${revisionId} thuộc BOM này.`,
+        `Không tìm thấy revision với ID: ${revisionId} thuộc NPL này.`,
       );
     }
 
@@ -2186,7 +2774,7 @@ export class BomsService {
   ): Promise<BomRevisionStatusHistory[]> {
     const bom = await this.bomRepository.findOne({ where: { id: bomId } });
     if (!bom) {
-      throw new NotFoundException(`Không tìm thấy BOM với ID: ${bomId}`);
+      throw new NotFoundException(`Không tìm thấy NPL với ID: ${bomId}`);
     }
 
     const revision = await this.bomRevisionRepository.findOne({
@@ -2194,7 +2782,7 @@ export class BomsService {
     });
     if (!revision || revision.bomId !== bom.id) {
       throw new NotFoundException(
-        `Không tìm thấy revision với ID: ${revisionId} thuộc BOM này.`,
+        `Không tìm thấy revision với ID: ${revisionId} thuộc NPL này.`,
       );
     }
 
@@ -2217,7 +2805,7 @@ export class BomsService {
   ): Promise<RevisionDiffDto> {
     const bom = await this.bomRepository.findOne({ where: { id: bomId } });
     if (!bom) {
-      throw new NotFoundException(`Không tìm thấy BOM với ID: ${bomId}`);
+      throw new NotFoundException(`Không tìm thấy NPL với ID: ${bomId}`);
     }
 
     const targetRev = await this.bomRevisionRepository.findOne({
@@ -2225,7 +2813,7 @@ export class BomsService {
     });
     if (!targetRev || targetRev.bomId !== bom.id) {
       throw new NotFoundException(
-        `Không tìm thấy revision với ID: ${revisionId} thuộc BOM này.`,
+        `Không tìm thấy revision với ID: ${revisionId} thuộc NPL này.`,
       );
     }
 
@@ -2241,7 +2829,7 @@ export class BomsService {
     });
     if (!baseRev || baseRev.bomId !== bom.id) {
       throw new BadRequestException(
-        'Revision nguồn dùng để so sánh không tồn tại hoặc không thuộc BOM này.',
+        'Revision nguồn dùng để so sánh không tồn tại hoặc không thuộc NPL này.',
       );
     }
 
@@ -2460,7 +3048,7 @@ export class BomsService {
 
       if (!targetBom) {
         throw new NotFoundException(
-          `Không tìm thấy PO BOM với ID: ${targetBomId}`,
+          `Không tìm thấy PO NPL với ID: ${targetBomId}`,
         );
       }
       await this.assertPoProductBomWritable(
@@ -2470,7 +3058,7 @@ export class BomsService {
 
       if (targetBom.bomType !== BomType.PO) {
         throw new BadRequestException(
-          'Chỉ có thể sao chép Fit BOM vào PO BOM (target BOM type phải là po).',
+          'Chỉ có thể sao chép Fit NPL vào PO NPL (target NPL type phải là po).',
         );
       }
 
@@ -2479,13 +3067,13 @@ export class BomsService {
         (targetBom as any).status === 'discontinued'
       ) {
         throw new BadRequestException(
-          'Không thể sao chép dữ liệu vào BOM đã ngừng sử dụng.',
+          'Không thể sao chép dữ liệu vào NPL đã ngừng sử dụng.',
         );
       }
 
       if (!targetBom.currentRevisionId) {
         throw new BadRequestException(
-          'Target PO BOM chưa có revision hiện tại.',
+          'Target PO NPL chưa có revision hiện tại.',
         );
       }
 
@@ -2497,7 +3085,7 @@ export class BomsService {
 
       if (!targetRev || targetRev.bomId !== targetBom.id) {
         throw new BadRequestException(
-          'Target current revision không hợp lệ hoặc không thuộc BOM này.',
+          'Target current revision không hợp lệ hoặc không thuộc NPL này.',
         );
       }
 
@@ -2506,7 +3094,7 @@ export class BomsService {
         (targetRev.status as any) !== 'wait_nvkh'
       ) {
         throw new BadRequestException(
-          `Chỉ có thể sao chép khi revision hiện tại của PO BOM đang ở trạng thái wait_nvkh. Trạng thái hiện tại: ${targetRev.status}`,
+          `Chỉ có thể sao chép khi revision hiện tại của PO NPL đang ở trạng thái wait_nvkh. Trạng thái hiện tại: ${targetRev.status}`,
         );
       }
 
@@ -2522,7 +3110,7 @@ export class BomsService {
 
       if (existingLineCount > 0) {
         throw new ConflictException(
-          'Không thể sao chép đè: BOM hiện tại đã có dòng vật tư.',
+          'Không thể sao chép đè: NPL hiện tại đã có dòng vật tư.',
         );
       }
 
@@ -2545,14 +3133,14 @@ export class BomsService {
         });
         if (!sourceBom) {
           throw new NotFoundException(
-            `Không tìm thấy BOM nguồn cho revision ID: ${dto.sourceRevisionId}`,
+            `Không tìm thấy NPL nguồn cho revision ID: ${dto.sourceRevisionId}`,
           );
         }
 
         // Verify source Fit BOM belongs to the same style as target PO product
         if (!targetBom.purchaseOrderProductId) {
           throw new BadRequestException(
-            'Target PO BOM không liên kết với sản phẩm đơn hàng.',
+            'Target PO NPL không liên kết với sản phẩm đơn hàng.',
           );
         }
         const poProduct = await manager.findOne(PurchaseOrderProduct, {
@@ -2560,7 +3148,7 @@ export class BomsService {
         });
         if (!poProduct?.sourceStyleId) {
           throw new BadRequestException(
-            'Sản phẩm đơn hàng không liên kết với style gốc (sourceStyleId), không thể sao chép từ Fit BOM.',
+            'Sản phẩm đơn hàng không liên kết với style gốc (sourceStyleId), không thể sao chép từ Fit NPL.',
           );
         }
         if (
@@ -2568,14 +3156,14 @@ export class BomsService {
           sourceBom.styleId !== poProduct.sourceStyleId
         ) {
           throw new BadRequestException(
-            'Source revision thuộc Fit BOM của style khác, không khớp với style của sản phẩm đơn hàng này.',
+            'Source revision thuộc Fit NPL của style khác, không khớp với style của sản phẩm đơn hàng này.',
           );
         }
       } else {
         // Auto-resolve via target BOM's purchaseOrderProduct -> sourceStyleId
         if (!targetBom.purchaseOrderProductId) {
           throw new BadRequestException(
-            'Target PO BOM không liên kết với sản phẩm đơn hàng.',
+            'Target PO NPL không liên kết với sản phẩm đơn hàng.',
           );
         }
 
@@ -2598,13 +3186,13 @@ export class BomsService {
 
         if (!sourceBom) {
           throw new NotFoundException(
-            'Không tìm thấy Fit BOM tương ứng cho Style của sản phẩm đơn hàng.',
+            'Không tìm thấy Fit NPL tương ứng cho Style của sản phẩm đơn hàng.',
           );
         }
 
         if (!sourceBom.currentRevisionId) {
           throw new BadRequestException(
-            'Fit BOM tương ứng chưa có revision nào được tạo.',
+            'Fit NPL tương ứng chưa có revision nào được tạo.',
           );
         }
 
@@ -2614,7 +3202,7 @@ export class BomsService {
 
         if (!sourceRev || sourceRev.status !== BomRevisionStatus.CLOSED) {
           throw new BadRequestException(
-            'Fit BOM tương ứng chưa có revision nào đã đóng (closed).',
+            'Fit NPL tương ứng chưa có revision nào đã đóng (closed).',
           );
         }
       }
@@ -2673,6 +3261,14 @@ export class BomsService {
       targetBom.updatedBy = userId ?? targetBom.updatedBy;
       targetBom.updatedAt = new Date();
       await manager.save(Bom, targetBom);
+
+      await this.bomAuditService.recordLinesCopied(
+        manager,
+        this.toActor(userId, roleCode),
+        targetRev,
+        sourceLines.length,
+        sourceRev.revisionNo,
+      );
     });
 
     // 10. Return target BOM detail with live quantities and cost masking

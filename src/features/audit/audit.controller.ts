@@ -42,6 +42,7 @@ export class AuditController {
       query,
       req.user.permissions,
       req.user.id,
+      req.user.roleCode,
     );
   }
 }

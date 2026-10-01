@@ -221,11 +221,21 @@ export class BomAggregateService {
       .clone()
       .innerJoin(BomLine, 'line', 'line.revision_id = rev.id')
       .leftJoin(Material, 'material', 'material.id = line.material_id')
-      .leftJoin(PurchaseOrderProductColor, 'color', 'color.product_id = pop.id')
+      // Tổng số lượng của từng sản phẩm tính 1 lần, thay vì join dòng × màu × size
       .leftJoin(
-        PurchaseOrderProductColorSize,
-        'cs',
-        'cs.product_color_id = color.id',
+        (sub) =>
+          sub
+            .select('color.product_id', 'product_id')
+            .addSelect('SUM(cs.quantity)', 'qty')
+            .from(PurchaseOrderProductColor, 'color')
+            .innerJoin(
+              PurchaseOrderProductColorSize,
+              'cs',
+              'cs.product_color_id = color.id',
+            )
+            .groupBy('color.product_id'),
+        'pq',
+        'pq.product_id = pop.id',
       )
       .andWhere('line.material_id IS NOT NULL');
     this.applyLineFilters(groupQb, query);
@@ -237,14 +247,14 @@ export class BomAggregateService {
       .addSelect('MIN(line.material_group_snapshot)', 'materialGroupSnapshot')
       .addSelect('line.unit_snapshot', 'unitSnapshot')
       .addSelect(
-        'SUM(line.consumption * COALESCE(cs.quantity, 0))',
+        'SUM(line.consumption * COALESCE(pq.qty, 0))',
         'totalRequiredQuantity',
       )
       .addSelect('COUNT(DISTINCT bom.id)', 'bomCount')
       .addSelect('COUNT(DISTINCT pop.id)', 'poProductCount')
       .addSelect('BOOL_OR(line.unit_cost IS NULL)', 'hasNullUnitCost')
       .addSelect(
-        'SUM(line.consumption * COALESCE(cs.quantity, 0) * COALESCE(line.unit_cost, 0))',
+        'SUM(line.consumption * COALESCE(pq.qty, 0) * COALESCE(line.unit_cost, 0))',
         'totalEstimatedCost',
       )
       .addSelect('MIN(line.unit_cost)', 'minUnitCost')
@@ -322,23 +332,26 @@ export class BomAggregateService {
         .andWhere('line.material_id IS NOT NULL');
       this.applyLineFilters(breakdownQb, query);
 
-      const groupConditions: string[] = [];
+      const groupTuples: string[] = [];
       const groupParams: Record<string, unknown> = {};
       pageRows.forEach((row, index) => {
         const materialParam = `pageMaterial${index}`;
         const unitParam = `pageUnit${index}`;
-        groupConditions.push(
-          `(line.material_id = :${materialParam} AND line.unit_snapshot = :${unitParam})`,
-        );
+        groupTuples.push(`(:${materialParam}::uuid, :${unitParam}::text)`);
         groupParams[materialParam] = row.materialId;
         groupParams[unitParam] = row.unitSnapshot;
       });
-      breakdownQb.andWhere(`(${groupConditions.join(' OR ')})`, groupParams);
+      breakdownQb.andWhere(
+        `(line.material_id, line.unit_snapshot) IN (${groupTuples.join(', ')})`,
+        groupParams,
+      );
 
       breakdownQb
         .select('line.material_id', 'materialId')
         .addSelect('line.unit_snapshot', 'unitSnapshot')
-        .addSelect('SUM(line.consumption * cs.quantity)', 'requiredQuantity');
+        .addSelect('SUM(line.consumption * cs.quantity)', 'requiredQuantity')
+        .groupBy('line.material_id')
+        .addGroupBy('line.unit_snapshot');
 
       if (
         breakdownType === AggregateBreakdownType.COLOR ||
@@ -365,8 +378,6 @@ export class BomAggregateService {
           .addGroupBy('pop.product_code')
           .addGroupBy('pop.product_name');
       }
-
-      breakdownQb.groupBy('line.material_id').addGroupBy('line.unit_snapshot');
 
       const breakdownRows = await breakdownQb.getRawMany<BreakdownRow>();
       for (const row of breakdownRows) {

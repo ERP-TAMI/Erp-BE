@@ -4,7 +4,7 @@ import { IsInt, IsOptional, Min } from 'class-validator';
 
 export abstract class ExpectedRowVersionDto {
   @ApiProperty({
-    description: 'Row version đọc từ BOM detail gần nhất',
+    description: 'Row version đọc từ NPL detail gần nhất',
     example: 3,
     minimum: 1,
   })
@@ -24,7 +24,7 @@ export abstract class ExpectedRowVersionDto {
 export abstract class OptionalExpectedRowVersionDto {
   @ApiPropertyOptional({
     description:
-      'Row version đọc từ BOM detail gần nhất (tùy chọn — bỏ qua nếu gọi hàng loạt nhiều dòng liên tiếp). Nếu có, server sẽ kiểm tra và trả 409 khi lệch.',
+      'Row version đọc từ NPL detail gần nhất (tùy chọn — bỏ qua nếu gọi hàng loạt nhiều dòng liên tiếp). Nếu có, server sẽ kiểm tra và trả 409 khi lệch.',
     example: 3,
     minimum: 1,
   })

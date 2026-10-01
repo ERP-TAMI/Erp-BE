@@ -3284,7 +3284,7 @@ export class PurchaseOrdersService {
         where: { purchaseOrderProductId: productId },
       });
       if (bom) {
-        throw new ConflictException('Sản phẩm đã có BOM, không thể xóa.');
+        throw new ConflictException('Sản phẩm đã có NPL, không thể xóa.');
       }
       await this.deleteProductCascade(manager, productId);
       await this.recordAudit(manager, actor, {
@@ -3329,7 +3329,7 @@ export class PurchaseOrdersService {
             (p) => p.id === bom.purchaseOrderProductId,
           );
           throw new ConflictException(
-            `Sản phẩm ${owner?.productCode ?? ''} đã có BOM, không thể xóa đơn hàng PO.`,
+            `Sản phẩm ${owner?.productCode ?? ''} đã có NPL, không thể xóa đơn hàng PO.`,
           );
         }
       }

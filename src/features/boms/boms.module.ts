@@ -12,6 +12,8 @@ import { Unit } from '../master-data/entities/Unit.entity';
 import { BomsController } from './boms.controller';
 import { BomsService } from './boms.service';
 import { BomCostService } from './bom-cost.service';
+import { BomAuditService } from './bom-audit.service';
+import { AuditModule } from '../audit/audit.module';
 import { BomAggregateService } from './bom-aggregate.service';
 import { PurchaseOrderBomWriteAccessGuard } from './guards/purchase-order-bom-write-access.guard';
 
@@ -28,11 +30,13 @@ import { PurchaseOrderBomWriteAccessGuard } from './guards/purchase-order-bom-wr
       MaterialGroup,
       Unit,
     ]),
+    AuditModule,
   ],
   controllers: [BomsController],
   providers: [
     BomsService,
     BomCostService,
+    BomAuditService,
     BomAggregateService,
     PurchaseOrderBomWriteAccessGuard,
   ],

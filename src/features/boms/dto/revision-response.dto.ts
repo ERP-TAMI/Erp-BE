@@ -6,7 +6,7 @@ export class RevisionListItemDto {
   @ApiProperty({ description: 'ID của revision' })
   id: string;
 
-  @ApiProperty({ description: 'ID của BOM sở hữu' })
+  @ApiProperty({ description: 'ID của NPL sở hữu' })
   bomId: string;
 
   @ApiProperty({ description: 'Số phiên bản (revisionNo)' })
@@ -110,7 +110,7 @@ export class RevisionDiffItemDto {
 }
 
 export class RevisionDiffDto {
-  @ApiProperty({ description: 'ID BOM' })
+  @ApiProperty({ description: 'ID NPL' })
   bomId: string;
 
   @ApiProperty({ description: 'ID của revision đích (Target)' })

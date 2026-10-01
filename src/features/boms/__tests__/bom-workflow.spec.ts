@@ -1,3 +1,5 @@
+import { BomAuditService } from '../bom-audit.service';
+import { createBomAuditServiceMock } from './bom-audit.mock';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
@@ -211,6 +213,7 @@ describe('BOM V2 Workflow State Machine: Forward, Reject, Approve (PR-04 Specifi
       providers: [
         BomsService,
         BomCostService,
+        { provide: BomAuditService, useValue: createBomAuditServiceMock() },
         { provide: getRepositoryToken(Bom), useValue: bomRepoMock },
         {
           provide: getRepositoryToken(BomRevision),
@@ -279,6 +282,21 @@ describe('BOM V2 Workflow State Machine: Forward, Reject, Approve (PR-04 Specifi
       expect(historyRecords[0].action).toBe('forward');
       expect(historyRecords[0].reason).toBe('NVKH hoàn tất thông tin cơ bản');
       expect(historyRecords[0].changedBy).toBe('user-nvkh-1');
+    });
+
+    it('allows N1 (TPKH) to forward wait_nvkh -> wait_rd', async () => {
+      setupStatefulWorkflow(BomRevisionStatus.WAIT_NVKH);
+
+      const res = await workflow.forward(
+        mockBom.id,
+        { reason: 'TPKH hoàn tất thông tin cơ bản' },
+        'user-tpkh-1',
+        UserRoleCode.TPKH,
+      );
+
+      expect(res.status).toBe(BomRevisionStatus.WAIT_RD);
+      expect(mockRevision.status).toBe(BomRevisionStatus.WAIT_RD);
+      expect(historyRecords[0].changedBy).toBe('user-tpkh-1');
     });
 
     it('allows N2 (RD) to forward wait_rd -> wait_tpkh_confirm', async () => {

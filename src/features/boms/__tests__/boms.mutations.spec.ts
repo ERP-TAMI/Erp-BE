@@ -1,3 +1,5 @@
+import { BomAuditService } from '../bom-audit.service';
+import { createBomAuditServiceMock } from './bom-audit.mock';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
@@ -118,6 +120,7 @@ describe('BOM Mutations: Create, Update Header, Discontinue (PR-02 Specification
       providers: [
         BomsService,
         BomCostService,
+        { provide: BomAuditService, useValue: createBomAuditServiceMock() },
         { provide: getRepositoryToken(Bom), useValue: bomRepoMock },
         {
           provide: getRepositoryToken(BomRevision),
@@ -165,7 +168,7 @@ describe('BOM Mutations: Create, Update Header, Discontinue (PR-02 Specification
 
       const savedBom = new Bom();
       savedBom.id = 'bom-fit-created-id';
-      savedBom.bomCode = 'BOM-FIT-ST7918';
+      savedBom.bomCode = 'NPL-FIT-ST7918';
       savedBom.bomType = BomType.FIT;
       savedBom.styleId = styleId;
       savedBom.purchaseOrderProductId = null;
@@ -179,6 +182,7 @@ describe('BOM Mutations: Create, Update Header, Discontinue (PR-02 Specification
       savedRev.revisionNo = 1;
       savedRev.status = BomRevisionStatus.WAIT_NVKH;
       savedRev.createdAt = new Date();
+      let generatedBomCode = '';
 
       // Mock transaction execution
       dataSourceMock.transaction.mockImplementation(async (cb: any) => {
@@ -190,6 +194,7 @@ describe('BOM Mutations: Create, Update Header, Discontinue (PR-02 Specification
           }),
           create: jest.fn().mockImplementation((entityClass, data) => {
             if (entityClass === Bom) {
+              generatedBomCode = data.bomCode;
               return Object.assign(new Bom(), data, { id: savedBom.id });
             }
             if (entityClass === BomRevision) {
@@ -219,7 +224,8 @@ describe('BOM Mutations: Create, Update Header, Discontinue (PR-02 Specification
 
       expect(result).toBeDefined();
       expect(result.id).toBe(savedBom.id);
-      expect(result.bomCode).toBe('BOM-FIT-ST7918'); // 2. đúng bom_code
+      expect(generatedBomCode).toBe('NPL-FIT-ST7918');
+      expect(result.bomCode).toBe('NPL-FIT-ST7918'); // 2. đúng bom_code
       expect(result.type).toBe(BomType.FIT);
       expect(result.currentRevision?.revisionNo).toBe(1); // 3. tạo revision 1
       expect(result.currentRevision?.status).toBe(BomRevisionStatus.WAIT_NVKH); // 4. revision status wait_nvkh
@@ -307,7 +313,7 @@ describe('BOM Mutations: Create, Update Header, Discontinue (PR-02 Specification
 
       const savedBom = new Bom();
       savedBom.id = 'bom-po-created-id';
-      savedBom.bomCode = 'BOM-SP26-41075-7918B293MB';
+      savedBom.bomCode = 'NPL-SP26-41075-7918B293MB';
       savedBom.bomType = BomType.PO;
       savedBom.purchaseOrderProductId = popId;
       savedBom.styleId = null;
@@ -322,6 +328,7 @@ describe('BOM Mutations: Create, Update Header, Discontinue (PR-02 Specification
       savedRev.revisionNo = 1;
       savedRev.status = BomRevisionStatus.WAIT_NVKH;
       savedRev.createdAt = new Date();
+      let generatedBomCode = '';
 
       dataSourceMock.transaction.mockImplementation(async (cb: any) => {
         const managerMock = {
@@ -334,6 +341,7 @@ describe('BOM Mutations: Create, Update Header, Discontinue (PR-02 Specification
           }),
           create: jest.fn().mockImplementation((entityClass, data) => {
             if (entityClass === Bom) {
+              generatedBomCode = data.bomCode;
               return Object.assign(new Bom(), data, { id: savedBom.id });
             }
             if (entityClass === BomRevision) {
@@ -363,7 +371,8 @@ describe('BOM Mutations: Create, Update Header, Discontinue (PR-02 Specification
 
       expect(result).toBeDefined();
       expect(result.id).toBe(savedBom.id);
-      expect(result.bomCode).toBe('BOM-SP26-41075-7918B293MB'); // 12. đúng bom_code
+      expect(generatedBomCode).toBe('NPL-SP26-41075-7918B293MB');
+      expect(result.bomCode).toBe('NPL-SP26-41075-7918B293MB'); // 12. đúng bom_code
       expect(result.type).toBe(BomType.PO);
       expect(result.style).toBeNull(); // 17. style_id = null
       expect(result.colorNameSnapshot).toBeNull(); // 18. color_name_snapshot = null

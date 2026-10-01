@@ -5,7 +5,7 @@ import { ExpectedRowVersionDto } from './expected-row-version.dto';
 
 export class DiscontinueBomDto extends ExpectedRowVersionDto {
   @ApiProperty({
-    description: 'Lý do ngừng sử dụng BOM (bắt buộc, không được để trống)',
+    description: 'Lý do ngừng sử dụng NPL (bắt buộc, không được để trống)',
     example: 'Khách hàng thay đổi thiết kế mẫu hoàn toàn',
   })
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))

@@ -345,6 +345,88 @@ describe('AuditService', () => {
     });
   });
 
+  describe('findEntityHistory unit-cost masking for BomRevision', () => {
+    const run = async (roleCode: string | null) => {
+      const { service, auditEvents, auditEventChanges } = buildAuditService();
+      (auditEvents.createQueryBuilder as jest.Mock).mockReturnValue(
+        buildMockQueryBuilder(
+          [
+            {
+              id: 'event-1',
+              occurredAt: new Date('2026-01-01T00:00:00.000Z'),
+              eventType: AuditEventType.UPDATED,
+              actorUserId: 'actor-1',
+              actorRole: 'ACCOUNTING',
+              targetLabel: 'Đơn giá vật tư',
+              reason: 'Cập nhật đơn giá 1 dòng',
+            },
+          ],
+          1,
+        ),
+      );
+      (auditEventChanges.find as jest.Mock).mockResolvedValue([
+        {
+          auditEventId: 'event-1',
+          fieldName: 'Vải chính::unitCost',
+          oldValue: '1000',
+          newValue: '1200',
+        },
+        {
+          auditEventId: 'event-1',
+          fieldName: 'Vải chính::consumption',
+          oldValue: '1',
+          newValue: '2',
+        },
+        {
+          auditEventId: 'event-1',
+          fieldName: 'Vải::chính [line-1]::unitCost',
+          oldValue: '2000',
+          newValue: '2300',
+        },
+      ]);
+      return service.findEntityHistory(
+        { aggregateType: 'BomRevision', parentId: 'rev-1' },
+        [],
+        'viewer-1',
+        roleCode,
+      );
+    };
+
+    it('shows unit costs to SA and ACCOUNTING', async () => {
+      for (const role of ['SA', 'ACCOUNTING', 'accounting']) {
+        const result = await run(role);
+        expect(result.items[0].changes[0]).toMatchObject({
+          fieldLabel: 'Đơn giá',
+          groupLabel: 'Vải chính',
+          oldValue: '1000',
+          newValue: '1200',
+        });
+      }
+    });
+
+    it('masks unit costs for every other role but keeps other fields', async () => {
+      for (const role of ['NVKH', 'RD', 'TPKH', 'IT', null]) {
+        const result = await run(role);
+        expect(result.items[0].changes[0]).toMatchObject({
+          fieldLabel: 'Đơn giá',
+          oldValue: '***',
+          newValue: '***',
+        });
+        expect(result.items[0].changes[1]).toMatchObject({
+          fieldLabel: 'Định mức',
+          oldValue: '1',
+          newValue: '2',
+        });
+        expect(result.items[0].changes[2]).toMatchObject({
+          fieldLabel: 'Đơn giá',
+          groupLabel: 'Vải::chính [line-1]',
+          oldValue: '***',
+          newValue: '***',
+        });
+      }
+    });
+  });
+
   describe('findEntityHistory', () => {
     it('joins events with their field changes and resolves a human-readable label', async () => {
       const { service, auditEvents, auditEventChanges } = buildAuditService();
@@ -639,6 +721,96 @@ describe('AuditService', () => {
       expect(qb.andWhere).toHaveBeenCalledWith('event.parentId = :parentId', {
         parentId: 'style-1',
       });
+    });
+
+    it('combines NPL and every version audit without exposing unit costs to R&D', async () => {
+      const { service, auditEvents, auditEventChanges } = buildAuditService();
+      const base = {
+        occurredAt: new Date('2026-10-01T00:00:00.000Z'),
+        eventType: AuditEventType.UPDATED,
+        actorUserId: null,
+        actorIdentifier: null,
+        actorRole: 'SA',
+        parentId: null,
+        correlationId: null,
+        requestId: null,
+        reason: null,
+      };
+      const events = [
+        {
+          ...base,
+          id: 'event-bom',
+          aggregateType: 'Bom',
+          aggregateId: 'bom-1',
+          targetLabel: 'NPL',
+        },
+        {
+          ...base,
+          id: 'event-v1',
+          aggregateType: 'BomRevision',
+          aggregateId: 'version-1',
+          targetLabel: 'Đơn giá vật tư',
+        },
+        {
+          ...base,
+          id: 'event-v2',
+          aggregateType: 'BomRevision',
+          aggregateId: 'version-2',
+          targetLabel: 'Định mức nguyên phụ liệu',
+        },
+      ] as unknown as AuditEvent[];
+      const qb = buildMockQueryBuilder(events, events.length);
+      (auditEvents.createQueryBuilder as jest.Mock).mockReturnValue(qb);
+      (auditEvents as unknown as { manager: { query: jest.Mock } }).manager = {
+        query: jest.fn().mockResolvedValue([
+          { id: 'version-1', revision_no: 1 },
+          { id: 'version-2', revision_no: 2 },
+        ]),
+      };
+      (auditEventChanges.find as jest.Mock).mockResolvedValue([
+        {
+          id: 'change-1',
+          auditEventId: 'event-v1',
+          fieldName: 'Vải::unitCost',
+          oldValue: '1',
+          newValue: '2',
+        },
+      ]);
+
+      const result = await service.findEntityHistory(
+        { aggregateType: 'BomTimeline', parentId: 'bom-1' },
+        [],
+        'viewer-1',
+        'RD',
+      );
+
+      expect(qb.where).toHaveBeenCalledWith(
+        expect.stringContaining('bom_revisions'),
+        expect.objectContaining({ bomId: 'bom-1' }),
+      );
+      expect(result.items.map((item) => item.targetLabel)).toEqual([
+        'NPL',
+        'Phiên bản 1 · Đơn giá vật tư',
+        'Phiên bản 2 · Định mức nguyên phụ liệu',
+      ]);
+      expect(result.items[1].changes[0]).toEqual(
+        expect.objectContaining({
+          fieldLabel: 'Đơn giá',
+          oldValue: '***',
+          newValue: '***',
+        }),
+      );
+    });
+
+    it('requires a NPL parent ID for the combined history', async () => {
+      const { service } = buildAuditService();
+      await expect(
+        service.findEntityHistory(
+          { aggregateType: 'BomTimeline', aggregateId: 'version-1' },
+          [],
+          'viewer-1',
+        ),
+      ).rejects.toThrow(BadRequestException);
     });
   });
 });

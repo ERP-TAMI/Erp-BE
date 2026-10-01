@@ -40,7 +40,7 @@ export class QueryBomStatsDto {
 
   @ApiPropertyOptional({
     enum: BomType,
-    description: 'Filter stats by BOM type',
+    description: 'Filter stats by NPL type',
   })
   @IsOptional()
   @IsEnum(BomType)
