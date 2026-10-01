@@ -6,7 +6,7 @@ import { OptionalExpectedRowVersionDto } from './expected-row-version.dto';
 export class CopyFitToPoDto extends OptionalExpectedRowVersionDto {
   @ApiPropertyOptional({
     description:
-      'UUID của revision Fit BOM nguồn (phải thuộc Fit BOM tương ứng và ở trạng thái closed). Nếu bỏ trống, hệ thống sẽ tự tìm Fit BOM tương ứng theo styleId của sản phẩm đơn hàng.',
+      'UUID của revision Fit NPL nguồn (phải thuộc Fit NPL tương ứng và ở trạng thái closed). Nếu bỏ trống, hệ thống sẽ tự tìm Fit NPL tương ứng theo styleId của sản phẩm đơn hàng.',
     example: '123e4567-e89b-12d3-a456-426614174000',
   })
   @IsOptional()
@@ -52,6 +52,6 @@ export class CopyFitToPoDto extends OptionalExpectedRowVersionDto {
   status?: any;
 
   @ApiPropertyOptional({ description: 'Không nhận productColorId từ client' })
-  @IsAbsent({ message: 'productColorId is not accepted in BOM V2' })
+  @IsAbsent({ message: 'productColorId is not accepted in NPL V2' })
   productColorId?: any;
 }

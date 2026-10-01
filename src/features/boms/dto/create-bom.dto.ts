@@ -59,7 +59,7 @@ export function IsAbsent(validationOptions?: ValidationOptions) {
 export class CreateBomDto {
   @ApiProperty({
     enum: BomType,
-    description: 'Loại BOM (fit | po)',
+    description: 'Loại NPL (fit | po)',
     example: BomType.FIT,
   })
   @IsEnum(BomType, { message: 'type must be either fit or po' })
@@ -93,9 +93,9 @@ export class CreateBomDto {
   purchaseOrderProductId?: string;
 
   @ApiPropertyOptional({
-    description: 'Không nhận productColorId trong BOM V2',
+    description: 'Không nhận productColorId trong NPL V2',
   })
-  @IsAbsent({ message: 'productColorId is not accepted in BOM V2' })
+  @IsAbsent({ message: 'productColorId is not accepted in NPL V2' })
   productColorId?: any;
 
   @ApiPropertyOptional({

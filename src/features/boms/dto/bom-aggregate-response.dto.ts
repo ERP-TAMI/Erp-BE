@@ -74,7 +74,7 @@ export class BomAggregateItemDto {
   totalRequiredQuantity: number;
 
   @ApiProperty({
-    description: 'Số lượng BOM PO tham gia tổng hợp vật tư này',
+    description: 'Số lượng NPL PO tham gia tổng hợp vật tư này',
     example: 3,
   })
   bomCount: number;

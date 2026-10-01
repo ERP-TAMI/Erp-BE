@@ -70,6 +70,22 @@ describe('BomAuditService', () => {
     expect(recordEntityChange).not.toHaveBeenCalled();
   });
 
+  it('counts two price changes with the same material name as two lines', async () => {
+    await service.recordCostsSaved(
+      manager,
+      actor,
+      revision,
+      [
+        { fieldName: 'Vải [A]::unitCost', oldValue: null, newValue: 1 },
+        { fieldName: 'Vải [B]::unitCost', oldValue: null, newValue: 2 },
+      ],
+      false,
+    );
+    expect(recordEntityChange.mock.calls[0][1].reason).toBe(
+      'Cập nhật đơn giá 2 dòng',
+    );
+  });
+
   it('flags a save that overwrote a newer version and picks the event type from the operations', async () => {
     await service.recordLinesSaved(
       manager,

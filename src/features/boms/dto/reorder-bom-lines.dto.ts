@@ -13,7 +13,7 @@ import { OptionalExpectedRowVersionDto } from './expected-row-version.dto';
 
 export class ReorderBomLineItemDto {
   @ApiProperty({
-    description: 'BOM line UUID',
+    description: 'NPL line UUID',
     example: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11',
   })
   @IsUUID(undefined, { message: 'lineId must be a valid UUID' })

@@ -145,7 +145,7 @@ export class BomsService {
     if (currentRowVersion !== Number(expectedRowVersion)) {
       throw new ConflictException({
         message:
-          'BOM đã được cập nhật bởi người khác. Hãy tải lại dữ liệu trước khi tiếp tục.',
+          'NPL đã được cập nhật bởi người khác. Hãy tải lại dữ liệu trước khi tiếp tục.',
         expectedRowVersion: Number(expectedRowVersion),
         currentRowVersion,
       });
@@ -178,7 +178,12 @@ export class BomsService {
     if (!product) return;
     if (product.status === ProductStatus.CLOSED) {
       throw new BadRequestException(
-        'Sản phẩm đã bị khóa, không thể chỉnh sửa BOM.',
+        'Sản phẩm đã bị khóa, không thể chỉnh sửa NPL.',
+      );
+    }
+    if (product.status === ProductStatus.CANCELLED) {
+      throw new BadRequestException(
+        'Sản phẩm đã hủy, không thể chỉnh sửa NPL.',
       );
     }
     const po = await manager.findOne(PurchaseOrder, {
@@ -186,12 +191,12 @@ export class BomsService {
     });
     if (po?.status === PoStatus.CLOSED) {
       throw new BadRequestException(
-        'Đơn hàng PO đã khóa, không thể chỉnh sửa BOM.',
+        'Đơn hàng PO đã khóa, không thể chỉnh sửa NPL.',
       );
     }
     if (po?.status === PoStatus.CANCELLED) {
       throw new BadRequestException(
-        'Đơn hàng PO đã hủy, không thể chỉnh sửa BOM.',
+        'Đơn hàng PO đã hủy, không thể chỉnh sửa NPL.',
       );
     }
   }
@@ -616,7 +621,7 @@ export class BomsService {
     });
 
     if (!bom) {
-      throw new NotFoundException(`Không tìm thấy BOM với ID: ${id}`);
+      throw new NotFoundException(`Không tìm thấy NPL với ID: ${id}`);
     }
 
     const isCostVisible = this.bomCostService.isCostVisible(userRole);
@@ -915,31 +920,31 @@ export class BomsService {
 
     if (dto.type === BomType.FIT) {
       if (!dto.styleId) {
-        throw new BadRequestException('styleId là bắt buộc đối với Fit BOM.');
+        throw new BadRequestException('styleId là bắt buộc đối với Fit NPL.');
       }
       if (dto.purchaseOrderProductId) {
         throw new BadRequestException(
-          'purchaseOrderProductId không được phép truyền cho Fit BOM.',
+          'purchaseOrderProductId không được phép truyền cho Fit NPL.',
         );
       }
     } else if (dto.type === BomType.PO) {
       if (!dto.purchaseOrderProductId) {
         throw new BadRequestException(
-          'purchaseOrderProductId là bắt buộc đối với PO BOM.',
+          'purchaseOrderProductId là bắt buộc đối với PO NPL.',
         );
       }
       if (dto.styleId) {
         throw new BadRequestException(
-          'styleId không được phép truyền cho PO BOM.',
+          'styleId không được phép truyền cho PO NPL.',
         );
       }
     } else {
-      throw new BadRequestException('Loại BOM không hợp lệ.');
+      throw new BadRequestException('Loại NPL không hợp lệ.');
     }
 
     if ((dto as any).productColorId) {
       throw new BadRequestException(
-        'productColorId không còn được hỗ trợ. BOM thuộc về Product trong PO.',
+        'productColorId không còn được hỗ trợ. NPL thuộc về Product trong PO.',
       );
     }
 
@@ -965,11 +970,11 @@ export class BomsService {
           });
           if (existingFitBom) {
             throw new ConflictException(
-              'Mẫu Fit này đã có BOM (FIT BOM đã tồn tại).',
+              'Mẫu Fit này đã có NPL (FIT NPL đã tồn tại).',
             );
           }
 
-          bomCode = `BOM-FIT-${style.styleCode.trim()}`;
+          bomCode = `NPL-FIT-${style.styleCode.trim()}`;
         } else {
           purchaseOrderProductId = dto.purchaseOrderProductId!;
           const pop = await manager.findOne(PurchaseOrderProduct, {
@@ -999,11 +1004,11 @@ export class BomsService {
           });
           if (existingPoBom) {
             throw new ConflictException(
-              'Sản phẩm trong đơn hàng này đã có BOM (PO BOM đã tồn tại).',
+              'Sản phẩm trong đơn hàng này đã có NPL (PO NPL đã tồn tại).',
             );
           }
 
-          bomCode = `BOM-${po.poCode.trim()}-${pop.productCode.trim()}`;
+          bomCode = `NPL-${po.poCode.trim()}-${pop.productCode.trim()}`;
         }
 
         const codeCollision = await manager.findOne(Bom, {
@@ -1011,7 +1016,7 @@ export class BomsService {
         });
         if (codeCollision) {
           throw new ConflictException(
-            `Mã BOM "${bomCode}" đã tồn tại trong hệ thống.`,
+            `Mã NPL "${bomCode}" đã tồn tại trong hệ thống.`,
           );
         }
 
@@ -1060,7 +1065,7 @@ export class BomsService {
           savedBom,
           [],
           AuditEventType.CREATED,
-          'Tạo BOM',
+          'Tạo NPL',
         );
 
         return savedBom.id;
@@ -1071,7 +1076,7 @@ export class BomsService {
             err.constraint?.includes('uq_boms_fit_style')
           ) {
             throw new ConflictException(
-              'Mẫu Fit này đã có BOM (FIT BOM đã tồn tại).',
+              'Mẫu Fit này đã có NPL (FIT NPL đã tồn tại).',
             );
           }
           if (
@@ -1079,16 +1084,16 @@ export class BomsService {
             err.constraint?.includes('uq_boms_po_product')
           ) {
             throw new ConflictException(
-              'Sản phẩm trong đơn hàng này đã có BOM (PO BOM đã tồn tại).',
+              'Sản phẩm trong đơn hàng này đã có NPL (PO NPL đã tồn tại).',
             );
           }
           if (
             err.detail?.includes('bom_code') ||
             err.constraint?.includes('boms_bom_code_key')
           ) {
-            throw new ConflictException('Mã BOM đã tồn tại trong hệ thống.');
+            throw new ConflictException('Mã NPL đã tồn tại trong hệ thống.');
           }
-          throw new ConflictException('BOM đã tồn tại trong hệ thống.');
+          throw new ConflictException('NPL đã tồn tại trong hệ thống.');
         }
         throw err;
       }
@@ -1116,7 +1121,7 @@ export class BomsService {
         lock: { mode: 'pessimistic_write' },
       });
       if (!bom) {
-        throw new NotFoundException(`Không tìm thấy BOM với ID: ${id}`);
+        throw new NotFoundException(`Không tìm thấy NPL với ID: ${id}`);
       }
       await this.assertPoProductBomWritable(
         manager,
@@ -1187,7 +1192,7 @@ export class BomsService {
         lock: { mode: 'pessimistic_write' },
       });
       if (!bom) {
-        throw new NotFoundException(`Không tìm thấy BOM với ID: ${id}`);
+        throw new NotFoundException(`Không tìm thấy NPL với ID: ${id}`);
       }
       await this.assertPoProductBomWritable(
         manager,
@@ -1195,7 +1200,7 @@ export class BomsService {
       );
 
       if (!bom.currentRevisionId) {
-        throw new BadRequestException('BOM chưa có revision hiện tại.');
+        throw new BadRequestException('NPL chưa có revision hiện tại.');
       }
 
       const currentRev = await manager.findOne(BomRevision, {
@@ -1204,7 +1209,7 @@ export class BomsService {
       });
       if (!currentRev || currentRev.bomId !== bom.id) {
         throw new BadRequestException(
-          'Current revision không hợp lệ hoặc không thuộc BOM này.',
+          'Current revision không hợp lệ hoặc không thuộc NPL này.',
         );
       }
 
@@ -1241,7 +1246,7 @@ export class BomsService {
           },
         ],
         AuditEventType.UPDATED,
-        `Ngừng sử dụng BOM: ${cleanReason}`,
+        `Ngừng sử dụng NPL: ${cleanReason}`,
       );
     });
 
@@ -1293,7 +1298,7 @@ export class BomsService {
         lock: { mode: 'pessimistic_write' },
       });
       if (!bom) {
-        throw new NotFoundException(`Không tìm thấy BOM với ID: ${bomId}`);
+        throw new NotFoundException(`Không tìm thấy NPL với ID: ${bomId}`);
       }
       await this.assertPoProductBomWritable(
         manager,
@@ -1301,7 +1306,7 @@ export class BomsService {
       );
 
       if (!bom.currentRevisionId) {
-        throw new BadRequestException('BOM chưa có revision hiện tại.');
+        throw new BadRequestException('NPL chưa có revision hiện tại.');
       }
 
       const currentRev = await manager.findOne(BomRevision, {
@@ -1310,7 +1315,7 @@ export class BomsService {
       });
       if (!currentRev || currentRev.bomId !== bom.id) {
         throw new BadRequestException(
-          'Current revision không hợp lệ hoặc không thuộc BOM này.',
+          'Current revision không hợp lệ hoặc không thuộc NPL này.',
         );
       }
 
@@ -1335,7 +1340,7 @@ export class BomsService {
       });
       if (existingLine) {
         throw new ConflictException(
-          'Vật tư này đã tồn tại trong BOM revision hiện tại.',
+          'Vật tư này đã tồn tại trong NPL revision hiện tại.',
         );
       }
 
@@ -1466,7 +1471,7 @@ export class BomsService {
         lock: { mode: 'pessimistic_write' },
       });
       if (!bom) {
-        throw new NotFoundException(`Không tìm thấy BOM với ID: ${bomId}`);
+        throw new NotFoundException(`Không tìm thấy NPL với ID: ${bomId}`);
       }
       await this.assertPoProductBomWritable(
         manager,
@@ -1474,7 +1479,7 @@ export class BomsService {
       );
 
       if (!bom.currentRevisionId) {
-        throw new BadRequestException('BOM chưa có revision hiện tại.');
+        throw new BadRequestException('NPL chưa có revision hiện tại.');
       }
 
       const currentRev = await manager.findOne(BomRevision, {
@@ -1483,7 +1488,7 @@ export class BomsService {
       });
       if (!currentRev || currentRev.bomId !== bom.id) {
         throw new BadRequestException(
-          'Current revision không hợp lệ hoặc không thuộc BOM này.',
+          'Current revision không hợp lệ hoặc không thuộc NPL này.',
         );
       }
 
@@ -1502,7 +1507,7 @@ export class BomsService {
 
       if (line.revisionId !== currentRev.id) {
         throw new NotFoundException(
-          'Dòng vật tư không thuộc revision hiện tại của BOM này.',
+          'Dòng vật tư không thuộc revision hiện tại của NPL này.',
         );
       }
 
@@ -1529,7 +1534,7 @@ export class BomsService {
         });
         if (dup && dup.id !== line.id) {
           throw new ConflictException(
-            'Vật tư mới đã tồn tại trong BOM revision hiện tại.',
+            'Vật tư mới đã tồn tại trong NPL revision hiện tại.',
           );
         }
 
@@ -1623,7 +1628,7 @@ export class BomsService {
         lock: { mode: 'pessimistic_write' },
       });
       if (!bom) {
-        throw new NotFoundException(`Không tìm thấy BOM với ID: ${bomId}`);
+        throw new NotFoundException(`Không tìm thấy NPL với ID: ${bomId}`);
       }
       await this.assertPoProductBomWritable(
         manager,
@@ -1631,7 +1636,7 @@ export class BomsService {
       );
 
       if (!bom.currentRevisionId) {
-        throw new BadRequestException('BOM chưa có revision hiện tại.');
+        throw new BadRequestException('NPL chưa có revision hiện tại.');
       }
 
       const currentRev = await manager.findOne(BomRevision, {
@@ -1640,7 +1645,7 @@ export class BomsService {
       });
       if (!currentRev || currentRev.bomId !== bom.id) {
         throw new BadRequestException(
-          'Current revision không hợp lệ hoặc không thuộc BOM này.',
+          'Current revision không hợp lệ hoặc không thuộc NPL này.',
         );
       }
 
@@ -1659,7 +1664,7 @@ export class BomsService {
 
       if (line.revisionId !== currentRev.id) {
         throw new NotFoundException(
-          'Dòng vật tư không thuộc revision hiện tại của BOM này.',
+          'Dòng vật tư không thuộc revision hiện tại của NPL này.',
         );
       }
 
@@ -1725,7 +1730,7 @@ export class BomsService {
         lock: { mode: 'pessimistic_write' },
       });
       if (!bom) {
-        throw new NotFoundException(`Không tìm thấy BOM với ID: ${bomId}`);
+        throw new NotFoundException(`Không tìm thấy NPL với ID: ${bomId}`);
       }
       await this.assertPoProductBomWritable(
         manager,
@@ -1733,7 +1738,7 @@ export class BomsService {
       );
 
       if (!bom.currentRevisionId) {
-        throw new BadRequestException('BOM chưa có revision hiện tại.');
+        throw new BadRequestException('NPL chưa có revision hiện tại.');
       }
 
       const currentRev = await manager.findOne(BomRevision, {
@@ -1742,7 +1747,7 @@ export class BomsService {
       });
       if (!currentRev || currentRev.bomId !== bom.id) {
         throw new BadRequestException(
-          'Current revision không hợp lệ hoặc không thuộc BOM này.',
+          'Current revision không hợp lệ hoặc không thuộc NPL này.',
         );
       }
 
@@ -1876,11 +1881,11 @@ export class BomsService {
       lock: { mode: 'pessimistic_write' },
     });
     if (!bom) {
-      throw new NotFoundException(`Không tìm thấy BOM với ID: ${bomId}`);
+      throw new NotFoundException(`Không tìm thấy NPL với ID: ${bomId}`);
     }
     await this.assertPoProductBomWritable(manager, bom.purchaseOrderProductId);
     if (!bom.currentRevisionId) {
-      throw new BadRequestException('BOM chưa có revision hiện tại.');
+      throw new BadRequestException('NPL chưa có revision hiện tại.');
     }
     const rev = await manager.findOne(BomRevision, {
       where: { id: bom.currentRevisionId },
@@ -1888,7 +1893,7 @@ export class BomsService {
     });
     if (!rev || rev.bomId !== bom.id) {
       throw new BadRequestException(
-        'Current revision không hợp lệ hoặc không thuộc BOM này.',
+        'Current revision không hợp lệ hoặc không thuộc NPL này.',
       );
     }
     return { bom, rev };
@@ -2176,7 +2181,7 @@ export class BomsService {
         changed.map((item) => {
           const line = lineById.get(item.lineId) as BomLine;
           return {
-            fieldName: `${line.materialNameSnapshot}::unitCost`,
+            fieldName: `${line.materialNameSnapshot} [${line.id}]::unitCost`,
             oldValue: line.unitCost === null ? null : Number(line.unitCost),
             newValue: item.unitCost,
           };
@@ -2209,7 +2214,7 @@ export class BomsService {
         lock: { mode: 'pessimistic_write' },
       });
       if (!bom) {
-        throw new NotFoundException(`Không tìm thấy BOM với ID: ${bomId}`);
+        throw new NotFoundException(`Không tìm thấy NPL với ID: ${bomId}`);
       }
       assertCanPromoteRevision(roleCode, bom);
       await this.assertPoProductBomWritable(
@@ -2221,7 +2226,7 @@ export class BomsService {
         where: { id: revisionId },
       });
       if (!target || target.bomId !== bom.id) {
-        throw new NotFoundException('Không tìm thấy phiên bản này trong BOM.');
+        throw new NotFoundException('Không tìm thấy phiên bản này trong NPL.');
       }
       if (bom.currentRevisionId === target.id) {
         throw new BadRequestException(
@@ -2274,7 +2279,7 @@ export class BomsService {
       });
 
       if (!bom) {
-        throw new NotFoundException(`Không tìm thấy BOM với ID: ${id}`);
+        throw new NotFoundException(`Không tìm thấy NPL với ID: ${id}`);
       }
       await this.assertPoProductBomWritable(
         manager,
@@ -2282,7 +2287,7 @@ export class BomsService {
       );
 
       if (!bom.currentRevisionId) {
-        throw new BadRequestException('BOM chưa có revision hiện tại.');
+        throw new BadRequestException('NPL chưa có revision hiện tại.');
       }
 
       const currentRev = await manager.findOne(BomRevision, {
@@ -2292,7 +2297,7 @@ export class BomsService {
 
       if (!currentRev || currentRev.bomId !== bom.id) {
         throw new BadRequestException(
-          'Current revision không hợp lệ hoặc không thuộc BOM này.',
+          'Current revision không hợp lệ hoặc không thuộc NPL này.',
         );
       }
 
@@ -2361,7 +2366,7 @@ export class BomsService {
       });
 
       if (!bom) {
-        throw new NotFoundException(`Không tìm thấy BOM với ID: ${id}`);
+        throw new NotFoundException(`Không tìm thấy NPL với ID: ${id}`);
       }
       await this.assertPoProductBomWritable(
         manager,
@@ -2369,7 +2374,7 @@ export class BomsService {
       );
 
       if (!bom.currentRevisionId) {
-        throw new BadRequestException('BOM chưa có revision hiện tại.');
+        throw new BadRequestException('NPL chưa có revision hiện tại.');
       }
 
       const currentRev = await manager.findOne(BomRevision, {
@@ -2379,7 +2384,7 @@ export class BomsService {
 
       if (!currentRev || currentRev.bomId !== bom.id) {
         throw new BadRequestException(
-          'Current revision không hợp lệ hoặc không thuộc BOM này.',
+          'Current revision không hợp lệ hoặc không thuộc NPL này.',
         );
       }
 
@@ -2455,7 +2460,7 @@ export class BomsService {
       });
 
       if (!bom) {
-        throw new NotFoundException(`Không tìm thấy BOM với ID: ${id}`);
+        throw new NotFoundException(`Không tìm thấy NPL với ID: ${id}`);
       }
       await this.assertPoProductBomWritable(
         manager,
@@ -2463,7 +2468,7 @@ export class BomsService {
       );
 
       if (!bom.currentRevisionId) {
-        throw new BadRequestException('BOM chưa có revision hiện tại.');
+        throw new BadRequestException('NPL chưa có revision hiện tại.');
       }
 
       const currentRev = await manager.findOne(BomRevision, {
@@ -2473,7 +2478,7 @@ export class BomsService {
 
       if (!currentRev || currentRev.bomId !== bom.id) {
         throw new BadRequestException(
-          'Current revision không hợp lệ hoặc không thuộc BOM này.',
+          'Current revision không hợp lệ hoặc không thuộc NPL này.',
         );
       }
 
@@ -2549,7 +2554,7 @@ export class BomsService {
       });
 
       if (!bom) {
-        throw new NotFoundException(`Không tìm thấy BOM với ID: ${id}`);
+        throw new NotFoundException(`Không tìm thấy NPL với ID: ${id}`);
       }
       await this.assertPoProductBomWritable(
         manager,
@@ -2557,7 +2562,7 @@ export class BomsService {
       );
 
       if (!bom.currentRevisionId) {
-        throw new BadRequestException('BOM chưa có revision hiện tại.');
+        throw new BadRequestException('NPL chưa có revision hiện tại.');
       }
 
       const currentRev = await manager.findOne(BomRevision, {
@@ -2567,7 +2572,7 @@ export class BomsService {
 
       if (!currentRev || currentRev.bomId !== bom.id) {
         throw new BadRequestException(
-          'Current revision không hợp lệ hoặc không thuộc BOM này.',
+          'Current revision không hợp lệ hoặc không thuộc NPL này.',
         );
       }
 
@@ -2585,7 +2590,7 @@ export class BomsService {
       });
       if (existing) {
         throw new ConflictException(
-          `Revision số ${nextRevisionNo} đã tồn tại cho BOM này.`,
+          `Revision số ${nextRevisionNo} đã tồn tại cho NPL này.`,
         );
       }
 
@@ -2607,7 +2612,7 @@ export class BomsService {
       } catch (err: any) {
         if (err?.code === '23505') {
           throw new ConflictException(
-            `Revision số ${nextRevisionNo} đã tồn tại cho BOM này.`,
+            `Revision số ${nextRevisionNo} đã tồn tại cho NPL này.`,
           );
         }
         throw err;
@@ -2687,7 +2692,7 @@ export class BomsService {
   async getRevisions(bomId: string): Promise<RevisionListItemDto[]> {
     const bom = await this.bomRepository.findOne({ where: { id: bomId } });
     if (!bom) {
-      throw new NotFoundException(`Không tìm thấy BOM với ID: ${bomId}`);
+      throw new NotFoundException(`Không tìm thấy NPL với ID: ${bomId}`);
     }
 
     const revisions = await this.bomRevisionRepository.find({
@@ -2720,7 +2725,7 @@ export class BomsService {
   ): Promise<RevisionDetailDto> {
     const bom = await this.bomRepository.findOne({ where: { id: bomId } });
     if (!bom) {
-      throw new NotFoundException(`Không tìm thấy BOM với ID: ${bomId}`);
+      throw new NotFoundException(`Không tìm thấy NPL với ID: ${bomId}`);
     }
 
     const revision = await this.bomRevisionRepository.findOne({
@@ -2728,7 +2733,7 @@ export class BomsService {
     });
     if (!revision || revision.bomId !== bom.id) {
       throw new NotFoundException(
-        `Không tìm thấy revision với ID: ${revisionId} thuộc BOM này.`,
+        `Không tìm thấy revision với ID: ${revisionId} thuộc NPL này.`,
       );
     }
 
@@ -2769,7 +2774,7 @@ export class BomsService {
   ): Promise<BomRevisionStatusHistory[]> {
     const bom = await this.bomRepository.findOne({ where: { id: bomId } });
     if (!bom) {
-      throw new NotFoundException(`Không tìm thấy BOM với ID: ${bomId}`);
+      throw new NotFoundException(`Không tìm thấy NPL với ID: ${bomId}`);
     }
 
     const revision = await this.bomRevisionRepository.findOne({
@@ -2777,7 +2782,7 @@ export class BomsService {
     });
     if (!revision || revision.bomId !== bom.id) {
       throw new NotFoundException(
-        `Không tìm thấy revision với ID: ${revisionId} thuộc BOM này.`,
+        `Không tìm thấy revision với ID: ${revisionId} thuộc NPL này.`,
       );
     }
 
@@ -2800,7 +2805,7 @@ export class BomsService {
   ): Promise<RevisionDiffDto> {
     const bom = await this.bomRepository.findOne({ where: { id: bomId } });
     if (!bom) {
-      throw new NotFoundException(`Không tìm thấy BOM với ID: ${bomId}`);
+      throw new NotFoundException(`Không tìm thấy NPL với ID: ${bomId}`);
     }
 
     const targetRev = await this.bomRevisionRepository.findOne({
@@ -2808,7 +2813,7 @@ export class BomsService {
     });
     if (!targetRev || targetRev.bomId !== bom.id) {
       throw new NotFoundException(
-        `Không tìm thấy revision với ID: ${revisionId} thuộc BOM này.`,
+        `Không tìm thấy revision với ID: ${revisionId} thuộc NPL này.`,
       );
     }
 
@@ -2824,7 +2829,7 @@ export class BomsService {
     });
     if (!baseRev || baseRev.bomId !== bom.id) {
       throw new BadRequestException(
-        'Revision nguồn dùng để so sánh không tồn tại hoặc không thuộc BOM này.',
+        'Revision nguồn dùng để so sánh không tồn tại hoặc không thuộc NPL này.',
       );
     }
 
@@ -3043,7 +3048,7 @@ export class BomsService {
 
       if (!targetBom) {
         throw new NotFoundException(
-          `Không tìm thấy PO BOM với ID: ${targetBomId}`,
+          `Không tìm thấy PO NPL với ID: ${targetBomId}`,
         );
       }
       await this.assertPoProductBomWritable(
@@ -3053,7 +3058,7 @@ export class BomsService {
 
       if (targetBom.bomType !== BomType.PO) {
         throw new BadRequestException(
-          'Chỉ có thể sao chép Fit BOM vào PO BOM (target BOM type phải là po).',
+          'Chỉ có thể sao chép Fit NPL vào PO NPL (target NPL type phải là po).',
         );
       }
 
@@ -3062,13 +3067,13 @@ export class BomsService {
         (targetBom as any).status === 'discontinued'
       ) {
         throw new BadRequestException(
-          'Không thể sao chép dữ liệu vào BOM đã ngừng sử dụng.',
+          'Không thể sao chép dữ liệu vào NPL đã ngừng sử dụng.',
         );
       }
 
       if (!targetBom.currentRevisionId) {
         throw new BadRequestException(
-          'Target PO BOM chưa có revision hiện tại.',
+          'Target PO NPL chưa có revision hiện tại.',
         );
       }
 
@@ -3080,7 +3085,7 @@ export class BomsService {
 
       if (!targetRev || targetRev.bomId !== targetBom.id) {
         throw new BadRequestException(
-          'Target current revision không hợp lệ hoặc không thuộc BOM này.',
+          'Target current revision không hợp lệ hoặc không thuộc NPL này.',
         );
       }
 
@@ -3089,7 +3094,7 @@ export class BomsService {
         (targetRev.status as any) !== 'wait_nvkh'
       ) {
         throw new BadRequestException(
-          `Chỉ có thể sao chép khi revision hiện tại của PO BOM đang ở trạng thái wait_nvkh. Trạng thái hiện tại: ${targetRev.status}`,
+          `Chỉ có thể sao chép khi revision hiện tại của PO NPL đang ở trạng thái wait_nvkh. Trạng thái hiện tại: ${targetRev.status}`,
         );
       }
 
@@ -3105,7 +3110,7 @@ export class BomsService {
 
       if (existingLineCount > 0) {
         throw new ConflictException(
-          'Không thể sao chép đè: BOM hiện tại đã có dòng vật tư.',
+          'Không thể sao chép đè: NPL hiện tại đã có dòng vật tư.',
         );
       }
 
@@ -3128,14 +3133,14 @@ export class BomsService {
         });
         if (!sourceBom) {
           throw new NotFoundException(
-            `Không tìm thấy BOM nguồn cho revision ID: ${dto.sourceRevisionId}`,
+            `Không tìm thấy NPL nguồn cho revision ID: ${dto.sourceRevisionId}`,
           );
         }
 
         // Verify source Fit BOM belongs to the same style as target PO product
         if (!targetBom.purchaseOrderProductId) {
           throw new BadRequestException(
-            'Target PO BOM không liên kết với sản phẩm đơn hàng.',
+            'Target PO NPL không liên kết với sản phẩm đơn hàng.',
           );
         }
         const poProduct = await manager.findOne(PurchaseOrderProduct, {
@@ -3143,7 +3148,7 @@ export class BomsService {
         });
         if (!poProduct?.sourceStyleId) {
           throw new BadRequestException(
-            'Sản phẩm đơn hàng không liên kết với style gốc (sourceStyleId), không thể sao chép từ Fit BOM.',
+            'Sản phẩm đơn hàng không liên kết với style gốc (sourceStyleId), không thể sao chép từ Fit NPL.',
           );
         }
         if (
@@ -3151,14 +3156,14 @@ export class BomsService {
           sourceBom.styleId !== poProduct.sourceStyleId
         ) {
           throw new BadRequestException(
-            'Source revision thuộc Fit BOM của style khác, không khớp với style của sản phẩm đơn hàng này.',
+            'Source revision thuộc Fit NPL của style khác, không khớp với style của sản phẩm đơn hàng này.',
           );
         }
       } else {
         // Auto-resolve via target BOM's purchaseOrderProduct -> sourceStyleId
         if (!targetBom.purchaseOrderProductId) {
           throw new BadRequestException(
-            'Target PO BOM không liên kết với sản phẩm đơn hàng.',
+            'Target PO NPL không liên kết với sản phẩm đơn hàng.',
           );
         }
 
@@ -3181,13 +3186,13 @@ export class BomsService {
 
         if (!sourceBom) {
           throw new NotFoundException(
-            'Không tìm thấy Fit BOM tương ứng cho Style của sản phẩm đơn hàng.',
+            'Không tìm thấy Fit NPL tương ứng cho Style của sản phẩm đơn hàng.',
           );
         }
 
         if (!sourceBom.currentRevisionId) {
           throw new BadRequestException(
-            'Fit BOM tương ứng chưa có revision nào được tạo.',
+            'Fit NPL tương ứng chưa có revision nào được tạo.',
           );
         }
 
@@ -3197,7 +3202,7 @@ export class BomsService {
 
         if (!sourceRev || sourceRev.status !== BomRevisionStatus.CLOSED) {
           throw new BadRequestException(
-            'Fit BOM tương ứng chưa có revision nào đã đóng (closed).',
+            'Fit NPL tương ứng chưa có revision nào đã đóng (closed).',
           );
         }
       }

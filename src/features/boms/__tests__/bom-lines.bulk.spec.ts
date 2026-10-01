@@ -272,7 +272,36 @@ describe('BOM bulk line save, cost save and promote', () => {
       expect(res.rowVersion).toBe(5);
       const changes = audit.recordCostsSaved.mock.calls[0][3];
       expect(changes).toEqual([
-        { fieldName: 'Vật tư A::unitCost', oldValue: null, newValue: 1200 },
+        { fieldName: 'Vật tư A [A]::unitCost', oldValue: null, newValue: 1200 },
+      ]);
+    });
+
+    it('keeps distinct line identities when two material names match', async () => {
+      lines[0].materialNameSnapshot = 'Vải::chính';
+      lines[1].materialNameSnapshot = 'Vải::chính';
+      await service.saveCosts(
+        'bom-1',
+        {
+          items: [
+            { lineId: 'A', unitCost: 1200 },
+            { lineId: 'B', unitCost: 1300 },
+          ],
+        },
+        'u-acc',
+        'ACCOUNTING',
+      );
+
+      expect(audit.recordCostsSaved.mock.calls[0][3]).toEqual([
+        {
+          fieldName: 'Vải::chính [A]::unitCost',
+          oldValue: null,
+          newValue: 1200,
+        },
+        {
+          fieldName: 'Vải::chính [B]::unitCost',
+          oldValue: null,
+          newValue: 1300,
+        },
       ]);
     });
 

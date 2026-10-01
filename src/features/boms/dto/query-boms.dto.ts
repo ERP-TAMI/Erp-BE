@@ -14,7 +14,7 @@ import { BomType } from '../../../common/enums/database.enums';
 export class QueryBomsDto {
   @ApiPropertyOptional({
     enum: BomType,
-    description: 'Filter by BOM type (fit | po)',
+    description: 'Filter by NPL type (fit | po)',
   })
   @IsOptional()
   @IsEnum(BomType)
@@ -28,7 +28,7 @@ export class QueryBomsDto {
   @IsString()
   status?: string;
 
-  @ApiPropertyOptional({ description: 'Filter by exact BOM code' })
+  @ApiPropertyOptional({ description: 'Filter by exact NPL code' })
   @IsOptional()
   @IsString()
   bomCode?: string;
@@ -57,7 +57,7 @@ export class QueryBomsDto {
 
   @ApiPropertyOptional({
     description:
-      'Free-text search across BOM code, style code/name, PO code, product code/name, and color (matches any one)',
+      'Free-text search across NPL code, style code/name, PO code, product code/name, and color (matches any one)',
   })
   @IsOptional()
   @IsString()

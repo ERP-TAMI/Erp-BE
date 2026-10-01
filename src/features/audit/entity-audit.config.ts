@@ -275,7 +275,9 @@ export const ENTITY_AUDIT_CONFIG: Record<string, EntityAuditConfig> = {
 export function splitBulkFieldName(
   fieldName: string,
 ): { rowLabel: string; realFieldName: string } | null {
-  const sepIndex = fieldName.indexOf('::');
+  // Row labels may contain "::" (including legacy material names). The field
+  // suffix is always the final segment, so split from the right.
+  const sepIndex = fieldName.lastIndexOf('::');
   if (sepIndex === -1) return null;
   return {
     rowLabel: fieldName.slice(0, sepIndex),
@@ -329,6 +331,7 @@ const HISTORY_VIEW_PERMISSIONS: Record<string, string | null> = {
   PurchaseOrderProductDocument: null,
   Bom: null,
   BomRevision: null,
+  BomTimeline: null,
   User: 'system.users.manage',
 };
 

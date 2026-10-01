@@ -294,7 +294,7 @@ export class StylesService {
     });
     if (hasDraftBom) {
       throw new ConflictException(
-        'Không thể xoá mẫu Fit vì đang có Fit BOM đang soạn thảo (draft) chưa duyệt.',
+        'Không thể xoá mẫu Fit vì đang có Fit NPL đang soạn thảo (draft) chưa duyệt.',
       );
     }
 
@@ -410,7 +410,7 @@ export class StylesService {
     } catch (error) {
       if (this.isForeignKeyViolation(error)) {
         throw new ConflictException(
-          'Không thể xoá mẫu Fit vì đang được sử dụng bởi dữ liệu khác (BOM, tài liệu sản xuất...).',
+          'Không thể xoá mẫu Fit vì đang được sử dụng bởi dữ liệu khác (NPL, tài liệu sản xuất...).',
         );
       }
       throw error;

@@ -37,11 +37,11 @@ function forbidden(message: string): never {
 
 export function assertCanCreateBom(actorRole?: string | null): void {
   if (!actorRole) {
-    forbidden('Bạn không có quyền tạo BOM.');
+    forbidden('Bạn không có quyền tạo NPL.');
   }
   const roleUpper = actorRole.trim().toUpperCase();
   if (BOM_CREATOR_ROLES.has(roleUpper)) return;
-  forbidden('Bạn không có quyền tạo BOM.');
+  forbidden('Bạn không có quyền tạo NPL.');
 }
 
 export function assertCanUpdateBomHeader(
@@ -53,7 +53,7 @@ export function assertCanUpdateBomHeader(
   if (bom.discontinuedAt) {
     throw new BadRequestException({
       code: ErrorCode.BAD_REQUEST,
-      message: 'Không thể chỉnh sửa BOM đã ngừng sử dụng.',
+      message: 'Không thể chỉnh sửa NPL đã ngừng sử dụng.',
     });
   }
 
@@ -65,7 +65,7 @@ export function assertCanUpdateBomHeader(
     throw new BadRequestException({
       code: ErrorCode.BAD_REQUEST,
       message:
-        'Không thể chỉnh sửa thông tin BOM khi phiên bản hiện tại đã đóng (closed).',
+        'Không thể chỉnh sửa thông tin NPL khi phiên bản hiện tại đã đóng (closed).',
     });
   }
 
@@ -73,19 +73,19 @@ export function assertCanUpdateBomHeader(
     throw new BadRequestException({
       code: ErrorCode.BAD_REQUEST,
       message:
-        'Không thể chỉnh sửa thông tin BOM khi phiên bản đang ở bước chờ Giám Đốc duyệt (wait_sa_approve).',
+        'Không thể chỉnh sửa thông tin NPL khi phiên bản đang ở bước chờ Giám Đốc duyệt (wait_sa_approve).',
     });
   }
 
   if (!actorRole) {
-    forbidden('Bạn không có quyền cập nhật BOM.');
+    forbidden('Bạn không có quyền cập nhật NPL.');
   }
 
   const roleUpper = actorRole.trim().toUpperCase();
 
   if (dto.deadline !== undefined) {
     if (!DEADLINE_EDIT_ROLES.has(roleUpper)) {
-      forbidden('Bạn không có quyền cập nhật thời hạn BOM.');
+      forbidden('Bạn không có quyền cập nhật thời hạn NPL.');
     }
   }
 
@@ -109,13 +109,13 @@ export function assertCanDiscontinueBom(
   if (bom.discontinuedAt) {
     throw new BadRequestException({
       code: ErrorCode.BAD_REQUEST,
-      message: 'BOM này đã ở trạng thái ngừng sử dụng.',
+      message: 'NPL này đã ở trạng thái ngừng sử dụng.',
     });
   }
 
   if (!actorRole) {
     forbidden(
-      'Chỉ Trưởng phòng Kế hoạch hoặc Quản trị hệ thống mới có quyền ngừng sử dụng BOM.',
+      'Chỉ Trưởng phòng Kế hoạch hoặc Quản trị hệ thống mới có quyền ngừng sử dụng NPL.',
     );
   }
 
@@ -123,7 +123,7 @@ export function assertCanDiscontinueBom(
   if (BOM_DISCONTINUE_ROLES.has(roleUpper)) return;
 
   forbidden(
-    'Chỉ Trưởng phòng Kế hoạch hoặc Quản trị hệ thống mới có quyền ngừng sử dụng BOM.',
+    'Chỉ Trưởng phòng Kế hoạch hoặc Quản trị hệ thống mới có quyền ngừng sử dụng NPL.',
   );
 }
 
@@ -146,7 +146,7 @@ function assertBomNotDiscontinuedForLine(bom: Bom): void {
   if (bom.discontinuedAt || (bom as any).status === 'discontinued') {
     throw new BadRequestException({
       code: ErrorCode.BAD_REQUEST,
-      message: 'Không thể chỉnh sửa dòng vật tư của BOM đã ngừng sử dụng.',
+      message: 'Không thể chỉnh sửa dòng vật tư của NPL đã ngừng sử dụng.',
     });
   }
 }
@@ -441,7 +441,7 @@ export const FORWARD_TRANSITIONS: Partial<
 > = {
   [BomRevisionStatus.WAIT_NVKH]: {
     nextStatus: BomRevisionStatus.WAIT_RD,
-    allowedRoles: new Set([UserRoleCode.NVKH]),
+    allowedRoles: new Set([UserRoleCode.NVKH, UserRoleCode.TPKH]),
   },
   [BomRevisionStatus.WAIT_RD]: {
     nextStatus: BomRevisionStatus.WAIT_TPKH_CONFIRM,
@@ -497,7 +497,7 @@ export function assertCanForwardBom(
   if (bom.discontinuedAt || (bom as any).status === 'discontinued') {
     throw new BadRequestException({
       code: ErrorCode.BAD_REQUEST,
-      message: 'Không thể chuyển trạng thái BOM đã ngừng sử dụng.',
+      message: 'Không thể chuyển trạng thái NPL đã ngừng sử dụng.',
     });
   }
 
@@ -515,7 +515,7 @@ export function assertCanForwardBom(
     throw new BadRequestException({
       code: ErrorCode.BAD_REQUEST,
       message:
-        'Bước wait_sa_approve không thể forward. Vui lòng sử dụng API approve để phê duyệt và đóng BOM.',
+        'Bước wait_sa_approve không thể forward. Vui lòng sử dụng API approve để phê duyệt và đóng NPL.',
     });
   }
 
@@ -528,14 +528,14 @@ export function assertCanForwardBom(
 
   if (!actorRole) {
     forbidden(
-      `Vai trò của bạn không có quyền forward BOM tại trạng thái: ${currentRev.status}`,
+      `Vai trò của bạn không có quyền forward NPL tại trạng thái: ${currentRev.status}`,
     );
   }
 
   const roleUpper = actorRole.trim().toUpperCase();
   if (!transitionRule.allowedRoles.has(roleUpper)) {
     forbidden(
-      `Vai trò của bạn không có quyền forward BOM tại trạng thái: ${currentRev.status}`,
+      `Vai trò của bạn không có quyền forward NPL tại trạng thái: ${currentRev.status}`,
     );
   }
 
@@ -550,7 +550,7 @@ export function assertRevisionDataReadyForForward(
     throw new BadRequestException({
       code: ErrorCode.BAD_REQUEST,
       message:
-        'BOM revision phải có ít nhất một dòng vật tư trước khi chuyển nấc.',
+        'NPL revision phải có ít nhất một dòng vật tư trước khi chuyển nấc.',
     });
   }
 
@@ -615,7 +615,7 @@ export function assertRevisionDataReadyForApprove(lines: BomLine[]): void {
     throw new BadRequestException({
       code: ErrorCode.BAD_REQUEST,
       message:
-        'BOM revision phải có ít nhất một dòng vật tư trước khi phê duyệt.',
+        'NPL revision phải có ít nhất một dòng vật tư trước khi phê duyệt.',
     });
   }
 
@@ -671,7 +671,7 @@ export function assertCanRejectBom(
   if (bom.discontinuedAt || (bom as any).status === 'discontinued') {
     throw new BadRequestException({
       code: ErrorCode.BAD_REQUEST,
-      message: 'Không thể từ chối / trả lại BOM đã ngừng sử dụng.',
+      message: 'Không thể từ chối / trả lại NPL đã ngừng sử dụng.',
     });
   }
 
@@ -707,14 +707,14 @@ export function assertCanRejectBom(
 
   if (!actorRole) {
     forbidden(
-      `Vai trò của bạn không có quyền trả lại BOM tại trạng thái: ${currentRev.status}`,
+      `Vai trò của bạn không có quyền trả lại NPL tại trạng thái: ${currentRev.status}`,
     );
   }
 
   const roleUpper = actorRole.trim().toUpperCase();
   if (!rejectRule.allowedRoles.has(roleUpper)) {
     forbidden(
-      `Vai trò của bạn không có quyền trả lại BOM tại trạng thái: ${currentRev.status}`,
+      `Vai trò của bạn không có quyền trả lại NPL tại trạng thái: ${currentRev.status}`,
     );
   }
 
@@ -735,7 +735,7 @@ export function assertCanApproveBom(
   if (bom.discontinuedAt || (bom as any).status === 'discontinued') {
     throw new BadRequestException({
       code: ErrorCode.BAD_REQUEST,
-      message: 'Không thể phê duyệt BOM đã ngừng sử dụng.',
+      message: 'Không thể phê duyệt NPL đã ngừng sử dụng.',
     });
   }
 
@@ -751,17 +751,17 @@ export function assertCanApproveBom(
 
   if (currentRev.status !== BomRevisionStatus.WAIT_SA_APPROVE) {
     throw new BadRequestException(
-      `Chỉ có thể phê duyệt đóng BOM khi đang ở trạng thái wait_sa_approve. Trạng thái hiện tại: ${currentRev.status}`,
+      `Chỉ có thể phê duyệt đóng NPL khi đang ở trạng thái wait_sa_approve. Trạng thái hiện tại: ${currentRev.status}`,
     );
   }
 
   if (!actorRole) {
-    forbidden('Chỉ Quản trị hệ thống (SA) mới có quyền phê duyệt đóng BOM.');
+    forbidden('Chỉ Quản trị hệ thống (SA) mới có quyền phê duyệt đóng NPL.');
   }
 
   const roleUpper = actorRole.trim().toUpperCase();
   if (roleUpper !== UserRoleCode.SA) {
-    forbidden('Chỉ Quản trị hệ thống (SA) mới có quyền phê duyệt đóng BOM.');
+    forbidden('Chỉ Quản trị hệ thống (SA) mới có quyền phê duyệt đóng NPL.');
   }
 }
 
@@ -783,12 +783,12 @@ export function assertCanCreateRevision(
   if (bom.discontinuedAt || (bom as any).status === 'discontinued') {
     throw new BadRequestException({
       code: ErrorCode.BAD_REQUEST,
-      message: 'Không thể tạo revision cho BOM đã ngừng sử dụng.',
+      message: 'Không thể tạo revision cho NPL đã ngừng sử dụng.',
     });
   }
 
   if (!currentRev) {
-    throw new BadRequestException('BOM chưa có revision hiện tại.');
+    throw new BadRequestException('NPL chưa có revision hiện tại.');
   }
 
   if (
@@ -802,7 +802,7 @@ export function assertCanCreateRevision(
   }
 
   if (!actorRole) {
-    forbidden('Bạn không có quyền tạo revision mới cho BOM.');
+    forbidden('Bạn không có quyền tạo revision mới cho NPL.');
   }
 
   const roleUpper = actorRole.trim().toUpperCase();
@@ -820,7 +820,7 @@ export function assertCanPromoteRevision(
   if (bom.discontinuedAt || (bom as any).status === 'discontinued') {
     throw new BadRequestException({
       code: ErrorCode.BAD_REQUEST,
-      message: 'Không thể đổi phiên bản hiện hành của BOM đã ngừng sử dụng.',
+      message: 'Không thể đổi phiên bản hiện hành của NPL đã ngừng sử dụng.',
     });
   }
 
@@ -854,7 +854,7 @@ export function assertCanCopyFitToPo(
   ) {
     throw new BadRequestException({
       code: ErrorCode.BAD_REQUEST,
-      message: 'Không thể sao chép dữ liệu vào BOM đã ngừng sử dụng.',
+      message: 'Không thể sao chép dữ liệu vào NPL đã ngừng sử dụng.',
     });
   }
 
@@ -862,12 +862,12 @@ export function assertCanCopyFitToPo(
     throw new BadRequestException({
       code: ErrorCode.BAD_REQUEST,
       message:
-        'Chỉ có thể sao chép Fit BOM vào PO BOM (target BOM phải có loại là po).',
+        'Chỉ có thể sao chép Fit NPL vào PO NPL (target NPL phải có loại là po).',
     });
   }
 
   if (!targetRev) {
-    throw new BadRequestException('Target PO BOM chưa có revision hiện tại.');
+    throw new BadRequestException('Target PO NPL chưa có revision hiện tại.');
   }
 
   if (
@@ -876,21 +876,21 @@ export function assertCanCopyFitToPo(
   ) {
     throw new BadRequestException({
       code: ErrorCode.BAD_REQUEST,
-      message: `Chỉ có thể sao chép khi revision hiện tại của PO BOM đang ở trạng thái wait_nvkh. Trạng thái hiện tại: ${targetRev.status}`,
+      message: `Chỉ có thể sao chép khi revision hiện tại của PO NPL đang ở trạng thái wait_nvkh. Trạng thái hiện tại: ${targetRev.status}`,
     });
   }
 
   if (sourceBom.bomType !== BomType.FIT) {
     throw new BadRequestException({
       code: ErrorCode.BAD_REQUEST,
-      message: 'BOM nguồn phải là Fit BOM (source BOM type phải là fit).',
+      message: 'NPL nguồn phải là Fit NPL (source NPL type phải là fit).',
     });
   }
 
   if (sourceRev.bomId !== sourceBom.id) {
     throw new BadRequestException({
       code: ErrorCode.BAD_REQUEST,
-      message: 'Source revision không thuộc Fit BOM nguồn.',
+      message: 'Source revision không thuộc Fit NPL nguồn.',
     });
   }
 
@@ -900,18 +900,18 @@ export function assertCanCopyFitToPo(
   ) {
     throw new BadRequestException({
       code: ErrorCode.BAD_REQUEST,
-      message: `Chỉ có thể sao chép từ Fit BOM revision đã đóng (closed). Trạng thái hiện tại: ${sourceRev.status}`,
+      message: `Chỉ có thể sao chép từ Fit NPL revision đã đóng (closed). Trạng thái hiện tại: ${sourceRev.status}`,
     });
   }
 
   if (!actorRole) {
-    forbidden('Bạn không có quyền sao chép Fit BOM sang PO BOM.');
+    forbidden('Bạn không có quyền sao chép Fit NPL sang PO NPL.');
   }
 
   const roleUpper = actorRole.trim().toUpperCase();
   if (!COPY_FIT_TO_PO_ROLES.has(roleUpper)) {
     forbidden(
-      'Chỉ Nhân viên Kế hoạch (NVKH), Trưởng phòng Kế hoạch (TPKH) hoặc Quản trị hệ thống (SA) mới có quyền sao chép Fit BOM sang PO BOM.',
+      'Chỉ Nhân viên Kế hoạch (NVKH), Trưởng phòng Kế hoạch (TPKH) hoặc Quản trị hệ thống (SA) mới có quyền sao chép Fit NPL sang PO NPL.',
     );
   }
 }

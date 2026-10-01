@@ -134,10 +134,12 @@ describe('BOM của sản phẩm PO đóng băng khi sản phẩm hoặc PO đã
 
   it.each([
     ['sản phẩm đã khóa', 'product', 'Sản phẩm đã bị khóa'],
+    ['sản phẩm đã hủy', 'product-cancelled', 'Sản phẩm đã hủy'],
     ['PO đã khóa', 'po-closed', 'Đơn hàng PO đã khóa'],
     ['PO đã hủy', 'po-cancelled', 'Đơn hàng PO đã hủy'],
   ])('%s: mọi thao tác ghi BOM bị chặn', async (_label, lock, msg) => {
     if (lock === 'product') productStatus = ProductStatus.CLOSED;
+    if (lock === 'product-cancelled') productStatus = ProductStatus.CANCELLED;
     if (lock === 'po-closed') poStatus = PoStatus.CLOSED;
     if (lock === 'po-cancelled') poStatus = PoStatus.CANCELLED;
 

@@ -16,7 +16,7 @@ export class RejectBomDto extends ExpectedRowVersionDto {
     message:
       'targetStatus phải là một trong các trạng thái: wait_nvkh, wait_rd, wait_tpkh_confirm, wait_accounting',
   })
-  @IsNotEmpty({ message: 'targetStatus là bắt buộc khi từ chối / trả lại BOM' })
+  @IsNotEmpty({ message: 'targetStatus là bắt buộc khi từ chối / trả lại NPL' })
   targetStatus: BomRevisionStatus;
 
   @ApiProperty({

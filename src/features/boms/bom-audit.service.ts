@@ -166,7 +166,7 @@ export class BomAuditService {
       actorRole: actor.roleCode,
       targetLabel: LINES_LABEL,
       eventType: AuditEventType.COPIED,
-      reason: `Sao chép ${lineCount} dòng từ Fit BOM (phiên bản ${sourceRevisionNo})`,
+      reason: `Sao chép ${lineCount} dòng từ Fit NPL (phiên bản ${sourceRevisionNo})`,
       changes: [],
     });
   }
@@ -179,7 +179,7 @@ export class BomAuditService {
     overwroteNewerVersion: boolean,
   ): Promise<void> {
     if (!actor || changes.length === 0) return;
-    const rows = new Set(changes.map((change) => change.fieldName)).size;
+    const rows = changes.length;
     const reason = `Cập nhật đơn giá ${rows} dòng${
       overwroteNewerVersion ? ' (lưu đè lên bản mới hơn của người khác)' : ''
     }`;

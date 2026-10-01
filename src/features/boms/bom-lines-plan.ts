@@ -57,7 +57,7 @@ export function planLinesSave(
       if (!line) {
         rowErrors.push({
           index,
-          message: 'Dòng không thuộc phiên bản hiện hành của BOM này.',
+          message: 'Dòng không thuộc phiên bản hiện hành của NPL này.',
         });
         return;
       }
