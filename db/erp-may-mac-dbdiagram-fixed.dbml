@@ -213,6 +213,9 @@ Table document_versions {
   sha256 char(64)
   status upload_status [not null, default: `'pending'`]
   change_reason text
+  evidence_storage_key varchar(1000)
+  evidence_file_name varchar(500)
+  evidence_mime_type varchar(255)
   uploaded_by uuid
   uploaded_at timestamptz [not null, default: `now()`]
   indexes {

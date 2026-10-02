@@ -50,6 +50,7 @@ import {
   ConfirmProductSampleImageDto,
   PresignPoDocumentDto,
   ConfirmPoDocumentDto,
+  ConfirmPoDocumentVersionDto,
 } from './dto';
 import { PurchaseOrder } from './entities/PurchaseOrder.entity';
 import { PurchaseOrderProduct } from './entities/PurchaseOrderProduct.entity';
@@ -597,7 +598,7 @@ export class PurchaseOrdersController {
     @Param('id', ParseUUIDPipe) id: string,
     @Param('productId', ParseUUIDPipe) productId: string,
     @Param('documentId', ParseUUIDPipe) documentId: string,
-    @Body() dto: ConfirmPoDocumentDto,
+    @Body() dto: ConfirmPoDocumentVersionDto,
     @Req() req?: any,
   ) {
     const userId = req?.user?.id || req?.user?.sub;
@@ -727,6 +728,26 @@ export class PurchaseOrdersController {
   ) {
     const userId = req?.user?.id || req?.user?.sub;
     return this.service.confirmDocument(id, userId, dto, auditActorFrom(req));
+  }
+
+  @Post(':id/documents/:documentId/versions/confirm')
+  @UseGuards(PurchaseOrderWriteAccessGuard)
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: 'Thêm phiên bản cho tài liệu dùng chung của PO' })
+  async confirmPoDocumentVersion(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('documentId', ParseUUIDPipe) documentId: string,
+    @Body() dto: ConfirmPoDocumentVersionDto,
+    @Req() req?: any,
+  ) {
+    const userId = req?.user?.id || req?.user?.sub;
+    return this.service.confirmPoDocumentVersion(
+      id,
+      documentId,
+      userId,
+      dto,
+      auditActorFrom(req),
+    );
   }
 
   @Get(':id/documents/:documentId/preview')
