@@ -61,6 +61,23 @@ function shiftDate(date: string, days: number): string {
   return shifted.toISOString().slice(0, 10);
 }
 
+function previousYearComparisonEnd(today: string): string {
+  const year = Number(today.slice(0, 4));
+  const currentYearStart = `${year}-01-01`;
+  const previousYearStart = `${year - 1}-01-01`;
+  const elapsedDays =
+    (Date.parse(`${shiftDate(today, 1)}T00:00:00.000Z`) -
+      Date.parse(`${currentYearStart}T00:00:00.000Z`)) /
+    (24 * 60 * 60 * 1000);
+  const shiftedComparisonEnd = shiftDate(previousYearStart, elapsedDays);
+  const comparisonEndExclusive =
+    shiftedComparisonEnd < currentYearStart
+      ? shiftedComparisonEnd
+      : currentYearStart;
+
+  return shiftDate(comparisonEndExclusive, -1);
+}
+
 function nextMonthStart(month: string): string {
   const [year, monthNumber] = month.split('-').map(Number);
   return new Date(Date.UTC(year, monthNumber, 1)).toISOString().slice(0, 10);
@@ -213,8 +230,13 @@ describe('Management dashboard API with PostgreSQL (e2e)', () => {
         ).toEqual(rangeSummary.trend.map(({ period }) => period));
       });
 
+    const [{ today }] = (await dataSource.query(
+      `SELECT to_char((CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Ho_Chi_Minh')::date, 'YYYY-MM-DD') AS today`,
+    )) as Array<{ today: string }>;
+    const currentYear = today.slice(0, 4);
+
     await request(app.getHttpServer())
-      .get('/dashboard/summary?periodType=year&year=2026')
+      .get(`/dashboard/summary?periodType=year&year=${currentYear}`)
       .expect(200)
       .expect(({ body }) => {
         const yearSummary = body as SummaryResponse;
@@ -222,9 +244,9 @@ describe('Management dashboard API with PostgreSQL (e2e)', () => {
           periodType: 'year',
           trendGranularity: 'month',
           comparison: {
-            periodStart: '2025-01-01',
-            periodEnd: '2025-10-02',
-            currentEnd: '2026-10-02',
+            periodStart: `${Number(currentYear) - 1}-01-01`,
+            periodEnd: previousYearComparisonEnd(today),
+            currentEnd: today,
           },
         });
         expect(
