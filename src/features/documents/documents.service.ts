@@ -6,7 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, IsNull, Repository } from 'typeorm';
+import { DataSource, In, IsNull, Repository } from 'typeorm';
 import { randomUUID } from 'crypto';
 import { extname } from 'path';
 import { Document } from './entities/Document.entity';
@@ -137,6 +137,11 @@ export class DocumentsService {
         'folderDocument.folderId = folder.id',
       )
       .leftJoin(
+        Document,
+        'document',
+        'document.id = folderDocument.documentId AND document.archivedAt IS NULL',
+      )
+      .leftJoin(
         DocumentFolder,
         'parentFolder',
         'parentFolder.id = folder.parentId',
@@ -151,7 +156,7 @@ export class DocumentsService {
       .addSelect('folder.folderName', 'folderName')
       .addSelect('parentFolder.folderName', 'parentFolderName')
       .addSelect('folder.createdAt', 'createdAt')
-      .addSelect('COUNT(DISTINCT folderDocument.documentId)', 'documentCount')
+      .addSelect('COUNT(DISTINCT document.id)', 'documentCount')
       .addSelect('COUNT(DISTINCT childFolder.id)', 'childCount')
       .groupBy('folder.id')
       .addGroupBy('parentFolder.folderName')
@@ -237,18 +242,79 @@ export class DocumentsService {
     return this.folderRepo.save(folder);
   }
 
-  async deleteFolder(folderId: string): Promise<void> {
-    const folder = await this.assertFolderExists(folderId);
-    const [childFolders, linkedDocuments] = await Promise.all([
-      this.folderRepo.count({ where: { parentId: folderId } }),
-      this.folderDocumentRepo.count({ where: { folderId } }),
-    ]);
-    if (childFolders > 0 || linkedDocuments > 0) {
-      throw new ConflictException(
-        'Chỉ xóa được thư mục rỗng. Hãy chuyển tài liệu và thư mục con trước.',
+  async deleteFolder(folderId: string, actor?: AuditActor): Promise<void> {
+    await this.dataSource.transaction(async (manager) => {
+      const folderRepo = manager.getRepository(DocumentFolder);
+      const folderDocumentRepo = manager.getRepository(FolderDocument);
+      const documentRepo = manager.getRepository(Document);
+      const folder = await folderRepo.findOne({
+        where: { id: folderId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!folder)
+        throw new NotFoundException('Không tìm thấy thư mục tài liệu.');
+
+      const childFolders = await folderRepo.count({
+        where: { parentId: folderId },
+      });
+      if (childFolders > 0) {
+        throw new ConflictException(
+          'Không thể xóa thư mục vì đang chứa thư mục con. Hãy xóa hoặc di chuyển thư mục con trước.',
+        );
+      }
+
+      const folderLinks = await folderDocumentRepo.find({
+        where: { folderId },
+      });
+      const documentIds = [
+        ...new Set(folderLinks.map((link) => link.documentId)),
+      ];
+      const allLinks = documentIds.length
+        ? await folderDocumentRepo.find({
+            where: { documentId: In(documentIds) },
+          })
+        : [];
+      const linkedElsewhere = new Set(
+        allLinks
+          .filter((link) => link.folderId !== folderId)
+          .map((link) => link.documentId),
       );
-    }
-    await this.folderRepo.remove(folder);
+      const documentIdsToArchive = documentIds.filter(
+        (documentId) => !linkedElsewhere.has(documentId),
+      );
+      const documentsToArchive = documentIdsToArchive.length
+        ? await documentRepo.find({
+            where: { id: In(documentIdsToArchive), archivedAt: IsNull() },
+          })
+        : [];
+
+      await folderDocumentRepo.delete({ folderId });
+
+      const archivedAt = new Date();
+      for (const document of documentsToArchive) {
+        document.archivedAt = archivedAt;
+        await documentRepo.save(document);
+        if (actor) {
+          await this.auditService.recordEntityChange(manager, {
+            aggregateType: AGGREGATE_TYPE,
+            aggregateId: document.id,
+            actorId: actor.id,
+            actorRole: actor.roleCode,
+            targetLabel: document.title,
+            eventType: AuditEventType.STATUS_CHANGED,
+            changes: [
+              {
+                fieldName: 'archivedAt',
+                oldValue: null,
+                newValue: archivedAt.toISOString(),
+              },
+            ],
+          });
+        }
+      }
+
+      await folderRepo.remove(folder);
+    });
   }
 
   async list(query: DocumentLibraryQueryDto): Promise<DocumentLibraryPage> {

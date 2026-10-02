@@ -77,11 +77,14 @@ export class DocumentsController {
   @Delete('folders/:folderId')
   @Permission(MANAGE_PERMISSION)
   @HttpCode(HttpStatus.NO_CONTENT)
-  @ApiOperation({ summary: 'Xóa thư mục rỗng trong kho' })
+  @ApiOperation({
+    summary: 'Xóa thư mục và lưu trữ tài liệu chỉ thuộc thư mục đó',
+  })
   async deleteFolder(
     @Param('folderId', ParseUUIDPipe) folderId: string,
+    @Req() req?: any,
   ): Promise<void> {
-    await this.service.deleteFolder(folderId);
+    await this.service.deleteFolder(folderId, getActor(req));
   }
 
   @Post('upload/presign')

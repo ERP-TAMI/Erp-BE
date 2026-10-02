@@ -28,14 +28,32 @@ describe('DocumentsService', () => {
     createQueryBuilder: jest.Mock;
     findOne: jest.Mock;
     save: jest.Mock;
+    count: jest.Mock;
   };
   let folderQuery: Record<string, jest.Mock>;
+  let folderDocumentRepo: {
+    find: jest.Mock;
+    count: jest.Mock;
+    save: jest.Mock;
+    delete: jest.Mock;
+  };
   let storage: jest.Mocked<StorageService>;
   let managerDocumentRepo: {
     findOne: jest.Mock;
+    find: jest.Mock;
     save: jest.Mock;
   };
+  let managerFolderRepo: {
+    findOne: jest.Mock;
+    count: jest.Mock;
+    remove: jest.Mock;
+  };
+  let managerFolderDocumentRepo: {
+    find: jest.Mock;
+    delete: jest.Mock;
+  };
   let dataSource: { transaction: jest.Mock };
+  let auditService: { recordEntityChange: jest.Mock };
 
   beforeEach(async () => {
     documentQuery = {};
@@ -101,6 +119,13 @@ describe('DocumentsService', () => {
       createQueryBuilder: jest.fn().mockReturnValue(folderQuery),
       findOne: jest.fn(),
       save: jest.fn((value) => value),
+      count: jest.fn().mockResolvedValue(0),
+    };
+    folderDocumentRepo = {
+      find: jest.fn().mockResolvedValue([]),
+      count: jest.fn().mockResolvedValue(0),
+      save: jest.fn(),
+      delete: jest.fn(),
     };
     storage = {
       getPresignedPutUrl: jest.fn().mockResolvedValue('https://s3.example/put'),
@@ -121,12 +146,31 @@ describe('DocumentsService', () => {
     documentRepo.findOne.mockResolvedValue(document);
     managerDocumentRepo = {
       findOne: jest.fn().mockResolvedValue(document),
+      find: jest.fn().mockResolvedValue([document]),
       save: jest.fn((value) => value),
+    };
+    managerFolderRepo = {
+      findOne: jest.fn().mockResolvedValue({
+        id: 'folder-1',
+        folderName: 'Mẫu hè',
+      }),
+      count: jest.fn().mockResolvedValue(0),
+      remove: jest.fn(),
+    };
+    managerFolderDocumentRepo = {
+      find: jest
+        .fn()
+        .mockResolvedValue([
+          { folderId: 'folder-1', documentId: 'document-1' },
+        ]),
+      delete: jest.fn(),
     };
     const transactionManager = {
       getRepository: (entity: unknown) => {
         if (entity === Document) return managerDocumentRepo;
         if (entity === DocumentVersion) return versionRepo;
+        if (entity === DocumentFolder) return managerFolderRepo;
+        if (entity === FolderDocument) return managerFolderDocumentRepo;
         throw new Error(
           `Unexpected entity ${(entity as { name?: string }).name}`,
         );
@@ -137,6 +181,7 @@ describe('DocumentsService', () => {
         callback(transactionManager),
       ),
     };
+    auditService = { recordEntityChange: jest.fn() };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -144,11 +189,14 @@ describe('DocumentsService', () => {
         { provide: getRepositoryToken(Document), useValue: documentRepo },
         { provide: getRepositoryToken(DocumentVersion), useValue: versionRepo },
         { provide: getRepositoryToken(DocumentFolder), useValue: folderRepo },
-        { provide: getRepositoryToken(FolderDocument), useValue: {} },
+        {
+          provide: getRepositoryToken(FolderDocument),
+          useValue: folderDocumentRepo,
+        },
         { provide: getRepositoryToken(StyleDocument), useValue: {} },
         { provide: STORAGE_SERVICE, useValue: storage },
         { provide: DataSource, useValue: dataSource },
-        { provide: AuditService, useValue: { recordEntityChange: jest.fn() } },
+        { provide: AuditService, useValue: auditService },
       ],
     }).compile();
 
@@ -159,6 +207,11 @@ describe('DocumentsService', () => {
     const result = await service.listFolders();
 
     expect(folderRepo.createQueryBuilder).toHaveBeenCalledWith('folder');
+    expect(folderQuery.leftJoin).toHaveBeenCalledWith(
+      Document,
+      'document',
+      'document.id = folderDocument.documentId AND document.archivedAt IS NULL',
+    );
     expect(folderQuery.andWhere).toHaveBeenCalledWith(
       'folder.parentId IS NULL',
     );
@@ -188,6 +241,59 @@ describe('DocumentsService', () => {
       'Không thể di chuyển thư mục vào bên trong cây con của chính nó.',
     );
     expect(folderRepo.save).not.toHaveBeenCalled();
+  });
+
+  it('deletes a folder and archives documents that are only linked to it', async () => {
+    const document = {
+      id: 'document-1',
+      title: 'spec.pdf',
+      archivedAt: null,
+    };
+    managerDocumentRepo.find.mockResolvedValue([document]);
+
+    await service.deleteFolder('folder-1', {
+      id: 'user-1',
+      roleCode: 'MANAGER',
+    });
+
+    expect(managerFolderDocumentRepo.delete).toHaveBeenCalledWith({
+      folderId: 'folder-1',
+    });
+    expect(document.archivedAt).toBeInstanceOf(Date);
+    expect(managerDocumentRepo.save).toHaveBeenCalledWith(document);
+    expect(managerFolderRepo.remove).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'folder-1' }),
+    );
+    expect(auditService.recordEntityChange).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ aggregateId: 'document-1' }),
+    );
+  });
+
+  it('keeps a document active when it is still linked to another folder', async () => {
+    managerFolderDocumentRepo.find.mockResolvedValue([
+      { folderId: 'folder-1', documentId: 'document-1' },
+      { folderId: 'folder-2', documentId: 'document-1' },
+    ]);
+
+    await service.deleteFolder('folder-1');
+
+    expect(managerFolderDocumentRepo.delete).toHaveBeenCalledWith({
+      folderId: 'folder-1',
+    });
+    expect(managerDocumentRepo.find).not.toHaveBeenCalled();
+    expect(managerDocumentRepo.save).not.toHaveBeenCalled();
+    expect(managerFolderRepo.remove).toHaveBeenCalled();
+  });
+
+  it('does not delete a folder that still has child folders', async () => {
+    managerFolderRepo.count.mockResolvedValue(1);
+
+    await expect(service.deleteFolder('folder-1')).rejects.toThrow(
+      'Không thể xóa thư mục vì đang chứa thư mục con.',
+    );
+    expect(managerFolderDocumentRepo.delete).not.toHaveBeenCalled();
+    expect(managerFolderRepo.remove).not.toHaveBeenCalled();
   });
 
   it('lists active documents by default and can filter archived documents', async () => {
