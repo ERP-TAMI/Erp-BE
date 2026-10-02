@@ -25,6 +25,12 @@ type SummaryResponse = {
   pendingBomCount: number;
   activeEmployees: number;
   trend: Array<{ period: string; received: number; completed: number }>;
+  comparison: {
+    periodStart: string;
+    periodEnd: string;
+    currentEnd: string;
+    trend: Array<{ period: string; received: number | null }>;
+  } | null;
   purchaseOrderStatuses: Array<{ status: string; count: number }>;
   bomRevisionStatuses: Array<{ status: string; count: number }>;
   topCustomers: Array<{ customerName: string; count: number }>;
@@ -132,12 +138,20 @@ describe('Management dashboard API with PostgreSQL (e2e)', () => {
     return response.body as SummaryResponse;
   }
 
+  async function getYearSummary(year: string): Promise<SummaryResponse> {
+    const response = await request(app.getHttpServer())
+      .get(`/dashboard/summary?periodType=year&year=${year}`)
+      .expect(200);
+    return response.body as SummaryResponse;
+  }
+
   it('serves the same operating dashboard to business roles without employee metrics and rejects IT', async () => {
     authenticatedRole = 'NVKH';
     const response = await request(app.getHttpServer())
       .get(`/dashboard/summary?periodType=month&month=${month}`)
       .expect(200);
-    expect(response.body).toMatchObject({
+    const summaryResponse = response.body as SummaryResponse;
+    expect(summaryResponse).toMatchObject({
       periodType: 'month',
       periodStart: `${month}-01`,
       periodEnd: '2026-09-30',
@@ -148,7 +162,33 @@ describe('Management dashboard API with PostgreSQL (e2e)', () => {
       trendGranularity: 'day',
       trend: expect.any(Array),
     });
-    expect(response.body).not.toHaveProperty('activeEmployees');
+    expect(summaryResponse).not.toHaveProperty('activeEmployees');
+    expect(summaryResponse.comparison).toMatchObject({
+      periodStart: '2026-08-01',
+      periodEnd: '2026-08-31',
+      currentEnd: '2026-09-30',
+    });
+    expect(summaryResponse.comparison?.trend).toHaveLength(
+      summaryResponse.trend.length,
+    );
+    expect(
+      summaryResponse.comparison?.trend.map(({ period }) => period),
+    ).toEqual(summaryResponse.trend.map(({ period }) => period));
+
+    authenticatedRole = 'SA';
+    const managementResponse = await request(app.getHttpServer())
+      .get(`/management/dashboard/summary?periodType=month&month=${month}`)
+      .expect(200);
+    const managementSummary = managementResponse.body as SummaryResponse;
+    expect(managementSummary.comparison).toMatchObject({
+      periodStart: '2026-08-01',
+      periodEnd: '2026-08-31',
+      currentEnd: '2026-09-30',
+    });
+    expect(
+      managementSummary.comparison?.trend.map(({ period }) => period),
+    ).toEqual(managementSummary.trend.map(({ period }) => period));
+    authenticatedRole = 'NVKH';
 
     await request(app.getHttpServer())
       .get(
@@ -156,11 +196,50 @@ describe('Management dashboard API with PostgreSQL (e2e)', () => {
       )
       .expect(200)
       .expect(({ body }) => {
-        expect(body).toMatchObject({
+        const rangeSummary = body as SummaryResponse;
+        expect(rangeSummary).toMatchObject({
           periodType: 'range',
           periodStart: '2026-09-05',
           periodEnd: '2026-09-12',
           trendGranularity: 'day',
+          comparison: {
+            periodStart: '2026-08-28',
+            periodEnd: '2026-09-04',
+            currentEnd: '2026-09-12',
+          },
+        });
+        expect(
+          rangeSummary.comparison?.trend.map(({ period }) => period),
+        ).toEqual(rangeSummary.trend.map(({ period }) => period));
+      });
+
+    await request(app.getHttpServer())
+      .get('/dashboard/summary?periodType=year&year=2026')
+      .expect(200)
+      .expect(({ body }) => {
+        const yearSummary = body as SummaryResponse;
+        expect(yearSummary).toMatchObject({
+          periodType: 'year',
+          trendGranularity: 'month',
+          comparison: {
+            periodStart: '2025-01-01',
+            periodEnd: '2025-10-02',
+            currentEnd: '2026-10-02',
+          },
+        });
+        expect(
+          yearSummary.comparison?.trend.map(({ period }) => period),
+        ).toEqual(yearSummary.trend.map(({ period }) => period));
+      });
+
+    await request(app.getHttpServer())
+      .get('/dashboard/summary?periodType=all')
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          periodType: 'all',
+          trendGranularity: 'year',
+          comparison: null,
         });
       });
 
@@ -175,6 +254,51 @@ describe('Management dashboard API with PostgreSQL (e2e)', () => {
       .get(`/dashboard/summary?month=${month}`)
       .expect(403);
     authenticatedRole = 'SA';
+  });
+
+  it('excludes future-dated receipts from the current partial month chart bucket', async () => {
+    const [{ today }] = (await dataSource.query(
+      `SELECT to_char((CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Ho_Chi_Minh')::date, 'YYYY-MM-DD') AS today`,
+    )) as Array<{ today: string }>;
+    if (today.endsWith('-12-31')) return;
+
+    const year = today.slice(0, 4);
+    const currentMonth = today.slice(0, 7);
+    const futureReceivedDate = shiftDate(today, 1);
+    const before = await getYearSummary(year);
+    const [{ id: customerId }] = (await dataSource.query(
+      `
+        INSERT INTO customers (customer_code, customer_name)
+        VALUES ($1, $2)
+        RETURNING id
+      `,
+      [`${runKey}-FUTURE-CHART-CUSTOMER`, `${runKey} Future Chart Customer`],
+    )) as Array<{ id: string }>;
+
+    await dataSource.query(
+      `
+        INSERT INTO purchase_orders (
+          po_code, customer_id, customer_name_snapshot, received_date,
+          deadline, status
+        )
+        VALUES ($1, $2, $3, $4::date, $5::date, 'in_progress')
+      `,
+      [
+        `${runKey}-FUTURE-CHART`,
+        customerId,
+        `${runKey} Future Chart Customer`,
+        futureReceivedDate,
+        shiftDate(futureReceivedDate, 7),
+      ],
+    );
+
+    const after = await getYearSummary(year);
+    expect(after.totalPurchaseOrders).toBe(before.totalPurchaseOrders + 1);
+    expect(
+      after.trend.find(({ period }) => period === currentMonth)?.received,
+    ).toBe(
+      before.trend.find(({ period }) => period === currentMonth)?.received,
+    );
   });
 
   async function getOverview(

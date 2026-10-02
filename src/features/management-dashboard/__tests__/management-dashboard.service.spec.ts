@@ -7,12 +7,18 @@ describe('ManagementDashboardService', () => {
   let service: ManagementDashboardService;
 
   beforeEach(() => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date('2026-10-02T04:00:00.000Z'));
     dataSource = {
       query: jest.fn(),
     };
     service = new ManagementDashboardService(
       dataSource as unknown as DataSource,
     );
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
   });
 
   it('returns operational KPIs and chart data using product deadlines and HCM dates', async () => {
@@ -26,7 +32,8 @@ describe('ManagementDashboardService', () => {
         upcoming_product_purchase_orders: '4',
         pending_boms: '7',
         active_employees: '24',
-        trend: [],
+        trend: [{ period: '2026-09-01', received: 12, completed: 5 }],
+        comparison_trend: [{ period: '2026-09-01', received: 7 }],
         purchase_order_statuses: [],
         bom_revision_statuses: [],
         top_customers: [],
@@ -51,7 +58,13 @@ describe('ManagementDashboardService', () => {
       upcomingProductPurchaseOrders: 4,
       pendingBomCount: 7,
       activeEmployees: 24,
-      trend: [],
+      trend: [{ period: '2026-09-01', received: 12, completed: 5 }],
+      comparison: {
+        periodStart: '2026-08-01',
+        periodEnd: '2026-08-31',
+        currentEnd: '2026-09-30',
+        trend: [{ period: '2026-09-01', received: 7 }],
+      },
       purchaseOrderStatuses: [],
       bomRevisionStatuses: [],
       topCustomers: [],
@@ -62,7 +75,15 @@ describe('ManagementDashboardService', () => {
 
     expect(dataSource.query).toHaveBeenCalledWith(
       expect.stringContaining('COUNT(*) FILTER'),
-      ['2026-09-01', '2026-10-01', 'day'],
+      [
+        '2026-09-01',
+        '2026-10-01',
+        'day',
+        'month',
+        '2026-08-01',
+        '2026-09-01',
+        '2026-10-01',
+      ],
     );
 
     const sql = dataSource.query.mock.calls[0][0] as string;
@@ -81,6 +102,9 @@ describe('ManagementDashboardService', () => {
     expect(sql).toContain('bom.discontinued_at IS NULL');
     expect(sql).toContain('bom.current_revision_id = revision.id');
     expect(sql).toContain('generate_series');
+    expect(sql).toContain(
+      'purchase_order.received_date < date_context.current_end_exclusive',
+    );
     expect(sql).toContain("user_account.status = 'active'");
     expect(sql).toContain('must_change_password = false');
     expect(sql).toContain('manually_locked_at IS NULL');
@@ -116,13 +140,17 @@ describe('ManagementDashboardService', () => {
       '2026-12-01',
       '2027-01-01',
       'day',
+      'month',
+      null,
+      null,
+      '2026-12-01',
     ]);
   });
 
-  it('uses database-wide event bounds for the all-time period', async () => {
+  it('uses database-wide event bounds and annual trend buckets for the all-time period', async () => {
     dataSource.query
       .mockResolvedValueOnce([
-        { period_start: '2020-01-15', period_end: '2026-09-30' },
+        { period_start: '2026-01-15', period_end: '2026-09-30' },
       ])
       .mockResolvedValueOnce([
         {
@@ -148,9 +176,10 @@ describe('ManagementDashboardService', () => {
       service.getSummary({ periodType: 'all' }),
     ).resolves.toMatchObject({
       periodType: 'all',
-      periodStart: '2020-01-15',
+      periodStart: '2026-01-15',
       periodEnd: '2026-09-30',
       trendGranularity: 'year',
+      comparison: null,
     });
 
     const [boundsSql] = dataSource.query.mock.calls[0];
@@ -164,7 +193,7 @@ describe('ManagementDashboardService', () => {
       expect.stringContaining(
         'purchase_order.received_date < date_context.period_end_exclusive',
       ),
-      ['2020-01-15', '2026-10-01', 'year'],
+      ['2026-01-15', '2026-10-01', 'year', 'all', null, null, '2026-10-01'],
     );
   });
 
@@ -201,6 +230,10 @@ describe('ManagementDashboardService', () => {
       '2024-01-01',
       '2025-01-01',
       'month',
+      'year',
+      '2023-01-01',
+      '2024-01-01',
+      '2025-01-01',
     ]);
   });
 
@@ -240,6 +273,10 @@ describe('ManagementDashboardService', () => {
       '2024-02-28',
       '2024-03-02',
       'day',
+      'range',
+      '2024-02-25',
+      '2024-02-28',
+      '2024-03-02',
     ]);
   });
 

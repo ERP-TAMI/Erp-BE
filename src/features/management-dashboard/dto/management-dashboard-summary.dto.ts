@@ -12,6 +12,28 @@ class DashboardTrendDto {
   completed: number;
 }
 
+class DashboardTrendComparisonBucketDto {
+  @ApiProperty({ example: '2026-09-01' })
+  period: string;
+
+  @ApiProperty({ example: 4, minimum: 0, nullable: true })
+  received: number | null;
+}
+
+class DashboardTrendComparisonDto {
+  @ApiProperty({ example: '2026-09-01', format: 'date' })
+  periodStart: string;
+
+  @ApiProperty({ example: '2026-09-30', format: 'date' })
+  periodEnd: string;
+
+  @ApiProperty({ example: '2026-10-02', format: 'date' })
+  currentEnd: string;
+
+  @ApiProperty({ type: [DashboardTrendComparisonBucketDto] })
+  trend: DashboardTrendComparisonBucketDto[];
+}
+
 class DashboardCountByStatusDto {
   @ApiProperty({ example: 'in_progress' })
   status: string;
@@ -109,6 +131,9 @@ export class ManagementDashboardSummaryDto {
 
   @ApiProperty({ type: [DashboardTrendDto] })
   trend: DashboardTrendDto[];
+
+  @ApiProperty({ type: DashboardTrendComparisonDto, nullable: true })
+  comparison: DashboardTrendComparisonDto | null;
 
   @ApiProperty({ type: [DashboardCountByStatusDto] })
   purchaseOrderStatuses: DashboardCountByStatusDto[];

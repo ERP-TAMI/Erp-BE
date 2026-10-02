@@ -7,6 +7,7 @@ import {
   ManagementPurchaseOrderItemDto,
   ManagementPurchaseOrdersOverviewDto,
 } from './dto/management-purchase-orders-overview.dto';
+import { getDashboardComparisonBounds } from './dashboard-comparison-bounds';
 
 type DashboardSummaryRow = {
   total_purchase_orders: string | number;
@@ -18,6 +19,9 @@ type DashboardSummaryRow = {
   pending_boms: string | number;
   active_employees: string | number;
   trend: ManagementDashboardSummaryDto['trend'];
+  comparison_trend: NonNullable<
+    ManagementDashboardSummaryDto['comparison']
+  >['trend'];
   purchase_order_statuses: ManagementDashboardSummaryDto['purchaseOrderStatuses'];
   bom_revision_statuses: ManagementDashboardSummaryDto['bomRevisionStatuses'];
   top_customers: ManagementDashboardSummaryDto['topCustomers'];
@@ -60,6 +64,12 @@ export class ManagementDashboardService {
       periodStart,
       periodEndExclusive,
     );
+    const comparisonBounds = getDashboardComparisonBounds(
+      period.periodType,
+      periodStart,
+      periodEndExclusive,
+      this.getTodayInVietnam(),
+    );
     const rows = await this.dataSource.query<DashboardSummaryRow[]>(
       `
         WITH date_context AS (
@@ -67,6 +77,10 @@ export class ManagementDashboardService {
             $1::date AS period_start,
             $2::date AS period_end_exclusive,
             $3::text AS trend_granularity,
+            $4::text AS period_type,
+            $5::date AS comparison_start,
+            $6::date AS comparison_end_exclusive,
+            $7::date AS current_end_exclusive,
             (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Ho_Chi_Minh')::date AS today
         ),
         selected_purchase_orders AS (
@@ -215,7 +229,7 @@ export class ManagementDashboardService {
           WHERE purchase_order.archived_at IS NULL
             AND purchase_order.status <> 'cancelled'
             AND purchase_order.received_date >= date_context.period_start
-            AND purchase_order.received_date < date_context.period_end_exclusive
+            AND purchase_order.received_date < date_context.current_end_exclusive
           GROUP BY date_trunc(
             date_context.trend_granularity,
             purchase_order.received_date::timestamp
@@ -238,6 +252,43 @@ export class ManagementDashboardService {
             purchase_order.received_date::timestamp
           )::date
         ),
+        comparison_received AS (
+          SELECT date_trunc(
+              date_context.trend_granularity,
+              CASE
+                WHEN date_context.period_type = 'year' THEN
+                  date_trunc('year', date_context.period_start::timestamp)
+                  + (EXTRACT(MONTH FROM purchase_order.received_date)::integer - 1)
+                    * INTERVAL '1 month'
+                ELSE
+                  date_context.period_start::timestamp
+                  + (purchase_order.received_date - date_context.comparison_start)
+                    * INTERVAL '1 day'
+              END
+            )::date AS bucket_start,
+            COUNT(*) AS received
+          FROM purchase_orders AS purchase_order
+          CROSS JOIN date_context
+          WHERE date_context.comparison_start IS NOT NULL
+            AND date_context.comparison_end_exclusive IS NOT NULL
+            AND purchase_order.archived_at IS NULL
+            AND purchase_order.status <> 'cancelled'
+            AND purchase_order.received_date >= date_context.comparison_start
+            AND purchase_order.received_date < date_context.comparison_end_exclusive
+          GROUP BY date_trunc(
+            date_context.trend_granularity,
+            CASE
+              WHEN date_context.period_type = 'year' THEN
+                date_trunc('year', date_context.period_start::timestamp)
+                + (EXTRACT(MONTH FROM purchase_order.received_date)::integer - 1)
+                  * INTERVAL '1 month'
+              ELSE
+                date_context.period_start::timestamp
+                + (purchase_order.received_date - date_context.comparison_start)
+                  * INTERVAL '1 day'
+            END
+          )::date
+        ),
         trend_summary AS (
           SELECT COALESCE(
             json_agg(json_build_object(
@@ -255,6 +306,30 @@ export class ManagementDashboardService {
           CROSS JOIN date_context
           LEFT JOIN period_received USING (bucket_start)
           LEFT JOIN period_completed USING (bucket_start)
+        ),
+        comparison_trend_summary AS (
+          SELECT COALESCE(
+            json_agg(json_build_object(
+              'period', CASE date_context.trend_granularity
+                WHEN 'day' THEN to_char(trend_series.bucket_start, 'YYYY-MM-DD')
+                WHEN 'month' THEN to_char(trend_series.bucket_start, 'YYYY-MM')
+                ELSE to_char(trend_series.bucket_start, 'YYYY')
+              END,
+              'received', CASE
+                WHEN date_context.period_type = 'month'
+                  AND date_context.comparison_start
+                    + (trend_series.bucket_start - date_context.period_start)
+                    >= date_context.comparison_end_exclusive
+                THEN NULL
+                ELSE COALESCE(comparison_received.received, 0)
+              END
+            ) ORDER BY trend_series.bucket_start),
+            '[]'::json
+          ) AS data
+          FROM trend_series
+          CROSS JOIN date_context
+          LEFT JOIN comparison_received USING (bucket_start)
+          WHERE date_context.comparison_start IS NOT NULL
         ),
         po_status_summary AS (
           SELECT COALESCE(
@@ -375,6 +450,7 @@ export class ManagementDashboardService {
           purchase_order_metrics.pending_boms,
           employee_metrics.active_employees,
           trend_summary.data AS trend,
+          comparison_trend_summary.data AS comparison_trend,
           po_status_summary.data AS purchase_order_statuses,
           bom_status_summary.data AS bom_revision_statuses,
           top_customer_summary.data AS top_customers,
@@ -384,6 +460,7 @@ export class ManagementDashboardService {
         FROM purchase_order_metrics
         CROSS JOIN employee_metrics
         CROSS JOIN trend_summary
+        CROSS JOIN comparison_trend_summary
         CROSS JOIN po_status_summary
         CROSS JOIN bom_status_summary
         CROSS JOIN top_customer_summary
@@ -391,7 +468,15 @@ export class ManagementDashboardService {
         CROSS JOIN upcoming_queue
         CROSS JOIN pending_bom_queue
       `,
-      [periodStart, periodEndExclusive, trendGranularity],
+      [
+        periodStart,
+        periodEndExclusive,
+        trendGranularity,
+        period.periodType,
+        comparisonBounds.comparison?.periodStart ?? null,
+        comparisonBounds.comparison?.periodEndExclusive ?? null,
+        comparisonBounds.currentEndExclusive,
+      ],
     );
     const [summary] = rows;
 
@@ -412,6 +497,17 @@ export class ManagementDashboardService {
       ),
       pendingBomCount: Number(summary.pending_boms),
       trend: summary.trend,
+      comparison: comparisonBounds.comparison
+        ? {
+            periodStart: comparisonBounds.comparison.periodStart,
+            periodEnd: shiftIsoDate(
+              comparisonBounds.comparison.periodEndExclusive,
+              -1,
+            ),
+            currentEnd: shiftIsoDate(comparisonBounds.currentEndExclusive, -1),
+            trend: summary.comparison_trend ?? [],
+          }
+        : null,
       purchaseOrderStatuses: summary.purchase_order_statuses,
       bomRevisionStatuses: summary.bom_revision_statuses,
       topCustomers: summary.top_customers,
@@ -626,12 +722,28 @@ export class ManagementDashboardService {
   ): 'day' | 'month' | 'year' {
     if (period.periodType === 'month') return 'day';
     if (period.periodType === 'year') return 'month';
+    if (period.periodType === 'all') return 'year';
 
     const selectedDays =
       dateOrdinal(periodEndExclusive) - dateOrdinal(periodStart);
     if (selectedDays <= 31) return 'day';
     if (selectedDays <= 730) return 'month';
     return 'year';
+  }
+
+  private getTodayInVietnam(): string {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      day: '2-digit',
+      month: '2-digit',
+      timeZone: 'Asia/Ho_Chi_Minh',
+      year: 'numeric',
+    }).formatToParts(new Date());
+    const values = Object.fromEntries(
+      parts
+        .filter((part) => part.type !== 'literal')
+        .map(({ type, value }) => [type, value]),
+    );
+    return `${values.year}-${values.month}-${values.day}`;
   }
 
   private getMonthBounds(month: string): [string, string] {
