@@ -1,4 +1,8 @@
-import { INestApplication, ValidationPipe } from '@nestjs/common';
+import {
+  ExecutionContext,
+  INestApplication,
+  ValidationPipe,
+} from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import * as request from 'supertest';
 import { DataSource } from 'typeorm';
@@ -8,11 +12,25 @@ import { JwtAuthGuard } from '../src/common/guards/jwt-auth.guard';
 import { PermissionGuard } from '../src/common/guards/permission.guard';
 
 type SummaryResponse = {
-  month: string;
+  periodType: 'month' | 'year' | 'range' | 'all';
+  periodStart: string;
+  periodEnd: string;
+  trendGranularity: 'day' | 'month' | 'year';
   totalPurchaseOrders: number;
   completedPurchaseOrders: number;
-  overduePurchaseOrders: number;
+  cancelledPurchaseOrders: number;
+  processingPurchaseOrders: number;
+  overdueProductPurchaseOrders: number;
+  upcomingProductPurchaseOrders: number;
+  pendingBomCount: number;
   activeEmployees: number;
+  trend: Array<{ period: string; received: number; completed: number }>;
+  purchaseOrderStatuses: Array<{ status: string; count: number }>;
+  bomRevisionStatuses: Array<{ status: string; count: number }>;
+  topCustomers: Array<{ customerName: string; count: number }>;
+  overdueQueue: Array<{ purchaseOrderId: string; productCount: number }>;
+  upcomingQueue: Array<{ purchaseOrderId: string; productCount: number }>;
+  pendingBomQueue: Array<{ bomId: string; status: string }>;
 };
 
 type PurchaseOrdersOverviewResponse = {
@@ -47,11 +65,20 @@ describe('Management dashboard API with PostgreSQL (e2e)', () => {
   const month = '2026-09';
   let app: INestApplication;
   let dataSource: DataSource;
+  let authenticatedRole = 'SA';
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
       .overrideGuard(JwtAuthGuard)
-      .useValue({ canActivate: () => true })
+      .useValue({
+        canActivate: (context: ExecutionContext) => {
+          const request = context.switchToHttp().getRequest<{
+            user?: { roleCode: string; permissions: string[] };
+          }>();
+          request.user = { roleCode: authenticatedRole, permissions: [] };
+          return true;
+        },
+      })
       .overrideGuard(PermissionGuard)
       .useValue({ canActivate: () => true })
       .compile();
@@ -100,10 +127,55 @@ describe('Management dashboard API with PostgreSQL (e2e)', () => {
 
   async function getSummary(): Promise<SummaryResponse> {
     const response = await request(app.getHttpServer())
-      .get(`/management/dashboard/summary?month=${month}`)
+      .get(`/management/dashboard/summary?periodType=month&month=${month}`)
       .expect(200);
     return response.body as SummaryResponse;
   }
+
+  it('serves the same operating dashboard to business roles without employee metrics and rejects IT', async () => {
+    authenticatedRole = 'NVKH';
+    const response = await request(app.getHttpServer())
+      .get(`/dashboard/summary?periodType=month&month=${month}`)
+      .expect(200);
+    expect(response.body).toMatchObject({
+      periodType: 'month',
+      periodStart: `${month}-01`,
+      periodEnd: '2026-09-30',
+      totalPurchaseOrders: expect.any(Number),
+      overdueProductPurchaseOrders: expect.any(Number),
+      upcomingProductPurchaseOrders: expect.any(Number),
+      pendingBomCount: expect.any(Number),
+      trendGranularity: 'day',
+      trend: expect.any(Array),
+    });
+    expect(response.body).not.toHaveProperty('activeEmployees');
+
+    await request(app.getHttpServer())
+      .get(
+        '/dashboard/summary?periodType=range&fromDate=2026-09-05&toDate=2026-09-12',
+      )
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          periodType: 'range',
+          periodStart: '2026-09-05',
+          periodEnd: '2026-09-12',
+          trendGranularity: 'day',
+        });
+      });
+
+    await request(app.getHttpServer())
+      .get(
+        '/dashboard/summary?periodType=range&fromDate=2026-09-12&toDate=2026-09-05',
+      )
+      .expect(400);
+
+    authenticatedRole = 'IT';
+    await request(app.getHttpServer())
+      .get(`/dashboard/summary?month=${month}`)
+      .expect(403);
+    authenticatedRole = 'SA';
+  });
 
   async function getOverview(
     selectedMonth: string,
@@ -368,15 +440,17 @@ describe('Management dashboard API with PostgreSQL (e2e)', () => {
     async (label, pending, locked, lockout, expected) => {
       const baseline = await getSummary();
       await dataSource.query(
-        `INSERT INTO users (email, password_hash, full_name, status, must_change_password, manually_locked_at, lockout_until)
+        `INSERT INTO users (email, password_hash, full_name, status, must_change_password, manually_locked_at, lockout_until, created_at)
        VALUES ($1, 'test-only', $2, 'active', $3, CASE WHEN $4 THEN CURRENT_TIMESTAMP ELSE NULL END,
-         CASE WHEN $5::text IS NULL THEN NULL ELSE CURRENT_TIMESTAMP + $5::interval END)`,
+         CASE WHEN $5::text IS NULL THEN NULL ELSE CURRENT_TIMESTAMP + $5::interval END,
+         $6::date::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh')`,
         [
           `${runKey.toLowerCase()}-state-${String(label).replace(/ /g, '-')}@tami.test`,
           label,
           pending,
           locked,
           lockout,
+          `${month}-15`,
         ],
       );
       const summary = await getSummary();
@@ -386,7 +460,7 @@ describe('Management dashboard API with PostgreSQL (e2e)', () => {
     },
   );
 
-  it('counts overdue POs by the PO deadline, including orders without products', async () => {
+  it('counts overdue POs by product deadlines and counts a PO once', async () => {
     const baseline = await getSummary();
     const [{ id: customerId }] = (await dataSource.query(
       `
@@ -399,16 +473,17 @@ describe('Management dashboard API with PostgreSQL (e2e)', () => {
 
     await dataSource.query(
       `
-        INSERT INTO users (email, password_hash, full_name, status, must_change_password)
+        INSERT INTO users (email, password_hash, full_name, status, must_change_password, created_at)
         VALUES
-          ($1, 'test-only', $2, 'active', false),
-          ($3, 'test-only', $4, 'inactive', false)
+          ($1, 'test-only', $2, 'active', false, $5::date::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh'),
+          ($3, 'test-only', $4, 'inactive', false, $5::date::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh')
       `,
       [
         `${runKey.toLowerCase()}-active@tami.test`,
         `${runKey} Active`,
         `${runKey.toLowerCase()}-inactive@tami.test`,
         `${runKey} Inactive`,
+        `${month}-15`,
       ],
     );
 
@@ -471,11 +546,17 @@ describe('Management dashboard API with PostgreSQL (e2e)', () => {
       [overduePoId, todayPoId],
     );
 
-    await expect(getSummary()).resolves.toEqual({
-      month,
-      totalPurchaseOrders: baseline.totalPurchaseOrders + 5,
+    await expect(getSummary()).resolves.toMatchObject({
+      periodType: 'month',
+      periodStart: `${month}-01`,
+      periodEnd: shiftDate(nextMonthStart(month), -1),
+      totalPurchaseOrders: baseline.totalPurchaseOrders + 4,
       completedPurchaseOrders: baseline.completedPurchaseOrders + 1,
-      overduePurchaseOrders: baseline.overduePurchaseOrders + 2,
+      cancelledPurchaseOrders: baseline.cancelledPurchaseOrders + 1,
+      processingPurchaseOrders: baseline.processingPurchaseOrders + 3,
+      overdueProductPurchaseOrders: baseline.overdueProductPurchaseOrders + 1,
+      upcomingProductPurchaseOrders: baseline.upcomingProductPurchaseOrders + 1,
+      pendingBomCount: baseline.pendingBomCount,
       activeEmployees: baseline.activeEmployees + 1,
     });
   });
