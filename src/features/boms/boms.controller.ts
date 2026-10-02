@@ -53,6 +53,7 @@ import {
 } from './dto';
 import { BomAggregateService } from './bom-aggregate.service';
 import { PurchaseOrderBomWriteAccessGuard } from './guards/purchase-order-bom-write-access.guard';
+import { QueryBomCreateTargetsDto } from './dto/query-bom-create-targets.dto';
 
 @ApiTags('boms')
 @ApiBearerAuth()
@@ -99,6 +100,24 @@ export class BomsController {
   })
   async getStats(@Query() query: QueryBomStatsDto): Promise<BomStatsDto> {
     return this.bomsService.getStats(query);
+  }
+
+  @Get('create-targets/po')
+  @ApiOperation({ summary: 'PO còn sản phẩm đủ điều kiện tạo NPL' })
+  async getEligiblePurchaseOrders(@Query() query: QueryBomCreateTargetsDto) {
+    return this.bomsService.getEligiblePurchaseOrders(query);
+  }
+
+  @Get('create-targets/fit')
+  @ApiOperation({ summary: 'Mẫu Fit chưa có NPL' })
+  async getEligibleFitStyles(@Query() query: QueryBomCreateTargetsDto) {
+    return this.bomsService.getEligibleFitStyles(query);
+  }
+
+  @Get('create-targets/po/:poId/products')
+  @ApiOperation({ summary: 'Sản phẩm PO chưa có NPL và còn có thể tạo NPL' })
+  async getEligiblePoProducts(@Param('poId', ParseUUIDPipe) poId: string) {
+    return this.bomsService.getEligiblePoProducts(poId);
   }
 
   @Get()
