@@ -47,10 +47,6 @@ export class DocumentLibraryQueryDto {
   assigned?: 'true' | 'false';
 
   @IsOptional()
-  @IsIn(['true', 'false'])
-  pinned?: 'true' | 'false';
-
-  @IsOptional()
   @IsIn(['word', 'excel', 'pdf', 'image'])
   category?: 'word' | 'excel' | 'pdf' | 'image';
 

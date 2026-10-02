@@ -13,7 +13,6 @@ import { Document } from './entities/Document.entity';
 import { DocumentFolder } from './entities/DocumentFolder.entity';
 import { DocumentVersion } from './entities/DocumentVersion.entity';
 import { FolderDocument } from './entities/FolderDocument.entity';
-import { DocumentPin } from './entities/DocumentPin.entity';
 import { StyleDocument } from '../styles/entities/StyleDocument.entity';
 import {
   UploadStatus,
@@ -69,7 +68,6 @@ export type DocumentLibraryListItem = {
   mimeType: string;
   byteSize: number;
   uploadedAt: Date;
-  isPinned: boolean;
   isAssigned: boolean;
 };
 
@@ -122,8 +120,6 @@ export class DocumentsService {
     private readonly folderDocumentRepo: Repository<FolderDocument>,
     @InjectRepository(StyleDocument)
     private readonly styleDocumentRepo: Repository<StyleDocument>,
-    @InjectRepository(DocumentPin)
-    private readonly documentPinRepo: Repository<DocumentPin>,
     @Inject(STORAGE_SERVICE)
     private readonly storage: StorageService,
     private readonly dataSource: DataSource,
@@ -255,10 +251,7 @@ export class DocumentsService {
     await this.folderRepo.remove(folder);
   }
 
-  async list(
-    query: DocumentLibraryQueryDto,
-    userId: string,
-  ): Promise<DocumentLibraryPage> {
+  async list(query: DocumentLibraryQueryDto): Promise<DocumentLibraryPage> {
     const page = query.page ?? 1;
     const limit = query.limit ?? 10;
     const folderLinkCondition = query.folderId
@@ -288,12 +281,6 @@ export class DocumentsService {
         'folder',
         'folder.id = folderDocument.folderId',
       )
-      .leftJoin(
-        DocumentPin,
-        'documentPin',
-        'documentPin.documentId = document.id AND documentPin.userId = :userId',
-        { userId },
-      )
       .where(
         query.archived === 'true'
           ? 'document.archivedAt IS NOT NULL'
@@ -311,9 +298,6 @@ export class DocumentsService {
         'NOT EXISTS (SELECT 1 FROM style_documents assignedDocument WHERE assignedDocument.document_id = document.id AND assignedDocument.purpose = :fitAttachmentPurpose)',
         { fitAttachmentPurpose: DocumentPurpose.FIT_ATTACHMENT },
       );
-    }
-    if (query.pinned === 'true') {
-      qb.andWhere('documentPin.documentId IS NOT NULL');
     }
     if (query.search?.trim()) {
       const folderSearch = query.folderId
@@ -362,7 +346,6 @@ export class DocumentsService {
       .addSelect('version.mimeType', 'mimeType')
       .addSelect('version.byteSize', 'byteSize')
       .addSelect('version.uploadedAt', 'uploadedAt')
-      .addSelect('documentPin.documentId IS NOT NULL', 'isPinned')
       .addSelect(
         'EXISTS (SELECT 1 FROM style_documents assignedDocument WHERE assignedDocument.document_id = document.id AND assignedDocument.purpose = :fitAttachmentPurpose)',
         'isAssigned',
@@ -386,7 +369,6 @@ export class DocumentsService {
         mimeType: string;
         byteSize: string;
         uploadedAt: Date;
-        isPinned: boolean;
         isAssigned: boolean;
       }>();
 
@@ -394,7 +376,6 @@ export class DocumentsService {
       data: rows.map((row) => ({
         ...row,
         byteSize: Number(row.byteSize),
-        isPinned: Boolean(row.isPinned),
         isAssigned: Boolean(row.isAssigned),
       })),
       meta: {
@@ -405,21 +386,6 @@ export class DocumentsService {
         totalPages: Math.max(1, Math.ceil(total / limit)),
       },
     };
-  }
-
-  async pin(documentId: string, userId: string): Promise<void> {
-    await this.assertDocumentExists(documentId, true);
-    await this.documentPinRepo
-      .createQueryBuilder()
-      .insert()
-      .values({ documentId, userId })
-      .orIgnore()
-      .execute();
-  }
-
-  async unpin(documentId: string, userId: string): Promise<void> {
-    await this.assertDocumentExists(documentId);
-    await this.documentPinRepo.delete({ documentId, userId });
   }
 
   async presignInitialUpload(
@@ -506,9 +472,9 @@ export class DocumentsService {
       return document.id;
     });
 
-    const item = (
-      await this.list({ folderId: dto.folderId }, actorId)
-    ).data.find((row) => row.documentId === documentId);
+    const item = (await this.list({ folderId: dto.folderId })).data.find(
+      (row) => row.documentId === documentId,
+    );
     if (!item) throw new NotFoundException('Không thể tải tài liệu vừa lưu.');
     return item;
   }

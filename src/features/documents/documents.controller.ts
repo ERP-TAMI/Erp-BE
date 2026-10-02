@@ -9,7 +9,6 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
-  Put,
   Query,
   Req,
   UnauthorizedException,
@@ -47,27 +46,8 @@ export class DocumentsController {
 
   @Get()
   @ApiOperation({ summary: 'Tìm tài liệu trong kho dùng chung' })
-  list(@Query() query: DocumentLibraryQueryDto, @Req() req?: any) {
-    return this.service.list(query, getActor(req).id);
-  }
-
-  @Put(':documentId/pin')
-  @ApiOperation({ summary: 'Ghim tài liệu cho người dùng hiện tại' })
-  async pin(
-    @Param('documentId', ParseUUIDPipe) documentId: string,
-    @Req() req?: any,
-  ): Promise<void> {
-    await this.service.pin(documentId, getActor(req).id);
-  }
-
-  @Delete(':documentId/pin')
-  @HttpCode(HttpStatus.NO_CONTENT)
-  @ApiOperation({ summary: 'Bỏ ghim tài liệu cho người dùng hiện tại' })
-  async unpin(
-    @Param('documentId', ParseUUIDPipe) documentId: string,
-    @Req() req?: any,
-  ): Promise<void> {
-    await this.service.unpin(documentId, getActor(req).id);
+  list(@Query() query: DocumentLibraryQueryDto) {
+    return this.service.list(query);
   }
 
   @Get('folders')

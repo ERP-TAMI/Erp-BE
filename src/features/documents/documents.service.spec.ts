@@ -6,7 +6,6 @@ import { Document } from './entities/Document.entity';
 import { DocumentFolder } from './entities/DocumentFolder.entity';
 import { DocumentVersion } from './entities/DocumentVersion.entity';
 import { FolderDocument } from './entities/FolderDocument.entity';
-import { DocumentPin } from './entities/DocumentPin.entity';
 import { StyleDocument } from '../styles/entities/StyleDocument.entity';
 import { STORAGE_SERVICE, StorageService } from '../storage/storage.interface';
 import { AuditService } from '../audit/audit.service';
@@ -20,8 +19,6 @@ describe('DocumentsService', () => {
   };
   let documentQuery: Record<string, jest.Mock>;
   let documentCountQuery: Record<string, jest.Mock>;
-  let documentPinQuery: Record<string, jest.Mock>;
-  let documentPinRepo: { createQueryBuilder: jest.Mock; delete: jest.Mock };
   let versionRepo: {
     create: jest.Mock;
     save: jest.Mock;
@@ -68,15 +65,6 @@ describe('DocumentsService', () => {
       .mockResolvedValue({ total: '0', totalBytes: '0' });
     documentQuery.clone = jest.fn().mockReturnValue(documentCountQuery);
     documentQuery.getRawMany = jest.fn().mockResolvedValue([]);
-    documentPinQuery = {};
-    for (const method of ['insert', 'values', 'orIgnore']) {
-      documentPinQuery[method] = jest.fn().mockReturnValue(documentPinQuery);
-    }
-    documentPinQuery.execute = jest.fn().mockResolvedValue(undefined);
-    documentPinRepo = {
-      createQueryBuilder: jest.fn().mockReturnValue(documentPinQuery),
-      delete: jest.fn().mockResolvedValue({ affected: 1 }),
-    };
     documentRepo = {
       findOne: jest.fn(),
       createQueryBuilder: jest.fn().mockReturnValue(documentQuery),
@@ -158,7 +146,6 @@ describe('DocumentsService', () => {
         { provide: getRepositoryToken(DocumentFolder), useValue: folderRepo },
         { provide: getRepositoryToken(FolderDocument), useValue: {} },
         { provide: getRepositoryToken(StyleDocument), useValue: {} },
-        { provide: getRepositoryToken(DocumentPin), useValue: documentPinRepo },
         { provide: STORAGE_SERVICE, useValue: storage },
         { provide: DataSource, useValue: dataSource },
         { provide: AuditService, useValue: { recordEntityChange: jest.fn() } },
@@ -204,12 +191,12 @@ describe('DocumentsService', () => {
   });
 
   it('lists active documents by default and can filter archived documents', async () => {
-    await service.list({}, 'user-1');
+    await service.list({});
     expect(documentQuery.where).toHaveBeenLastCalledWith(
       'document.archivedAt IS NULL',
     );
 
-    await service.list({ archived: 'true' }, 'user-1');
+    await service.list({ archived: 'true' });
     expect(documentQuery.where).toHaveBeenLastCalledWith(
       'document.archivedAt IS NOT NULL',
     );
@@ -221,10 +208,12 @@ describe('DocumentsService', () => {
       totalBytes: '98765',
     });
 
-    const result = await service.list(
-      { page: 2, limit: 10, category: 'pdf', sortOrder: 'oldest' },
-      'user-1',
-    );
+    const result = await service.list({
+      page: 2,
+      limit: 10,
+      category: 'pdf',
+      sortOrder: 'oldest',
+    });
 
     expect(documentQuery.andWhere).toHaveBeenCalledWith(
       'LOWER(version.originalFileName) ~ :categoryPattern',
@@ -253,7 +242,7 @@ describe('DocumentsService', () => {
   });
 
   it('filters assigned documents by the Fit attachment purpose', async () => {
-    await service.list({ assigned: 'true' }, 'user-1');
+    await service.list({ assigned: 'true' });
 
     expect(documentQuery.andWhere).toHaveBeenCalledWith(
       'EXISTS (SELECT 1 FROM style_documents assignedDocument WHERE assignedDocument.document_id = document.id AND assignedDocument.purpose = :fitAttachmentPurpose)',
@@ -262,69 +251,12 @@ describe('DocumentsService', () => {
   });
 
   it('filters processing documents that are not assigned to a Fit style', async () => {
-    await service.list({ assigned: 'false' }, 'user-1');
+    await service.list({ assigned: 'false' });
 
     expect(documentQuery.andWhere).toHaveBeenCalledWith(
       'NOT EXISTS (SELECT 1 FROM style_documents assignedDocument WHERE assignedDocument.document_id = document.id AND assignedDocument.purpose = :fitAttachmentPurpose)',
       { fitAttachmentPurpose: 'fit_attachment' },
     );
-  });
-
-  it('returns only documents pinned by the current user', async () => {
-    documentQuery.getRawMany.mockResolvedValue([
-      {
-        documentId: 'document-1',
-        title: 'spec.pdf',
-        folderId: 'folder-1',
-        folderName: 'Mẫu hè',
-        versionId: 'version-1',
-        versionNo: 1,
-        fileName: 'spec.pdf',
-        mimeType: 'application/pdf',
-        byteSize: '1024',
-        uploadedAt: new Date('2026-01-01'),
-        isPinned: true,
-        isAssigned: true,
-      },
-    ]);
-    const result = await service.list({ pinned: 'true' }, 'user-1');
-
-    expect(documentQuery.leftJoin).toHaveBeenCalledWith(
-      DocumentPin,
-      'documentPin',
-      'documentPin.documentId = document.id AND documentPin.userId = :userId',
-      { userId: 'user-1' },
-    );
-    expect(documentQuery.andWhere).toHaveBeenCalledWith(
-      'documentPin.documentId IS NOT NULL',
-    );
-    expect(result.data[0]).toMatchObject({
-      isPinned: true,
-      isAssigned: true,
-      byteSize: 1024,
-    });
-  });
-
-  it('pins an active document idempotently for the current user', async () => {
-    await service.pin('document-1', 'user-1');
-
-    expect(documentRepo.findOne).toHaveBeenCalledWith({
-      where: { id: 'document-1', archivedAt: expect.anything() },
-    });
-    expect(documentPinQuery.values).toHaveBeenCalledWith({
-      documentId: 'document-1',
-      userId: 'user-1',
-    });
-    expect(documentPinQuery.orIgnore).toHaveBeenCalled();
-  });
-
-  it('unpins a document only for the current user', async () => {
-    await service.unpin('document-1', 'user-1');
-
-    expect(documentPinRepo.delete).toHaveBeenCalledWith({
-      documentId: 'document-1',
-      userId: 'user-1',
-    });
   });
 
   it('searches across folder names and includes the parent folder name', async () => {
