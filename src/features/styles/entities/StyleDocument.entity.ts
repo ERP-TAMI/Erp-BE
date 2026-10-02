@@ -9,6 +9,9 @@ export class StyleDocument {
   @PrimaryColumn({ type: 'uuid', name: 'document_id' })
   documentId: string;
 
+  @Column({ type: 'uuid', nullable: true, name: 'document_version_id' })
+  documentVersionId: string | null;
+
   @Column({
     type: 'enum',
     enum: DocumentPurpose,

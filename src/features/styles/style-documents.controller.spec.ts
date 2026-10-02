@@ -18,6 +18,7 @@ describe('StyleDocumentsController', () => {
       }),
       confirm: jest.fn().mockResolvedValue({ documentId: DOCUMENT_ID }),
       list: jest.fn().mockResolvedValue([]),
+      assignFromLibrary: jest.fn().mockResolvedValue([]),
       getViewUrl: jest
         .fn()
         .mockResolvedValue({ url: 'https://s3.example/get', expiresIn: 3600 }),
@@ -83,6 +84,23 @@ describe('StyleDocumentsController', () => {
   it('lists documents for the given style', async () => {
     await controller.list(STYLE_ID);
     expect(service.list).toHaveBeenCalledWith(STYLE_ID);
+  });
+
+  it('assigns warehouse documents using the authenticated actor', async () => {
+    const dto = { documentIds: [DOCUMENT_ID] };
+
+    await controller.assignFromLibrary(STYLE_ID, dto, {
+      user: { id: 'user-1', roleCode: 'RD' },
+    });
+
+    expect(service.assignFromLibrary).toHaveBeenCalledWith(
+      STYLE_ID,
+      dto.documentIds,
+      {
+        id: 'user-1',
+        roleCode: 'RD',
+      },
+    );
   });
 
   it('parses download=true into a boolean before calling the service', async () => {

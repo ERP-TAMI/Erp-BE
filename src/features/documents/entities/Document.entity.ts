@@ -11,20 +11,20 @@ export class Document {
     nullable: true,
     name: 'document_code',
   })
-  documentCode: string;
+  documentCode: string | null;
 
   @Column({ type: 'varchar', length: 500 })
   title: string;
 
   @Column({ type: 'uuid', nullable: true, name: 'current_version_id' })
-  currentVersionId: string;
+  currentVersionId: string | null;
 
   @Column({ type: 'uuid', nullable: true, name: 'created_by' })
-  createdBy: string;
+  createdBy: string | null;
 
   @Column({ type: 'timestamptz', name: 'created_at' })
   createdAt: Date;
 
   @Column({ type: 'timestamptz', nullable: true, name: 'archived_at' })
-  archivedAt: Date;
+  archivedAt: Date | null;
 }

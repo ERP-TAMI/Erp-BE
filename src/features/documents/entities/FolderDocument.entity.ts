@@ -2,10 +2,10 @@ import { Entity, Column, PrimaryColumn } from 'typeorm';
 
 @Entity('folder_documents')
 export class FolderDocument {
-  @PrimaryColumn({ type: 'uuid' })
+  @PrimaryColumn({ type: 'uuid', name: 'folder_id' })
   folderId: string;
 
-  @PrimaryColumn({ type: 'uuid' })
+  @PrimaryColumn({ type: 'uuid', name: 'document_id' })
   documentId: string;
 
   @Column({ type: 'timestamptz', name: 'linked_at' })

@@ -2,6 +2,7 @@ import { getMetadataArgsStorage } from 'typeorm';
 import { AUTH_ENTITIES } from '../features/auth/entities';
 import { MASTERDATA_ENTITIES } from '../features/master-data/entities';
 import { DOCUMENTS_ENTITIES } from '../features/documents/entities';
+import { FolderDocument } from '../features/documents/entities/FolderDocument.entity';
 import { STYLES_ENTITIES } from '../features/styles/entities';
 import { DRAFTBOMS_ENTITIES } from '../features/draft-boms/entities';
 import { PURCHASEORDERS_ENTITIES } from '../features/purchase-orders/entities';
@@ -31,17 +32,37 @@ describe('schema entities', () => {
       .tables.filter((metadata) => entities.includes(metadata.target as never))
       .map((metadata) => metadata.name);
 
-    expect(entities).toHaveLength(62);
-    expect(new Set(tables).size).toBe(62);
+    expect(entities).toHaveLength(63);
+    expect(new Set(tables).size).toBe(63);
     expect(tables).toEqual(
       expect.arrayContaining([
         'users',
+        'document_pins',
         'user_password_setup_tokens',
         'materials',
         'purchase_order_products',
         'boms',
         'audit_events',
         'http_audit_logs',
+      ]),
+    );
+  });
+
+  it('maps folder document keys to the database snake case columns', () => {
+    const columns = getMetadataArgsStorage().columns.filter(
+      (metadata) => metadata.target === FolderDocument,
+    );
+
+    expect(columns).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          propertyName: 'folderId',
+          options: { type: 'uuid', name: 'folder_id', primary: true },
+        }),
+        expect.objectContaining({
+          propertyName: 'documentId',
+          options: { type: 'uuid', name: 'document_id', primary: true },
+        }),
       ]),
     );
   });
