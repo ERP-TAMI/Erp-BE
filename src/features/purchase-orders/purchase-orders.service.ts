@@ -81,6 +81,7 @@ import {
   ConfirmProductSampleImageDto,
   PresignPoDocumentDto,
   ConfirmPoDocumentDto,
+  ConfirmPoDocumentVersionDto,
 } from './dto';
 import { AuditService, EntityAuditInput } from '../audit/audit.service';
 import { AuditActor } from '../audit/audit-actor.type';
@@ -211,6 +212,19 @@ export interface PoDocumentResponse {
   fileUrl?: string | null;
   fileName?: string | null;
   fileSize?: number | null;
+  currentVersionNo?: number;
+  versions?: Array<{
+    id: string;
+    versionNo: number;
+    originalFileName: string;
+    fileUrl: string | null;
+    fileSize: number | null;
+    changeReason: string | null;
+    evidenceFileName: string | null;
+    evidenceUrl: string | null;
+    uploadedAt: Date;
+    uploadedBy: string | null;
+  }>;
 }
 
 function toYmdString(val: string | Date): string {
@@ -808,17 +822,11 @@ export class PurchaseOrdersService {
     const docs = await this.docRepo.find({ where: { id: In(docIds) } });
     const docsMap = new Map(docs.map((d) => [d.id, d]));
 
-    const versionIds = docs
-      .map((d) => d.currentVersionId)
-      .filter((vId): vId is string => Boolean(vId));
-    const docVersionsMap =
-      versionIds.length > 0
-        ? new Map(
-            (
-              await this.docVersionRepo.find({ where: { id: In(versionIds) } })
-            ).map((v) => [v.id, v]),
-          )
-        : new Map<string, DocumentVersion>();
+    const allVersions = await this.docVersionRepo.find({
+      where: { documentId: In(docIds) },
+      order: { versionNo: 'DESC' },
+    });
+    const docVersionsMap = new Map(allVersions.map((v) => [v.id, v]));
 
     const items = await Promise.all(
       poDocs.map(async (pd) => {
@@ -826,6 +834,9 @@ export class PurchaseOrdersService {
         const version = masterDoc?.currentVersionId
           ? docVersionsMap.get(masterDoc.currentVersionId)
           : null;
+        const versions = allVersions.filter(
+          (v) => v.documentId === pd.documentId,
+        );
         return {
           documentId: pd.documentId,
           documentCode: masterDoc?.documentCode || null,
@@ -837,6 +848,25 @@ export class PurchaseOrdersService {
             : null,
           fileName: version?.originalFileName || masterDoc?.title || null,
           fileSize: version?.byteSize ? Number(version.byteSize) : null,
+          currentVersionNo: version?.versionNo || versions[0]?.versionNo || 1,
+          versions: await Promise.all(
+            versions.map(async (v) => ({
+              id: v.id,
+              versionNo: v.versionNo,
+              originalFileName: v.originalFileName,
+              fileUrl: isResolvableObjectKey(v.storageKey)
+                ? await this.storage.getPresignedGetUrl(v.storageKey)
+                : null,
+              fileSize: v.byteSize ? Number(v.byteSize) : null,
+              changeReason: v.changeReason,
+              evidenceFileName: v.evidenceFileName,
+              evidenceUrl: v.evidenceStorageKey
+                ? await this.storage.getPresignedGetUrl(v.evidenceStorageKey)
+                : null,
+              uploadedAt: v.uploadedAt,
+              uploadedBy: v.uploadedBy,
+            })),
+          ),
         };
       }),
     );
@@ -2537,6 +2567,10 @@ export class PurchaseOrdersService {
             fileSize: v.byteSize ? Number(v.byteSize) : null,
             mimeType: v.mimeType,
             changeReason: v.changeReason,
+            evidenceFileName: v.evidenceFileName,
+            evidenceUrl: v.evidenceStorageKey
+              ? await this.storage.getPresignedGetUrl(v.evidenceStorageKey)
+              : null,
             uploadedAt: v.uploadedAt,
             uploadedBy: v.uploadedBy,
           })),
@@ -3705,7 +3739,7 @@ export class PurchaseOrdersService {
     productId: string,
     documentId: string,
     userId: string | undefined,
-    dto: ConfirmPoDocumentDto,
+    dto: ConfirmPoDocumentVersionDto,
     actor?: AuditActor,
   ) {
     const product = await this.assertPoOpenForProduct(
@@ -3726,41 +3760,153 @@ export class PurchaseOrdersService {
       throw new NotFoundException('Tài liệu không thuộc sản phẩm này.');
     }
 
+    return this.appendDocumentVersion(
+      documentId,
+      userId,
+      dto,
+      `purchase-orders/${poId}/products/${productId}/documents/`,
+      AUDIT_TYPE.PRODUCT_DOCUMENT,
+      productId,
+      String(prodDoc.purpose),
+      actor,
+      {
+        sourcePoDocument: prodDoc.sourcePoDocument,
+        linkedAt: prodDoc.linkedAt,
+      },
+    );
+  }
+
+  async confirmPoDocumentVersion(
+    poId: string,
+    documentId: string,
+    userId: string | undefined,
+    dto: ConfirmPoDocumentVersionDto,
+    actor?: AuditActor,
+  ) {
+    const po = await this.poRepo.findOne({ where: { id: poId } });
+    if (!po) throw new NotFoundException('Không tìm thấy đơn hàng PO.');
+    this.checkPoNotLocked(po, 'cập nhật phiên bản tài liệu');
+
+    const poDoc = await this.poDocRepo.findOne({
+      where: { purchaseOrderId: poId, documentId },
+    });
+    if (!poDoc) throw new NotFoundException('Tài liệu không thuộc PO này.');
+
+    return this.appendDocumentVersion(
+      documentId,
+      userId,
+      dto,
+      `purchase-orders/${poId}/documents/`,
+      AUDIT_TYPE.PO_DOCUMENT,
+      poId,
+      String(poDoc.purpose),
+      actor,
+      { linkedAt: poDoc.linkedAt },
+    );
+  }
+
+  private async appendDocumentVersion(
+    documentId: string,
+    userId: string | undefined,
+    dto: ConfirmPoDocumentVersionDto,
+    objectKeyPrefix: string,
+    auditType: string,
+    parentId: string,
+    purpose: string,
+    actor?: AuditActor,
+    linkMetadata?: { sourcePoDocument?: boolean; linkedAt?: Date },
+  ) {
     const doc = await this.docRepo.findOne({ where: { id: documentId } });
     if (!doc) {
       throw new NotFoundException('Không tìm thấy tài liệu.');
     }
 
-    this.assertObjectKeyInScope(
-      dto.objectKey,
-      `purchase-orders/${poId}/products/${productId}/documents/`,
-    );
+    if (dto.purpose !== purpose) {
+      throw new BadRequestException('Phân loại tệp không khớp với tài liệu.');
+    }
+    const uploadPrefix = `${objectKeyPrefix}${purpose}/`;
+    this.assertObjectKeyInScope(dto.objectKey, uploadPrefix);
 
-    const head = await this.storage.headObject(dto.objectKey);
+    const changeReason = dto.changeReason?.trim();
+    if (!changeReason) {
+      throw new BadRequestException('Vui lòng nhập lý do thay đổi phiên bản.');
+    }
+    assertAllowedFile(dto.fileName, dto.mimeType, dto.sizeBytes, {
+      allowlist: ALLOWED_PO_MIME_BY_EXTENSION,
+      maxSizeBytes: PO_DOCUMENT_MAX_SIZE_BYTES,
+    });
+
+    const evidenceFields = [
+      dto.evidenceObjectKey,
+      dto.evidenceFileName,
+      dto.evidenceMimeType,
+    ];
+    if (evidenceFields.some(Boolean) && !evidenceFields.every(Boolean)) {
+      throw new BadRequestException('Thông tin ảnh bằng chứng chưa đầy đủ.');
+    }
+    const ext = (path.extname(dto.fileName) || '').toLowerCase();
+    const evidenceExt = dto.evidenceFileName
+      ? path.extname(dto.evidenceFileName).toLowerCase()
+      : null;
+    // Both uploads have completed before confirm is called. Validate their S3
+    // metadata and file signatures concurrently so evidence does not add two
+    // extra network round trips to the version file's confirmation time.
+    const [head, buffer, evidenceHead, evidenceBuffer] = await Promise.all([
+      this.storage.headObject(dto.objectKey),
+      this.readBytesForMagicCheck(dto.objectKey, ext),
+      dto.evidenceObjectKey
+        ? this.storage.headObject(dto.evidenceObjectKey)
+        : Promise.resolve(null),
+      dto.evidenceObjectKey && evidenceExt
+        ? this.readBytesForMagicCheck(dto.evidenceObjectKey, evidenceExt)
+        : Promise.resolve(null),
+    ]);
+
+    if (dto.evidenceObjectKey && dto.evidenceFileName && dto.evidenceMimeType) {
+      if (!evidenceHead?.exists || !evidenceBuffer || !evidenceExt) {
+        throw new BadRequestException(
+          'Ảnh bằng chứng chưa được tải lên thành công.',
+        );
+      }
+      assertAllowedFile(
+        dto.evidenceFileName,
+        dto.evidenceMimeType,
+        evidenceHead.sizeBytes || 1,
+        {
+          allowlist: SAMPLE_IMAGE_ALLOWLIST,
+          maxSizeBytes: MAX_SAMPLE_IMAGE_SIZE_BYTES,
+        },
+      );
+      this.validateFileMagicBytes(evidenceExt, evidenceBuffer);
+    }
+
     if (!head.exists) {
       throw new BadRequestException(
         'Tệp chưa được tải lên thành công, vui lòng thử upload lại.',
       );
     }
-
-    const ext = (path.extname(dto.fileName) || '').toLowerCase();
-    const buffer = await this.readBytesForMagicCheck(dto.objectKey, ext);
+    if (head.sizeBytes !== undefined && head.sizeBytes !== dto.sizeBytes) {
+      throw new BadRequestException(
+        'Dung lượng tệp phiên bản không khớp với tệp đã tải lên.',
+      );
+    }
     this.validateFileMagicBytes(ext, buffer);
-
-    const existingVersions = await this.docVersionRepo.find({
-      where: { documentId },
-      order: { versionNo: 'DESC' },
-    });
-    const maxVersion =
-      existingVersions.length > 0
-        ? Math.max(...existingVersions.map((v) => v.versionNo))
-        : 0;
-    const nextVersionNo = maxVersion + 1;
 
     const now = new Date();
 
     return this.dataSource
       .transaction(async (manager) => {
+        // PO and Product can both update this shared Document. Lock the same
+        // row before reading versions so concurrent confirms get unique numbers.
+        await manager.findOne(Document, {
+          where: { id: documentId },
+          lock: { mode: 'pessimistic_write' },
+        });
+        const existingVersions = await manager.find(DocumentVersion, {
+          where: { documentId },
+          order: { versionNo: 'DESC' },
+        });
+        const nextVersionNo = (existingVersions[0]?.versionNo || 0) + 1;
         const docRepo = manager.getRepository(Document);
         const versionRepo = manager.getRepository(DocumentVersion);
 
@@ -3772,6 +3918,10 @@ export class PurchaseOrdersService {
             storageKey: dto.objectKey,
             mimeType: dto.mimeType,
             byteSize: dto.sizeBytes,
+            changeReason,
+            evidenceStorageKey: dto.evidenceObjectKey || null,
+            evidenceFileName: dto.evidenceFileName || null,
+            evidenceMimeType: dto.evidenceMimeType || null,
             status: UploadStatus.READY,
             uploadedBy: userId || (null as any),
             uploadedAt: now,
@@ -3783,12 +3933,12 @@ export class PurchaseOrdersService {
 
         const previous = existingVersions[0];
         await this.recordAudit(manager, actor, {
-          aggregateType: AUDIT_TYPE.PRODUCT_DOCUMENT,
+          aggregateType: auditType,
           aggregateId: documentId,
-          parentId: productId,
+          parentId,
           targetLabel: doc.title,
           eventType: AuditEventType.UPDATED,
-          reason: `Tải lên phiên bản ${nextVersionNo}`,
+          reason: `Tải lên phiên bản ${nextVersionNo}: ${changeReason}`,
           changes: [
             {
               fieldName: 'version',
@@ -3803,13 +3953,13 @@ export class PurchaseOrdersService {
         const allVersions = [newVersion, ...existingVersions];
 
         return {
-          productId,
+          productId:
+            auditType === AUDIT_TYPE.PRODUCT_DOCUMENT ? parentId : null,
           documentId,
           documentCode: doc.documentCode,
           title: doc.title,
-          purpose: String(prodDoc.purpose),
-          sourcePoDocument: prodDoc.sourcePoDocument,
-          linkedAt: prodDoc.linkedAt,
+          purpose,
+          ...linkMetadata,
           fileName: dto.fileName,
           fileUrl: await this.storage.getPresignedGetUrl(
             dto.objectKey,
@@ -3828,6 +3978,10 @@ export class PurchaseOrdersService {
               fileSize: v.byteSize ? Number(v.byteSize) : null,
               mimeType: v.mimeType,
               changeReason: v.changeReason,
+              evidenceFileName: v.evidenceFileName,
+              evidenceUrl: v.evidenceStorageKey
+                ? await this.storage.getPresignedGetUrl(v.evidenceStorageKey)
+                : null,
               uploadedAt: v.uploadedAt,
               uploadedBy: v.uploadedBy,
             })),
