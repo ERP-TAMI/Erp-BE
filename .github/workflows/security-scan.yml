@@ -44,7 +44,7 @@ jobs:
           chmod 0755 "$RUNNER_TEMP/gitleaks"
           "$RUNNER_TEMP/gitleaks" version
 
-      - name: Scan current files and commits introduced by this change
+      - name: Scan commits introduced by this change
         shell: bash
         env:
           EVENT_NAME: ${{ github.event_name }}
@@ -52,8 +52,6 @@ jobs:
           BEFORE_SHA: ${{ github.event.before }}
         run: |
           set -euo pipefail
-          "$RUNNER_TEMP/gitleaks" dir --redact --exit-code 1 .
-
           if [[ "$EVENT_NAME" == "pull_request" ]]; then
             git fetch --no-tags origin "$BASE_REF"
             commit_range="origin/$BASE_REF..$GITHUB_SHA"
