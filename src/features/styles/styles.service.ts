@@ -160,7 +160,7 @@ export class StylesService {
     if (query.search?.trim()) {
       const searchPattern = `%${query.search.trim()}%`;
       qb.andWhere(
-        '(style.style_code ILIKE :search OR style.style_name ILIKE :search)',
+        '(style.style_code ILIKE :search OR style.style_name ILIKE :search OR style.category ILIKE :search)',
         { search: searchPattern },
       );
     }

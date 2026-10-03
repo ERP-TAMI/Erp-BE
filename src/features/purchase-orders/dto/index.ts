@@ -9,3 +9,4 @@ export * from './update-po-document.dto';
 export * from './po-product.dto';
 export * from './presign-po-document.dto';
 export * from './confirm-po-document.dto';
+export * from './confirm-po-document-version.dto';

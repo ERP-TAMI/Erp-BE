@@ -208,6 +208,17 @@ describe('StylesService', () => {
       expect(result.meta.page).toBe(1);
       expect(result.meta.totalPages).toBe(1);
     });
+
+    it('searches by style code, name, or product line in one query', async () => {
+      const queryBuilder = repositoryMock.createQueryBuilder();
+
+      await service.findAll({ search: 'Polo' });
+
+      expect(queryBuilder.andWhere).toHaveBeenCalledWith(
+        '(style.style_code ILIKE :search OR style.style_name ILIKE :search OR style.category ILIKE :search)',
+        { search: '%Polo%' },
+      );
+    });
   });
 
   describe('findOne', () => {

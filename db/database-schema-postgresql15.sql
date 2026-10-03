@@ -50,6 +50,7 @@ CREATE TABLE document_versions (
  version_no integer NOT NULL CHECK(version_no>0), original_file_name varchar(500) NOT NULL,
  storage_key varchar(1000) NOT NULL UNIQUE, mime_type varchar(255) NOT NULL, byte_size bigint NOT NULL CHECK(byte_size>=0),
  sha256 char(64), status upload_status NOT NULL DEFAULT 'pending', change_reason text,
+ evidence_storage_key varchar(1000), evidence_file_name varchar(500), evidence_mime_type varchar(255),
  uploaded_by uuid REFERENCES users(id) ON DELETE SET NULL, uploaded_at timestamptz NOT NULL DEFAULT now(),
  CONSTRAINT uq_document_version UNIQUE(document_id,version_no), CONSTRAINT ck_sha256 CHECK(sha256 IS NULL OR sha256 ~ '^[0-9a-fA-F]{64}$')
 );
