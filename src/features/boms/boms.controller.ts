@@ -225,7 +225,10 @@ export class BomsController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Mở khóa và khôi phục sử dụng NPL' })
   @ApiResponse({ status: 200, description: 'NPL đã được khôi phục sử dụng' })
-  @ApiResponse({ status: 400, description: 'NPL chưa ngừng sử dụng hoặc dữ liệu đã cũ' })
+  @ApiResponse({
+    status: 400,
+    description: 'NPL chưa ngừng sử dụng hoặc dữ liệu đã cũ',
+  })
   @ApiResponse({ status: 403, description: 'Không có quyền mở khóa NPL' })
   @ApiResponse({ status: 404, description: 'Không tìm thấy NPL' })
   async restore(

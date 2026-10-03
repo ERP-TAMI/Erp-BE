@@ -1432,7 +1432,10 @@ export class BomsService {
       if (!bom) {
         throw new NotFoundException(`Không tìm thấy NPL với ID: ${id}`);
       }
-      await this.assertPoProductBomWritable(manager, bom.purchaseOrderProductId);
+      await this.assertPoProductBomWritable(
+        manager,
+        bom.purchaseOrderProductId,
+      );
 
       if (!bom.currentRevisionId) {
         throw new BadRequestException('NPL chưa có revision hiện tại.');
@@ -1469,9 +1472,21 @@ export class BomsService {
         this.toActor(userId, roleCode),
         bom,
         [
-          { fieldName: 'discontinuedAt', oldValue: previousValues.discontinuedAt, newValue: null },
-          { fieldName: 'discontinuedBy', oldValue: previousValues.discontinuedBy, newValue: null },
-          { fieldName: 'discontinuedReason', oldValue: previousValues.discontinuedReason, newValue: null },
+          {
+            fieldName: 'discontinuedAt',
+            oldValue: previousValues.discontinuedAt,
+            newValue: null,
+          },
+          {
+            fieldName: 'discontinuedBy',
+            oldValue: previousValues.discontinuedBy,
+            newValue: null,
+          },
+          {
+            fieldName: 'discontinuedReason',
+            oldValue: previousValues.discontinuedReason,
+            newValue: null,
+          },
         ],
         AuditEventType.UPDATED,
         'Mở khóa và khôi phục sử dụng NPL',

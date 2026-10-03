@@ -19,10 +19,7 @@ const BOM_DISCONTINUE_ROLES = new Set<string>([
   UserRoleCode.SA,
 ]);
 
-const BOM_RESTORE_ROLES = new Set<string>([
-  UserRoleCode.TPKH,
-  UserRoleCode.SA,
-]);
+const BOM_RESTORE_ROLES = new Set<string>([UserRoleCode.TPKH, UserRoleCode.SA]);
 
 const DEADLINE_EDIT_ROLES = new Set<string>([
   UserRoleCode.NVKH,
