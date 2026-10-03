@@ -64,3 +64,12 @@ jobs:
           fi
 
           "$RUNNER_TEMP/gitleaks" git --log-opts="--no-merges $commit_range" --redact --exit-code 1 .
+
+      - name: Scan the complete tracked source without Git internals
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_dir="$(mktemp -d)"
+          trap 'rm -rf "$source_dir"' EXIT
+          git archive HEAD | tar -x -C "$source_dir"
+          "$RUNNER_TEMP/gitleaks" dir "$source_dir" --redact --exit-code 1

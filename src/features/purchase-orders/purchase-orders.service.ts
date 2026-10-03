@@ -1,5 +1,3 @@
-import * as fs from 'fs';
-import * as fsPromises from 'fs/promises';
 import * as path from 'path';
 import { randomUUID } from 'crypto';
 import * as ExcelJS from 'exceljs';
@@ -1817,30 +1815,49 @@ export class PurchaseOrdersService {
       );
     }
 
-    const relativePath = version.storageKey.startsWith('/')
-      ? version.storageKey.slice(1)
-      : version.storageKey;
-    const filePath = path.join(process.cwd(), relativePath);
-
-    if (!fs.existsSync(filePath)) {
+    if (
+      !isResolvableObjectKey(version.storageKey) ||
+      version.storageKey.startsWith('/') ||
+      version.storageKey.split(/[\\/]/).includes('..')
+    ) {
       throw new NotFoundException(
-        'Tệp tin vật lý không tồn tại trên hệ thống.',
+        'Tệp tin chưa được chuyển lên kho lưu trữ S3.',
       );
     }
+    const fileUrl = await this.storage.getPresignedGetUrl(
+      version.storageKey,
+      PRESIGN_GET_EXPIRY_SECONDS,
+    );
+    const readPreviewBuffer = async () => {
+      const object = await this.storage.headObject(version.storageKey);
+      if (!object.exists)
+        throw new NotFoundException('Không tìm thấy tệp tin.');
+      if (object.sizeBytes == null || object.sizeBytes > 10 * 1024 * 1024) {
+        throw new BadRequestException(
+          'Xem trước hỗ trợ tệp tối đa 10 MiB. Vui lòng tải tệp để xem.',
+        );
+      }
+      return this.storage.getObjectBuffer(version.storageKey);
+    };
 
     const ext = path
       .extname(version.originalFileName || version.storageKey)
       .toLowerCase();
 
-    if (ext === '.xlsx' || ext === '.xls') {
+    if (ext === '.xlsx') {
       const wb = new ExcelJS.Workbook();
-      await wb.xlsx.readFile(filePath);
+      await wb.xlsx.load(new Uint8Array(await readPreviewBuffer()).buffer);
       const sheets: PoDocumentPreviewSheet[] = wb.worksheets.map((ws) => {
         const maxRows = Math.max(ws.rowCount || 0, ws.actualRowCount || 0);
         const maxCols = Math.max(
           ws.columnCount || 0,
           ws.actualColumnCount || 0,
         );
+        if (maxRows * maxCols > 50000) {
+          throw new BadRequestException(
+            'Bảng tính quá lớn để xem trước. Vui lòng tải tệp để xem.',
+          );
+        }
 
         // 1. Build map of merged cells
         const mergeSpans = new Map<
@@ -2006,18 +2023,18 @@ export class PurchaseOrdersService {
       return {
         type: 'excel',
         fileName: version.originalFileName,
-        fileUrl: version.storageKey,
+        fileUrl,
         sheets,
       };
     }
 
     if (ext === '.docx') {
-      const fileBuf = await fsPromises.readFile(filePath);
+      const fileBuf = await readPreviewBuffer();
       const html = await this.parseDocxToHtml(fileBuf);
       return {
         type: 'word',
         fileName: version.originalFileName,
-        fileUrl: version.storageKey,
+        fileUrl,
         html,
       };
     }
@@ -2026,7 +2043,7 @@ export class PurchaseOrdersService {
       return {
         type: 'pdf',
         fileName: version.originalFileName,
-        fileUrl: version.storageKey,
+        fileUrl,
       };
     }
 
@@ -2034,16 +2051,16 @@ export class PurchaseOrdersService {
       return {
         type: 'image',
         fileName: version.originalFileName,
-        fileUrl: version.storageKey,
+        fileUrl,
       };
     }
 
     if (['.txt', '.csv', '.json', '.md'].includes(ext)) {
-      const text = await fsPromises.readFile(filePath, 'utf-8');
+      const text = (await readPreviewBuffer()).toString('utf-8');
       return {
         type: 'text',
         fileName: version.originalFileName,
-        fileUrl: version.storageKey,
+        fileUrl,
         text,
       };
     }
@@ -2051,7 +2068,7 @@ export class PurchaseOrdersService {
     return {
       type: 'unsupported',
       fileName: version.originalFileName,
-      fileUrl: version.storageKey,
+      fileUrl,
     };
   }
 

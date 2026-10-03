@@ -487,6 +487,81 @@ describe('PurchaseOrdersService', () => {
     expect(service).toBeDefined();
   });
 
+  describe('previewDocument from S3', () => {
+    beforeEach(() => {
+      mockPoDocRepo.findOne.mockResolvedValue({
+        purchaseOrderId: 'po-1',
+        documentId: 'doc-1',
+      });
+      mockDocRepo.findOne.mockResolvedValue({
+        id: 'doc-1',
+        currentVersionId: 'version-1',
+      });
+      mockDocVersionRepo.findOne.mockResolvedValue({
+        id: 'version-1',
+        storageKey: 'purchase-orders/po-1/notes.txt',
+        originalFileName: 'notes.txt',
+      });
+      storageMock.getPresignedGetUrl.mockResolvedValue(
+        'https://storage.example/preview',
+      );
+      storageMock.headObject.mockResolvedValue({ exists: true, sizeBytes: 12 });
+      storageMock.getObjectBuffer.mockResolvedValue(Buffer.from('S3 document'));
+    });
+
+    it('reads text from S3 and returns a signed URL', async () => {
+      await expect(
+        service.previewDocument('po-1', 'doc-1'),
+      ).resolves.toMatchObject({
+        type: 'text',
+        text: 'S3 document',
+        fileUrl: 'https://storage.example/preview',
+      });
+      expect(storageMock.getObjectBuffer).toHaveBeenCalledWith(
+        'purchase-orders/po-1/notes.txt',
+      );
+    });
+
+    it.each(['/uploads/notes.txt', '../../.env', 'files/../secret'])(
+      'rejects local or traversing keys: %s',
+      async (storageKey) => {
+        mockDocVersionRepo.findOne.mockResolvedValue({
+          storageKey,
+          originalFileName: 'notes.txt',
+        });
+        await expect(
+          service.previewDocument('po-1', 'doc-1'),
+        ).rejects.toBeInstanceOf(NotFoundException);
+        expect(storageMock.getObjectBuffer).not.toHaveBeenCalled();
+      },
+    );
+
+    it('rejects oversized previews before downloading into the 1 GiB API container', async () => {
+      storageMock.headObject.mockResolvedValue({
+        exists: true,
+        sizeBytes: 20 * 1024 * 1024,
+      });
+      await expect(
+        service.previewDocument('po-1', 'doc-1'),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(storageMock.getObjectBuffer).not.toHaveBeenCalled();
+    });
+
+    it('uses a direct signed URL for PDF instead of buffering it on EC2', async () => {
+      mockDocVersionRepo.findOne.mockResolvedValue({
+        storageKey: 'files/document.pdf',
+        originalFileName: 'document.pdf',
+      });
+      await expect(
+        service.previewDocument('po-1', 'doc-1'),
+      ).resolves.toMatchObject({
+        type: 'pdf',
+        fileUrl: 'https://storage.example/preview',
+      });
+      expect(storageMock.getObjectBuffer).not.toHaveBeenCalled();
+    });
+  });
+
   describe('create', () => {
     beforeEach(() => {
       mockPoRepo.findOne.mockResolvedValue(null);

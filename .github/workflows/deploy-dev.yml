@@ -20,8 +20,9 @@ jobs:
   deploy:
     name: Build, scan and deploy API
     needs: checks
-    if: ${{ github.ref == 'refs/heads/dev' && vars.AWS_ROLE_ARN != '' }}
+    if: ${{ github.ref == 'refs/heads/dev' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     permissions:
       contents: read
       id-token: write
@@ -68,7 +69,20 @@ jobs:
           echo "image=$registry/$ECR_REPOSITORY:sha-$GITHUB_SHA" >> "$GITHUB_OUTPUT"
 
       - name: Build immutable commit image
-        run: docker build --pull --tag "${{ steps.ecr.outputs.image }}" .
+        id: build
+        env:
+          IMAGE: ${{ steps.ecr.outputs.image }}
+          ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+        run: |
+          set -euo pipefail
+          digest="$(aws ecr describe-images --repository-name "$ECR_REPOSITORY" --image-ids "imageTag=sha-$GITHUB_SHA" --query 'imageDetails[0].imageDigest' --output text 2>/dev/null || true)"
+          if [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+            docker pull "$IMAGE"
+            echo 'reuse=true' >> "$GITHUB_OUTPUT"
+          else
+            docker build --pull --tag "$IMAGE" .
+            echo 'reuse=false' >> "$GITHUB_OUTPUT"
+          fi
 
       # aquasecurity/trivy-action v0.36.0
       - name: Scan the exact API image before publishing
@@ -88,9 +102,11 @@ jobs:
         env:
           AWS_REGION: ${{ vars.AWS_REGION }}
           ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+          IMAGE: ${{ steps.ecr.outputs.image }}
+          REUSE_IMAGE: ${{ steps.build.outputs.reuse }}
         run: |
           set -euo pipefail
-          docker push "${{ steps.ecr.outputs.image }}"
+          if [[ "$REUSE_IMAGE" != true ]]; then docker push "$IMAGE"; fi
           digest="$(aws ecr describe-images --region "$AWS_REGION" --repository-name "$ECR_REPOSITORY" --image-ids "imageTag=sha-$GITHUB_SHA" --query 'imageDetails[0].imageDigest' --output text)"
           [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
@@ -104,20 +120,32 @@ jobs:
           SSM_DEPLOY_DIR: ${{ vars.SSM_DEPLOY_DIR }}
           ECR_REGISTRY: ${{ steps.ecr.outputs.registry }}
           IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+          SSM_LOG_GROUP: ${{ vars.SSM_LOG_GROUP }}
+          APP_URL: ${{ vars.APP_URL }}
         run: |
           set -euo pipefail
-          remote_script="$(cat <<EOF
-          set -euo pipefail
-          cd '$SSM_DEPLOY_DIR'
-          aws ecr get-login-password --region '$AWS_REGION' | docker login --username AWS --password-stdin '$ECR_REGISTRY'
-          printf 'RELEASE_DIGEST=%s\\n' '$IMAGE_DIGEST' > release.env.tmp
-          mv release.env.tmp release.env
-          docker compose --env-file release.env -f compose.yaml pull api
-          docker compose --env-file release.env -f compose.yaml run --rm api node_modules/.bin/typeorm migration:run -d dist/database/data-source.js
-          docker compose --env-file release.env -f compose.yaml up -d --no-deps api
-          EOF
-          )"
-          jq -n --arg command "$remote_script" '{commands: [$command]}' > "$RUNNER_TEMP/ssm-parameters.json"
-          command_id="$(aws ssm send-command --region "$AWS_REGION" --instance-ids "$EC2_INSTANCE_ID" --document-name AWS-RunShellScript --parameters "file://$RUNNER_TEMP/ssm-parameters.json" --query 'Command.CommandId' --output text)"
-          aws ssm wait command-executed --region "$AWS_REGION" --command-id "$command_id" --instance-id "$EC2_INSTANCE_ID"
+          [[ "$IMAGE_DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]
+          [[ "$SSM_LOG_GROUP" =~ ^/[A-Za-z0-9/_-]+$ ]]
+          [[ "$APP_URL" =~ ^https://[A-Za-z0-9.-]+$ ]]
+          jq -n --arg command "/usr/local/sbin/tami-deploy.sh $IMAGE_DIGEST" \
+            '{commands: [$command], executionTimeout: ["1800"]}' > "$RUNNER_TEMP/ssm-parameters.json"
+          command_id="$(aws ssm send-command --region "$AWS_REGION" --instance-ids "$EC2_INSTANCE_ID" \
+            --document-name AWS-RunShellScript --parameters "file://$RUNNER_TEMP/ssm-parameters.json" \
+            --cloud-watch-output-config "CloudWatchOutputEnabled=true,CloudWatchLogGroupName=$SSM_LOG_GROUP" \
+            --query 'Command.CommandId' --output text)"
+          status=Pending
+          for _attempt in $(seq 1 180); do
+            status="$(aws ssm get-command-invocation --command-id "$command_id" --instance-id "$EC2_INSTANCE_ID" --query Status --output text 2>/dev/null || echo Pending)"
+            case "$status" in
+              Success) break ;;
+              Failed|Cancelled|TimedOut|Cancelling) break ;;
+            esac
+            sleep 10
+          done
+          if [[ "$status" != Success ]]; then
+            aws ssm get-command-invocation --command-id "$command_id" --instance-id "$EC2_INSTANCE_ID" \
+              --query '{Status:Status,Output:StandardOutputContent,Error:StandardErrorContent}'
+            exit 1
+          fi
+          curl --fail --silent --show-error --retry 6 --retry-all-errors --retry-delay 10 "$APP_URL/api/health/ready"
           echo "Deployed API digest $IMAGE_DIGEST"
