@@ -6,6 +6,7 @@ import { Repository } from 'typeorm';
 import { User } from '../entities/User.entity';
 import { RecordStatus } from '../../../common/enums/database.enums';
 import { ErrorCode } from '../../../common/enums/error-code.enum';
+import { PurchaseOrderMode } from '../../../common/enums/purchase-order-mode.enum';
 import { JwtPayload, RequestUser } from '../jwt-payload.type';
 
 @Injectable()
@@ -46,7 +47,10 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
       email: user.email,
       roleCode: payload.roleCode,
       permissions: payload.permissions,
-      purchaseOrderMode: user.purchaseOrderMode,
+      purchaseOrderMode:
+        payload.roleCode === 'SA'
+          ? PurchaseOrderMode.FULL_ACCESS
+          : user.purchaseOrderMode,
     };
   }
 }
