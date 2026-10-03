@@ -1,8 +1,6 @@
 import { MigrationInterface, QueryRunner } from 'typeorm';
 
-export class DocumentLibrarySearchAndSingleFolder1740000000049
-  implements MigrationInterface
-{
+export class DocumentLibrarySearchAndSingleFolder1740000000049 implements MigrationInterface {
   name = 'DocumentLibrarySearchAndSingleFolder1740000000049';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
@@ -17,25 +15,27 @@ export class DocumentLibrarySearchAndSingleFolder1740000000049
     `);
 
     await queryRunner.query(`
-      CREATE UNIQUE INDEX uq_folder_documents_document_id
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_folder_documents_document_id
       ON folder_documents(document_id)
     `);
     await queryRunner.query(`
-      CREATE INDEX ix_documents_title_trgm
+      CREATE INDEX IF NOT EXISTS ix_documents_title_trgm
       ON documents USING gin (title gin_trgm_ops)
     `);
     await queryRunner.query(`
-      CREATE INDEX ix_document_versions_file_name_trgm
+      CREATE INDEX IF NOT EXISTS ix_document_versions_file_name_trgm
       ON document_versions USING gin (original_file_name gin_trgm_ops)
     `);
     await queryRunner.query(`
-      CREATE INDEX ix_document_folders_name_trgm
+      CREATE INDEX IF NOT EXISTS ix_document_folders_name_trgm
       ON document_folders USING gin (folder_name gin_trgm_ops)
     `);
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(`DROP INDEX IF EXISTS ix_document_folders_name_trgm`);
+    await queryRunner.query(
+      `DROP INDEX IF EXISTS ix_document_folders_name_trgm`,
+    );
     await queryRunner.query(
       `DROP INDEX IF EXISTS ix_document_versions_file_name_trgm`,
     );

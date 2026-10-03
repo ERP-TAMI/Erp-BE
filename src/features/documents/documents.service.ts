@@ -236,7 +236,7 @@ export class DocumentsService {
     const limit = query.limit ?? 20;
     const term = query.search.trim();
     const pattern = `%${term}%`;
-    const rows = await this.dataSource.query(
+    const rows = (await this.dataSource.query(
       `
         WITH search_results AS (
           SELECT
@@ -294,7 +294,7 @@ export class DocumentsService {
         LIMIT $3 OFFSET $4
       `,
       [pattern, DocumentPurpose.FIT_ATTACHMENT, limit, (page - 1) * limit],
-    ) as Array<{
+    )) as Array<{
       kind: 'folder' | 'file';
       result_id: string;
       name: string;
@@ -313,8 +313,9 @@ export class DocumentsService {
     // beyond the last page, so fetch the count explicitly in that case.
     const total = Number(
       rows[0]?.total_count ??
-        (await this.dataSource.query(
-          `
+        (
+          await this.dataSource.query(
+            `
             SELECT
               (SELECT COUNT(*) FROM document_folders WHERE folder_name ILIKE $1)
               +
@@ -328,13 +329,20 @@ export class DocumentsService {
                  AND (document.title ILIKE $1 OR version.original_file_name ILIKE $1))
                 AS total_count
           `,
-          [pattern],
-        ))[0]?.total_count ??
+            [pattern],
+          )
+        )[0]?.total_count ??
         0,
     );
-    const folderIds = [...new Set(rows.map((row) => row.folder_id).filter((id): id is string => Boolean(id)))];
+    const folderIds = [
+      ...new Set(
+        rows
+          .map((row) => row.folder_id)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    ];
     const pathRows = folderIds.length
-      ? (await this.dataSource.query(
+      ? ((await this.dataSource.query(
           `
             WITH RECURSIVE folder_paths AS (
               SELECT
@@ -370,9 +378,11 @@ export class DocumentsService {
           result_folder_id: string;
           folder_ids: string[];
           folder_names: string[];
-        }>
+        }>)
       : [];
-    const pathsByFolderId = new Map(pathRows.map((row) => [row.result_folder_id, row]));
+    const pathsByFolderId = new Map(
+      pathRows.map((row) => [row.result_folder_id, row]),
+    );
 
     return {
       data: rows.map((row) => {
@@ -926,7 +936,9 @@ export class DocumentsService {
         lock: { mode: 'pessimistic_write' },
       });
       if (documents.length !== dto.documentIds.length) {
-        throw new NotFoundException('Một hoặc nhiều tài liệu không còn trong kho.');
+        throw new NotFoundException(
+          'Một hoặc nhiều tài liệu không còn trong kho.',
+        );
       }
 
       const links = await manager.getRepository(FolderDocument).find({
@@ -944,14 +956,18 @@ export class DocumentsService {
         return { movedCount: 0, targetFolderId: folder.id };
       }
 
-      const oldFolderIds = [...new Set(linksToMove.map((link) => link.folderId))];
+      const oldFolderIds = [
+        ...new Set(linksToMove.map((link) => link.folderId)),
+      ];
       const oldFolders = await manager.getRepository(DocumentFolder).find({
         where: { id: In(oldFolderIds) },
       });
       const oldFolderNames = new Map(
         oldFolders.map((oldFolder) => [oldFolder.id, oldFolder.folderName]),
       );
-      const documentById = new Map(documents.map((document) => [document.id, document]));
+      const documentById = new Map(
+        documents.map((document) => [document.id, document]),
+      );
 
       await manager.query(
         `
@@ -959,7 +975,11 @@ export class DocumentsService {
           SET folder_id = $1, linked_at = NOW(), linked_by = $2
           WHERE document_id = ANY($3::uuid[])
         `,
-        [dto.targetFolderId, actor.id, linksToMove.map((link) => link.documentId)],
+        [
+          dto.targetFolderId,
+          actor.id,
+          linksToMove.map((link) => link.documentId),
+        ],
       );
 
       for (const link of linksToMove) {

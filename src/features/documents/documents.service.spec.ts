@@ -328,7 +328,7 @@ describe('DocumentsService', () => {
     expect(documentQuery.innerJoin).toHaveBeenCalledWith(
       FolderDocument,
       'folderDocument',
-      expect.stringContaining('SELECT canonicalFolderDocument.folder_id'),
+      'folderDocument.documentId = document.id',
       undefined,
     );
     expect(documentQuery.orderBy).toHaveBeenCalledWith(
