@@ -46,7 +46,7 @@ export class User {
   @Column({
     type: 'varchar',
     length: 20,
-    default: PurchaseOrderMode.READ_ONLY,
+    default: PurchaseOrderMode.FULL_ACCESS,
     name: 'purchase_order_mode',
   })
   purchaseOrderMode: PurchaseOrderMode;

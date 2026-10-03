@@ -91,19 +91,19 @@ describe('PO BOM write access mode (e2e)', () => {
 
   afterEach(async () => app.close());
 
-  it('denies direct header updates and discontinue requests for a PO BOM in read-only mode', async () => {
+  it('allows SA to update and discontinue a PO BOM regardless of legacy mode', async () => {
     await request(app.getHttpServer())
       .patch(`/boms/${bomId}`)
       .send({ deadline: '2026-10-01' })
-      .expect(403);
+      .expect(200);
 
     await request(app.getHttpServer())
       .post(`/boms/${bomId}/discontinue`)
       .send({ reason: 'Test cancellation', expectedRowVersion: 1 })
-      .expect(403);
+      .expect(200);
 
-    expect(bomsService.update).not.toHaveBeenCalled();
-    expect(bomsService.discontinue).not.toHaveBeenCalled();
+    expect(bomsService.update).toHaveBeenCalled();
+    expect(bomsService.discontinue).toHaveBeenCalled();
   });
 
   it('lets the route UUID pipe reject malformed IDs before querying the BOM', async () => {
@@ -116,11 +116,11 @@ describe('PO BOM write access mode (e2e)', () => {
     expect(bomsService.update).not.toHaveBeenCalled();
   });
 
-  it('denies creation of a PO BOM in read-only mode before calling the service', async () => {
+  it('allows SA past the PO mode check before validating a new PO BOM', async () => {
     await request(app.getHttpServer())
       .post('/boms')
       .send({ type: BomType.PO })
-      .expect(403);
+      .expect(400);
 
     expect(bomsService.create).not.toHaveBeenCalled();
   });

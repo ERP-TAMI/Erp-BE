@@ -197,6 +197,7 @@ export function assertCanAddLine(
   }
 
   const roleUpper = actorRole.trim().toUpperCase();
+  if (roleUpper === UserRoleCode.SA) return;
 
   if (currentRev?.status === BomRevisionStatus.WAIT_SA_APPROVE) {
     forbidden(
@@ -270,6 +271,8 @@ export function assertCanUpdateLine(
     );
   }
 
+  if (roleUpper === UserRoleCode.SA) return;
+
   if (currentRev?.status === BomRevisionStatus.WAIT_SA_APPROVE) {
     forbidden(
       'Revision đang ở bước chờ Giám Đốc duyệt (wait_sa_approve) là chỉ đọc, không thể chỉnh sửa dòng vật tư.',
@@ -282,7 +285,10 @@ export function assertCanUpdateLine(
         'Đơn giá vật tư chỉ được phép cập nhật ở bước Kế toán (wait_accounting).',
       );
     }
-    if (!LINE_UNIT_COST_MUTATION_ROLES.has(roleUpper)) {
+    if (
+      roleUpper !== UserRoleCode.SA &&
+      !LINE_UNIT_COST_MUTATION_ROLES.has(roleUpper)
+    ) {
       forbidden(
         'Chỉ Kế toán (ACCOUNTING) mới có quyền cập nhật đơn giá vật tư.',
       );
@@ -344,6 +350,7 @@ export function assertCanDeleteLine(
   }
 
   const roleUpper = actorRole.trim().toUpperCase();
+  if (roleUpper === UserRoleCode.SA) return;
 
   if (currentRev?.status === BomRevisionStatus.WAIT_SA_APPROVE) {
     forbidden(
@@ -402,6 +409,7 @@ export function assertCanReorderLines(
   }
 
   const roleUpper = actorRole.trim().toUpperCase();
+  if (roleUpper === UserRoleCode.SA) return;
 
   if (currentRev?.status === BomRevisionStatus.WAIT_SA_APPROVE) {
     forbidden(
@@ -553,7 +561,10 @@ export function assertCanForwardBom(
   }
 
   const roleUpper = actorRole.trim().toUpperCase();
-  if (!transitionRule.allowedRoles.has(roleUpper)) {
+  if (
+    roleUpper !== UserRoleCode.SA &&
+    !transitionRule.allowedRoles.has(roleUpper)
+  ) {
     forbidden(
       `Vai trò của bạn không có quyền forward NPL tại trạng thái: ${currentRev.status}`,
     );
@@ -732,7 +743,10 @@ export function assertCanRejectBom(
   }
 
   const roleUpper = actorRole.trim().toUpperCase();
-  if (!rejectRule.allowedRoles.has(roleUpper)) {
+  if (
+    roleUpper !== UserRoleCode.SA &&
+    !rejectRule.allowedRoles.has(roleUpper)
+  ) {
     forbidden(
       `Vai trò của bạn không có quyền trả lại NPL tại trạng thái: ${currentRev.status}`,
     );

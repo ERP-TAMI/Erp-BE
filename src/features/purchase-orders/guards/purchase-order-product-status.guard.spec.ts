@@ -43,11 +43,11 @@ describe('PurchaseOrderProductStatusGuard', () => {
     },
   );
 
-  it('still rejects SA when the PO module is read-only', () => {
+  it('allows SA regardless of the legacy PO mode', () => {
     expect(() =>
       guard.canActivate(
         makeContext(makeUser('SA', PurchaseOrderMode.READ_ONLY)),
       ),
-    ).toThrow(ForbiddenException);
+    ).not.toThrow();
   });
 });

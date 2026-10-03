@@ -1,4 +1,4 @@
-import { ExecutionContext, ForbiddenException } from '@nestjs/common';
+import { ExecutionContext } from '@nestjs/common';
 import { PurchaseOrderMode } from '../../../common/enums/purchase-order-mode.enum';
 import { PurchaseOrderUploadWriteAccessGuard } from './purchase-order-upload-write-access.guard';
 import { StorageEntityType } from '../dto/presign-upload.dto';
@@ -22,12 +22,12 @@ describe('PurchaseOrderUploadWriteAccessGuard', () => {
     purchaseOrderMode: PurchaseOrderMode.READ_ONLY,
   };
 
-  it('blocks a read-only SA from requesting a PO upload URL', () => {
+  it('allows SA to request a PO upload URL regardless of the legacy mode', () => {
     expect(() =>
       guard.canActivate(
         context({ entityType: StorageEntityType.PURCHASE_ORDER }, saReadOnly),
       ),
-    ).toThrow(ForbiddenException);
+    ).not.toThrow();
   });
 
   it('allows an SA in full-access mode to request a PO upload URL', () => {

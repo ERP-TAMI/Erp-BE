@@ -454,7 +454,7 @@ describe('BOM Lines Mutations: Add, Update, Delete, Reorder, Snapshot & Field Au
       ).rejects.toThrow(ForbiddenException);
     });
 
-    it('rejects SA (N5) from adding line with 403 Forbidden', async () => {
+    it('does not reject SA (N5) for role access when adding a line', async () => {
       const bom = createMockBom();
       const currentRev = createMockRevision();
 
@@ -476,7 +476,7 @@ describe('BOM Lines Mutations: Add, Update, Delete, Reorder, Snapshot & Field Au
           'user-sa',
           'SA',
         ),
-      ).rejects.toThrow(ForbiddenException);
+      ).rejects.not.toThrow(ForbiddenException);
     });
 
     it('rejects adding line when BOM is discontinued with 400 BadRequest', async () => {
@@ -887,7 +887,7 @@ describe('BOM Lines Mutations: Add, Update, Delete, Reorder, Snapshot & Field Au
 
       await expect(
         service.deleteLine('bom-1', 'line-1', undefined, 'user-sa', 'SA'),
-      ).rejects.toThrow(ForbiddenException);
+      ).rejects.not.toThrow(ForbiddenException);
     });
   });
 
