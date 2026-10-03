@@ -28,7 +28,7 @@ describe('Management dashboard API (e2e)', () => {
     meta: { total: 0, page: 1, limit: 10, totalPages: 1 },
   };
   const endpoints = [
-    '/management/dashboard/summary?month=2026-09',
+    '/management/dashboard/summary?periodType=month&month=2026-09',
     '/management/dashboard/purchase-orders?month=2026-09',
   ];
   const managementDashboardService = {
@@ -89,13 +89,14 @@ describe('Management dashboard API (e2e)', () => {
     managementDashboardService.getSummary.mockResolvedValue(summary);
 
     await request(app.getHttpServer())
-      .get('/management/dashboard/summary?month=2026-09')
+      .get('/management/dashboard/summary?periodType=month&month=2026-09')
       .expect(200)
       .expect(summary);
 
-    expect(managementDashboardService.getSummary).toHaveBeenCalledWith(
-      '2026-09',
-    );
+    expect(managementDashboardService.getSummary).toHaveBeenCalledWith({
+      periodType: 'month',
+      month: '2026-09',
+    });
   });
 
   it('allows another role explicitly granted management access to read both endpoints', async () => {
@@ -118,7 +119,7 @@ describe('Management dashboard API (e2e)', () => {
     'rejects invalid month %s',
     async (month) => {
       await request(app.getHttpServer())
-        .get(`/management/dashboard/summary?month=${month}`)
+        .get(`/management/dashboard/summary?periodType=month&month=${month}`)
         .expect(400);
 
       expect(managementDashboardService.getSummary).not.toHaveBeenCalled();
@@ -139,7 +140,9 @@ describe('Management dashboard API (e2e)', () => {
 
   it('rejects unknown query fields', async () => {
     await request(app.getHttpServer())
-      .get('/management/dashboard/summary?month=2026-09&ignored=true')
+      .get(
+        '/management/dashboard/summary?periodType=month&month=2026-09&ignored=true',
+      )
       .expect(400);
   });
 
@@ -163,7 +166,7 @@ describe('Management dashboard API (e2e)', () => {
     currentPermissions = [];
 
     await request(app.getHttpServer())
-      .get('/management/dashboard/summary?month=2026-09')
+      .get('/management/dashboard/summary?periodType=month&month=2026-09')
       .expect(403);
 
     expect(managementDashboardService.getSummary).not.toHaveBeenCalled();

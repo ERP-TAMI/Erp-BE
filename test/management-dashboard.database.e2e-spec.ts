@@ -1,4 +1,8 @@
-import { INestApplication, ValidationPipe } from '@nestjs/common';
+import {
+  ExecutionContext,
+  INestApplication,
+  ValidationPipe,
+} from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import * as request from 'supertest';
 import { DataSource } from 'typeorm';
@@ -8,11 +12,39 @@ import { JwtAuthGuard } from '../src/common/guards/jwt-auth.guard';
 import { PermissionGuard } from '../src/common/guards/permission.guard';
 
 type SummaryResponse = {
-  month: string;
+  periodType: 'month' | 'year' | 'range' | 'all';
+  periodStart: string;
+  periodEnd: string;
+  trendGranularity: 'day' | 'month' | 'year';
   totalPurchaseOrders: number;
   completedPurchaseOrders: number;
-  overduePurchaseOrders: number;
+  cancelledPurchaseOrders: number;
+  processingPurchaseOrders: number;
+  overdueProductPurchaseOrders: number;
+  upcomingProductPurchaseOrders: number;
+  pendingBomCount: number;
   activeEmployees: number;
+  trend: Array<{ period: string; received: number; completed: number }>;
+  comparison: {
+    periodStart: string;
+    periodEnd: string;
+    currentEnd: string;
+    trend: Array<{ period: string; received: number | null }>;
+  } | null;
+  purchaseOrderStatuses: Array<{ status: string; count: number }>;
+  bomRevisionStatuses: Array<{ status: string; count: number }>;
+  topCustomers: Array<{ customerName: string; count: number }>;
+  overdueQueue: Array<{
+    purchaseOrderId: string;
+    productCount: number;
+    deadline: string;
+  }>;
+  upcomingQueue: Array<{
+    purchaseOrderId: string;
+    productCount: number;
+    deadline: string;
+  }>;
+  pendingBomQueue: Array<{ bomId: string; status: string }>;
 };
 
 type PurchaseOrdersOverviewResponse = {
@@ -37,6 +69,23 @@ function shiftDate(date: string, days: number): string {
   return shifted.toISOString().slice(0, 10);
 }
 
+function previousYearComparisonEnd(today: string): string {
+  const year = Number(today.slice(0, 4));
+  const currentYearStart = `${year}-01-01`;
+  const previousYearStart = `${year - 1}-01-01`;
+  const elapsedDays =
+    (Date.parse(`${shiftDate(today, 1)}T00:00:00.000Z`) -
+      Date.parse(`${currentYearStart}T00:00:00.000Z`)) /
+    (24 * 60 * 60 * 1000);
+  const shiftedComparisonEnd = shiftDate(previousYearStart, elapsedDays);
+  const comparisonEndExclusive =
+    shiftedComparisonEnd < currentYearStart
+      ? shiftedComparisonEnd
+      : currentYearStart;
+
+  return shiftDate(comparisonEndExclusive, -1);
+}
+
 function nextMonthStart(month: string): string {
   const [year, monthNumber] = month.split('-').map(Number);
   return new Date(Date.UTC(year, monthNumber, 1)).toISOString().slice(0, 10);
@@ -47,11 +96,20 @@ describe('Management dashboard API with PostgreSQL (e2e)', () => {
   const month = '2026-09';
   let app: INestApplication;
   let dataSource: DataSource;
+  let authenticatedRole = 'SA';
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
       .overrideGuard(JwtAuthGuard)
-      .useValue({ canActivate: () => true })
+      .useValue({
+        canActivate: (context: ExecutionContext) => {
+          const request = context.switchToHttp().getRequest<{
+            user?: { roleCode: string; permissions: string[] };
+          }>();
+          request.user = { roleCode: authenticatedRole, permissions: [] };
+          return true;
+        },
+      })
       .overrideGuard(PermissionGuard)
       .useValue({ canActivate: () => true })
       .compile();
@@ -100,10 +158,178 @@ describe('Management dashboard API with PostgreSQL (e2e)', () => {
 
   async function getSummary(): Promise<SummaryResponse> {
     const response = await request(app.getHttpServer())
-      .get(`/management/dashboard/summary?month=${month}`)
+      .get(`/management/dashboard/summary?periodType=month&month=${month}`)
       .expect(200);
     return response.body as SummaryResponse;
   }
+
+  async function getYearSummary(year: string): Promise<SummaryResponse> {
+    const response = await request(app.getHttpServer())
+      .get(`/dashboard/summary?periodType=year&year=${year}`)
+      .expect(200);
+    return response.body as SummaryResponse;
+  }
+
+  it('serves the same operating dashboard to business roles without employee metrics and rejects IT', async () => {
+    authenticatedRole = 'NVKH';
+    const response = await request(app.getHttpServer())
+      .get(`/dashboard/summary?periodType=month&month=${month}`)
+      .expect(200);
+    const summaryResponse = response.body as SummaryResponse;
+    expect(summaryResponse).toMatchObject({
+      periodType: 'month',
+      periodStart: `${month}-01`,
+      periodEnd: '2026-09-30',
+      totalPurchaseOrders: expect.any(Number),
+      overdueProductPurchaseOrders: expect.any(Number),
+      upcomingProductPurchaseOrders: expect.any(Number),
+      pendingBomCount: expect.any(Number),
+      trendGranularity: 'day',
+      trend: expect.any(Array),
+    });
+    expect(summaryResponse).not.toHaveProperty('activeEmployees');
+    expect(summaryResponse.comparison).toMatchObject({
+      periodStart: '2026-08-01',
+      periodEnd: '2026-08-31',
+      currentEnd: '2026-09-30',
+    });
+    expect(summaryResponse.comparison?.trend).toHaveLength(
+      summaryResponse.trend.length,
+    );
+    expect(
+      summaryResponse.comparison?.trend.map(({ period }) => period),
+    ).toEqual(summaryResponse.trend.map(({ period }) => period));
+
+    authenticatedRole = 'SA';
+    const managementResponse = await request(app.getHttpServer())
+      .get(`/management/dashboard/summary?periodType=month&month=${month}`)
+      .expect(200);
+    const managementSummary = managementResponse.body as SummaryResponse;
+    expect(managementSummary.comparison).toMatchObject({
+      periodStart: '2026-08-01',
+      periodEnd: '2026-08-31',
+      currentEnd: '2026-09-30',
+    });
+    expect(
+      managementSummary.comparison?.trend.map(({ period }) => period),
+    ).toEqual(managementSummary.trend.map(({ period }) => period));
+    authenticatedRole = 'NVKH';
+
+    await request(app.getHttpServer())
+      .get(
+        '/dashboard/summary?periodType=range&fromDate=2026-09-05&toDate=2026-09-12',
+      )
+      .expect(200)
+      .expect(({ body }) => {
+        const rangeSummary = body as SummaryResponse;
+        expect(rangeSummary).toMatchObject({
+          periodType: 'range',
+          periodStart: '2026-09-05',
+          periodEnd: '2026-09-12',
+          trendGranularity: 'day',
+          comparison: {
+            periodStart: '2026-08-28',
+            periodEnd: '2026-09-04',
+            currentEnd: '2026-09-12',
+          },
+        });
+        expect(
+          rangeSummary.comparison?.trend.map(({ period }) => period),
+        ).toEqual(rangeSummary.trend.map(({ period }) => period));
+      });
+
+    const [{ today }] = (await dataSource.query(
+      `SELECT to_char((CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Ho_Chi_Minh')::date, 'YYYY-MM-DD') AS today`,
+    )) as Array<{ today: string }>;
+    const currentYear = today.slice(0, 4);
+
+    await request(app.getHttpServer())
+      .get(`/dashboard/summary?periodType=year&year=${currentYear}`)
+      .expect(200)
+      .expect(({ body }) => {
+        const yearSummary = body as SummaryResponse;
+        expect(yearSummary).toMatchObject({
+          periodType: 'year',
+          trendGranularity: 'month',
+          comparison: {
+            periodStart: `${Number(currentYear) - 1}-01-01`,
+            periodEnd: previousYearComparisonEnd(today),
+            currentEnd: today,
+          },
+        });
+        expect(
+          yearSummary.comparison?.trend.map(({ period }) => period),
+        ).toEqual(yearSummary.trend.map(({ period }) => period));
+      });
+
+    await request(app.getHttpServer())
+      .get('/dashboard/summary?periodType=all')
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          periodType: 'all',
+          trendGranularity: 'year',
+          comparison: null,
+        });
+      });
+
+    await request(app.getHttpServer())
+      .get(
+        '/dashboard/summary?periodType=range&fromDate=2026-09-12&toDate=2026-09-05',
+      )
+      .expect(400);
+
+    authenticatedRole = 'IT';
+    await request(app.getHttpServer())
+      .get(`/dashboard/summary?month=${month}`)
+      .expect(403);
+    authenticatedRole = 'SA';
+  });
+
+  it('excludes future-dated receipts from the current partial month chart bucket', async () => {
+    const [{ today }] = (await dataSource.query(
+      `SELECT to_char((CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Ho_Chi_Minh')::date, 'YYYY-MM-DD') AS today`,
+    )) as Array<{ today: string }>;
+    if (today.endsWith('-12-31')) return;
+
+    const year = today.slice(0, 4);
+    const currentMonth = today.slice(0, 7);
+    const futureReceivedDate = shiftDate(today, 1);
+    const before = await getYearSummary(year);
+    const [{ id: customerId }] = (await dataSource.query(
+      `
+        INSERT INTO customers (customer_code, customer_name)
+        VALUES ($1, $2)
+        RETURNING id
+      `,
+      [`${runKey}-FUTURE-CHART-CUSTOMER`, `${runKey} Future Chart Customer`],
+    )) as Array<{ id: string }>;
+
+    await dataSource.query(
+      `
+        INSERT INTO purchase_orders (
+          po_code, customer_id, customer_name_snapshot, received_date,
+          deadline, status
+        )
+        VALUES ($1, $2, $3, $4::date, $5::date, 'in_progress')
+      `,
+      [
+        `${runKey}-FUTURE-CHART`,
+        customerId,
+        `${runKey} Future Chart Customer`,
+        futureReceivedDate,
+        shiftDate(futureReceivedDate, 7),
+      ],
+    );
+
+    const after = await getYearSummary(year);
+    expect(after.totalPurchaseOrders).toBe(before.totalPurchaseOrders + 1);
+    expect(
+      after.trend.find(({ period }) => period === currentMonth)?.received,
+    ).toBe(
+      before.trend.find(({ period }) => period === currentMonth)?.received,
+    );
+  });
 
   async function getOverview(
     selectedMonth: string,
@@ -368,15 +594,17 @@ describe('Management dashboard API with PostgreSQL (e2e)', () => {
     async (label, pending, locked, lockout, expected) => {
       const baseline = await getSummary();
       await dataSource.query(
-        `INSERT INTO users (email, password_hash, full_name, status, must_change_password, manually_locked_at, lockout_until)
+        `INSERT INTO users (email, password_hash, full_name, status, must_change_password, manually_locked_at, lockout_until, created_at)
        VALUES ($1, 'test-only', $2, 'active', $3, CASE WHEN $4 THEN CURRENT_TIMESTAMP ELSE NULL END,
-         CASE WHEN $5::text IS NULL THEN NULL ELSE CURRENT_TIMESTAMP + $5::interval END)`,
+         CASE WHEN $5::text IS NULL THEN NULL ELSE CURRENT_TIMESTAMP + $5::interval END,
+         $6::date::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh')`,
         [
           `${runKey.toLowerCase()}-state-${String(label).replace(/ /g, '-')}@tami.test`,
           label,
           pending,
           locked,
           lockout,
+          `${month}-15`,
         ],
       );
       const summary = await getSummary();
@@ -386,7 +614,106 @@ describe('Management dashboard API with PostgreSQL (e2e)', () => {
     },
   );
 
-  it('counts overdue POs by the PO deadline, including orders without products', async () => {
+  it('uses PO deadlines for upcoming alerts including missing product deadlines and the seventh day', async () => {
+    const baseline = await getSummary();
+    const [{ today }] = await dataSource.query(
+      `SELECT (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Ho_Chi_Minh')::date::text AS today`,
+    );
+    const cases = [
+      { key: 'TODAY', offset: 0, products: [] },
+      { key: 'NULL-PRODUCT-DATE', offset: 6, products: [null] },
+      { key: 'DAY-SEVEN', offset: 7, products: [14, 15] },
+      { key: 'DAY-EIGHT', offset: 8, products: [1] },
+      { key: 'PAST', offset: -1, products: [1] },
+      { key: 'NO-PO-DATE', offset: null, products: [1] },
+      { key: 'CLOSED', offset: 1, products: [1], status: 'closed' },
+      { key: 'CANCELLED', offset: 1, products: [1], status: 'cancelled' },
+      { key: 'ARCHIVED', offset: 1, products: [1], archived: true },
+    ];
+    const ids: string[] = [];
+    try {
+      for (const fixture of cases) {
+        const [{ id }] = await dataSource.query(
+          `INSERT INTO purchase_orders
+            (po_code, customer_name_snapshot, received_date, deadline, status, cancellation_reason, closed_at, archived_at)
+           VALUES ($1, 'Dashboard deadline regression', '2026-01-01', $2::date, $3::po_status,
+             CASE WHEN $3 = 'cancelled' THEN 'Test cancellation' END,
+             CASE WHEN $3 = 'closed' THEN now() END,
+             CASE WHEN $4 THEN now() END) RETURNING id`,
+          [
+            `${runKey}-000-${fixture.key}`,
+            fixture.offset === null ? null : shiftDate(today, fixture.offset),
+            fixture.status ?? 'in_progress',
+            fixture.archived ?? false,
+          ],
+        );
+        ids.push(id);
+        for (const [index, offset] of fixture.products.entries()) {
+          await dataSource.query(
+            `INSERT INTO purchase_order_products (purchase_order_id, product_code, product_name, deadline, status)
+             VALUES ($1, $2, 'Dashboard deadline regression', $3::date, 'draft')`,
+            [
+              id,
+              `PRODUCT-${index}`,
+              offset === null ? null : shiftDate(today, offset),
+            ],
+          );
+        }
+      }
+      const result = await getSummary();
+      expect(result.upcomingProductPurchaseOrders).toBe(
+        baseline.upcomingProductPurchaseOrders + 3,
+      );
+      expect(result.overdueProductPurchaseOrders).toBe(
+        baseline.overdueProductPurchaseOrders,
+      );
+      expect(result.upcomingQueue).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            purchaseOrderId: ids[0],
+            productCount: 0,
+            deadline: today,
+          }),
+        ]),
+      );
+      // Independently verify the capped queue and its PO deadlines, including ordering.
+      const expectedQueue = await dataSource.query(
+        `SELECT po.id AS "purchaseOrderId", to_char(po.deadline, 'YYYY-MM-DD') AS deadline,
+           (SELECT COUNT(*)::int FROM purchase_order_products p WHERE p.purchase_order_id = po.id AND p.status NOT IN ('closed','cancelled')) AS "productCount"
+         FROM purchase_orders po WHERE po.archived_at IS NULL AND po.status NOT IN ('closed','cancelled')
+           AND po.deadline BETWEEN $1::date AND $1::date + 7
+         ORDER BY po.deadline, po.po_code LIMIT 5`,
+        [today],
+      );
+      expect(
+        result.upcomingQueue.map(
+          ({ purchaseOrderId, deadline, productCount }) => ({
+            purchaseOrderId,
+            deadline,
+            productCount,
+          }),
+        ),
+      ).toEqual(expectedQueue);
+      const business = await request(app.getHttpServer())
+        .get('/dashboard/summary?periodType=month&month=2026-12')
+        .expect(200);
+      expect(business.body.upcomingProductPurchaseOrders).toBe(
+        result.upcomingProductPurchaseOrders,
+      );
+      expect(business.body.upcomingQueue).toEqual(result.upcomingQueue);
+    } finally {
+      await dataSource.query(
+        'DELETE FROM purchase_order_products WHERE purchase_order_id = ANY($1::uuid[])',
+        [ids],
+      );
+      await dataSource.query(
+        'DELETE FROM purchase_orders WHERE id = ANY($1::uuid[])',
+        [ids],
+      );
+    }
+  });
+
+  it('counts overdue POs by product deadlines and counts a PO once', async () => {
     const baseline = await getSummary();
     const [{ id: customerId }] = (await dataSource.query(
       `
@@ -399,16 +726,17 @@ describe('Management dashboard API with PostgreSQL (e2e)', () => {
 
     await dataSource.query(
       `
-        INSERT INTO users (email, password_hash, full_name, status, must_change_password)
+        INSERT INTO users (email, password_hash, full_name, status, must_change_password, created_at)
         VALUES
-          ($1, 'test-only', $2, 'active', false),
-          ($3, 'test-only', $4, 'inactive', false)
+          ($1, 'test-only', $2, 'active', false, $5::date::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh'),
+          ($3, 'test-only', $4, 'inactive', false, $5::date::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh')
       `,
       [
         `${runKey.toLowerCase()}-active@tami.test`,
         `${runKey} Active`,
         `${runKey.toLowerCase()}-inactive@tami.test`,
         `${runKey} Inactive`,
+        `${month}-15`,
       ],
     );
 
@@ -432,7 +760,9 @@ describe('Management dashboard API with PostgreSQL (e2e)', () => {
           ($4, $8, $9, '2026-09-20', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Ho_Chi_Minh')::date, 'pending_rd', NULL, NULL, NULL),
           ($5, $8, $9, '2026-10-01', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - 1, 'in_progress', NULL, NULL, NULL),
           ($6, $8, $9, '2026-09-10', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - 1, 'in_progress', NULL, NULL, now()),
-          ($7, $8, $9, '2026-09-22', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - 1, 'draft', NULL, NULL, NULL)
+          ($7, $8, $9, '2026-09-22', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - 1, 'draft', NULL, NULL, NULL),
+          ($10, $8, $9, '2026-08-01', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - 1, 'in_progress', NULL, NULL, NULL),
+          ($11, $8, $9, '2026-08-15', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Ho_Chi_Minh')::date + 3, 'in_progress', NULL, NULL, NULL)
         RETURNING id, po_code
       `,
       [
@@ -445,6 +775,8 @@ describe('Management dashboard API with PostgreSQL (e2e)', () => {
         `${runKey}-EMPTY-OVERDUE`,
         customerId,
         `${runKey} Customer`,
+        `${runKey}-OLD-OVERDUE`,
+        `${runKey}-OLD-UPCOMING`,
       ],
     )) as Array<{ id: string; po_code: string }>;
     const overduePoId = purchaseOrders.find((po) =>
@@ -452,6 +784,12 @@ describe('Management dashboard API with PostgreSQL (e2e)', () => {
     )?.id;
     const todayPoId = purchaseOrders.find((po) =>
       po.po_code.endsWith('-TODAY'),
+    )?.id;
+    const oldOverduePoId = purchaseOrders.find((po) =>
+      po.po_code.endsWith('-OLD-OVERDUE'),
+    )?.id;
+    const oldUpcomingPoId = purchaseOrders.find((po) =>
+      po.po_code.endsWith('-OLD-UPCOMING'),
     )?.id;
 
     await dataSource.query(
@@ -466,16 +804,24 @@ describe('Management dashboard API with PostgreSQL (e2e)', () => {
         VALUES
           ($1, 'OVERDUE-1', 'Overdue one', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - 1, 'sampling'),
           ($1, 'OVERDUE-2', 'Overdue two', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - 2, 'sampling'),
-          ($2, 'DUE-TODAY', 'Due today', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Ho_Chi_Minh')::date, 'sampling')
+          ($2, 'DUE-TODAY', 'Due today', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Ho_Chi_Minh')::date, 'sampling'),
+          ($3, 'OLD-OVERDUE', 'Imported overdue', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - 1, 'sampling'),
+          ($4, 'OLD-UPCOMING', 'Imported upcoming', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Ho_Chi_Minh')::date + 3, 'sampling')
       `,
-      [overduePoId, todayPoId],
+      [overduePoId, todayPoId, oldOverduePoId, oldUpcomingPoId],
     );
 
-    await expect(getSummary()).resolves.toEqual({
-      month,
-      totalPurchaseOrders: baseline.totalPurchaseOrders + 5,
+    await expect(getSummary()).resolves.toMatchObject({
+      periodType: 'month',
+      periodStart: `${month}-01`,
+      periodEnd: shiftDate(nextMonthStart(month), -1),
+      totalPurchaseOrders: baseline.totalPurchaseOrders + 4,
       completedPurchaseOrders: baseline.completedPurchaseOrders + 1,
-      overduePurchaseOrders: baseline.overduePurchaseOrders + 2,
+      cancelledPurchaseOrders: baseline.cancelledPurchaseOrders + 1,
+      processingPurchaseOrders: baseline.processingPurchaseOrders + 3,
+      overdueProductPurchaseOrders: baseline.overdueProductPurchaseOrders + 2,
+      upcomingProductPurchaseOrders: baseline.upcomingProductPurchaseOrders + 2,
+      pendingBomCount: baseline.pendingBomCount,
       activeEmployees: baseline.activeEmployees + 1,
     });
   });

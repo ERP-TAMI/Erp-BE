@@ -1,7 +1,7 @@
 import { Controller, Get, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { Auth } from '../../common/decorators/auth.decorator';
-import { ManagementDashboardQueryDto } from './dto/management-dashboard-query.dto';
+import { DashboardSummaryQueryDto } from './dto/dashboard-summary-query.dto';
 import { ManagementDashboardSummaryDto } from './dto/management-dashboard-summary.dto';
 import { ManagementDashboardService } from './management-dashboard.service';
 import { ManagementPurchaseOrdersQueryDto } from './dto/management-purchase-orders-query.dto';
@@ -21,9 +21,9 @@ export class ManagementDashboardController {
   @Get('summary')
   @ApiOkResponse({ type: ManagementDashboardSummaryDto })
   getSummary(
-    @Query() query: ManagementDashboardQueryDto,
+    @Query() query: DashboardSummaryQueryDto,
   ): Promise<ManagementDashboardSummaryDto> {
-    return this.managementDashboardService.getSummary(query.month);
+    return this.managementDashboardService.getSummary(query);
   }
 
   @Get('purchase-orders')

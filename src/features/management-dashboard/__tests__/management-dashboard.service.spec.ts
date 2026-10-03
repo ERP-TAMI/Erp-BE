@@ -7,6 +7,8 @@ describe('ManagementDashboardService', () => {
   let service: ManagementDashboardService;
 
   beforeEach(() => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date('2026-10-02T04:00:00.000Z'));
     dataSource = {
       query: jest.fn(),
     };
@@ -15,41 +17,101 @@ describe('ManagementDashboardService', () => {
     );
   });
 
-  it('returns the four dashboard metrics and preserves the selected month', async () => {
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  it('returns operational KPIs and chart data using product deadlines and HCM dates', async () => {
     dataSource.query.mockResolvedValue([
       {
         total_purchase_orders: '12',
         completed_purchase_orders: '5',
-        overdue_purchase_orders: '3',
+        cancelled_purchase_orders: '2',
+        processing_purchase_orders: '18',
+        overdue_product_purchase_orders: '3',
+        upcoming_product_purchase_orders: '4',
+        pending_boms: '7',
         active_employees: '24',
+        trend: [{ period: '2026-09-01', received: 12, completed: 5 }],
+        comparison_trend: [{ period: '2026-09-01', received: 7 }],
+        purchase_order_statuses: [],
+        bom_revision_statuses: [],
+        top_customers: [],
+        overdue_queue: [],
+        upcoming_queue: [],
+        pending_bom_queue: [],
       },
     ]);
 
-    await expect(service.getSummary('2026-09')).resolves.toEqual({
-      month: '2026-09',
+    await expect(
+      service.getSummary({ periodType: 'month', month: '2026-09' }),
+    ).resolves.toEqual({
+      periodType: 'month',
+      periodStart: '2026-09-01',
+      periodEnd: '2026-09-30',
+      trendGranularity: 'day',
       totalPurchaseOrders: 12,
       completedPurchaseOrders: 5,
-      overduePurchaseOrders: 3,
+      cancelledPurchaseOrders: 2,
+      processingPurchaseOrders: 18,
+      overdueProductPurchaseOrders: 3,
+      upcomingProductPurchaseOrders: 4,
+      pendingBomCount: 7,
       activeEmployees: 24,
+      trend: [{ period: '2026-09-01', received: 12, completed: 5 }],
+      comparison: {
+        periodStart: '2026-08-01',
+        periodEnd: '2026-08-31',
+        currentEnd: '2026-09-30',
+        trend: [{ period: '2026-09-01', received: 7 }],
+      },
+      purchaseOrderStatuses: [],
+      bomRevisionStatuses: [],
+      topCustomers: [],
+      overdueQueue: [],
+      upcomingQueue: [],
+      pendingBomQueue: [],
     });
 
     expect(dataSource.query).toHaveBeenCalledWith(
       expect.stringContaining('COUNT(*) FILTER'),
-      ['2026-09-01', '2026-10-01'],
+      [
+        '2026-09-01',
+        '2026-10-01',
+        'day',
+        'month',
+        '2026-08-01',
+        '2026-09-01',
+        '2026-10-01',
+      ],
     );
 
     const sql = dataSource.query.mock.calls[0][0] as string;
     expect(sql).toContain('purchase_order.archived_at IS NULL');
     expect(sql).toContain("selected_purchase_order.status = 'closed'");
-    expect(sql).toContain("status NOT IN ('closed', 'cancelled')");
-    expect(sql).toContain('selected_purchase_order.deadline <');
-    expect(sql).not.toContain('purchase_order_products');
+    expect(sql).toContain("selected_purchase_order.status <> 'cancelled'");
+    expect(sql).toContain(
+      "purchase_order.status NOT IN ('closed', 'cancelled')",
+    );
+    expect(sql).toContain("product.status NOT IN ('closed', 'cancelled')");
+    expect(sql).toContain('product.deadline < date_context.today');
+    expect(sql).toContain(
+      'purchase_order.deadline BETWEEN date_context.today AND date_context.today + 7',
+    );
+    expect(sql).toContain('COUNT(DISTINCT');
+    expect(sql).toContain('purchase_order_products');
     expect(sql).toContain("AT TIME ZONE 'Asia/Ho_Chi_Minh'");
-    expect(sql).toContain("WHERE status = 'active'");
+    expect(sql).toContain('bom.discontinued_at IS NULL');
+    expect(sql).toContain('bom.current_revision_id = revision.id');
+    expect(sql).toContain('generate_series');
+    expect(sql).toContain(
+      'purchase_order.received_date < date_context.current_end_exclusive',
+    );
+    expect(sql).toContain("user_account.status = 'active'");
     expect(sql).toContain('must_change_password = false');
     expect(sql).toContain('manually_locked_at IS NULL');
     expect(sql).toContain(
-      'lockout_until IS NULL OR lockout_until <= CURRENT_TIMESTAMP',
+      'user_account.lockout_until IS NULL OR user_account.lockout_until <= CURRENT_TIMESTAMP',
     );
   });
 
@@ -58,17 +120,207 @@ describe('ManagementDashboardService', () => {
       {
         total_purchase_orders: 0,
         completed_purchase_orders: 0,
-        overdue_purchase_orders: 0,
+        cancelled_purchase_orders: 0,
+        processing_purchase_orders: 0,
+        overdue_product_purchase_orders: 0,
+        upcoming_product_purchase_orders: 0,
+        pending_boms: 0,
         active_employees: 0,
+        trend: [],
+        purchase_order_statuses: [],
+        bom_revision_statuses: [],
+        top_customers: [],
+        overdue_queue: [],
+        upcoming_queue: [],
+        pending_bom_queue: [],
       },
     ]);
 
-    await service.getSummary('2026-12');
+    await service.getSummary({ periodType: 'month', month: '2026-12' });
 
     expect(dataSource.query).toHaveBeenCalledWith(expect.any(String), [
       '2026-12-01',
       '2027-01-01',
+      'day',
+      'month',
+      null,
+      null,
+      '2026-12-01',
     ]);
+  });
+
+  it('uses database-wide event bounds and annual trend buckets for the all-time period', async () => {
+    dataSource.query
+      .mockResolvedValueOnce([
+        { period_start: '2026-01-15', period_end: '2026-09-30' },
+      ])
+      .mockResolvedValueOnce([
+        {
+          total_purchase_orders: '0',
+          completed_purchase_orders: '0',
+          cancelled_purchase_orders: '0',
+          processing_purchase_orders: '0',
+          overdue_product_purchase_orders: '0',
+          upcoming_product_purchase_orders: '0',
+          pending_boms: '0',
+          active_employees: '0',
+          trend: [],
+          purchase_order_statuses: [],
+          bom_revision_statuses: [],
+          top_customers: [],
+          overdue_queue: [],
+          upcoming_queue: [],
+          pending_bom_queue: [],
+        },
+      ]);
+
+    await expect(
+      service.getSummary({ periodType: 'all' }),
+    ).resolves.toMatchObject({
+      periodType: 'all',
+      periodStart: '2026-01-15',
+      periodEnd: '2026-09-30',
+      trendGranularity: 'year',
+      comparison: null,
+    });
+
+    const [boundsSql] = dataSource.query.mock.calls[0];
+    expect(boundsSql).toContain('FROM purchase_orders');
+    expect(boundsSql).toContain('FROM boms AS bom');
+    expect(boundsSql).toContain('FROM users AS user_account');
+    expect(boundsSql).toContain("AT TIME ZONE 'Asia/Ho_Chi_Minh'");
+
+    expect(dataSource.query).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining(
+        'purchase_order.received_date < date_context.period_end_exclusive',
+      ),
+      ['2026-01-15', '2026-10-01', 'year', 'all', null, null, '2026-10-01'],
+    );
+  });
+
+  it('uses the full calendar year for annual KPIs and monthly trend buckets', async () => {
+    dataSource.query.mockResolvedValue([
+      {
+        total_purchase_orders: '0',
+        completed_purchase_orders: '0',
+        cancelled_purchase_orders: '0',
+        processing_purchase_orders: '0',
+        overdue_product_purchase_orders: '0',
+        upcoming_product_purchase_orders: '0',
+        pending_boms: '0',
+        active_employees: '0',
+        trend: [],
+        purchase_order_statuses: [],
+        bom_revision_statuses: [],
+        top_customers: [],
+        overdue_queue: [],
+        upcoming_queue: [],
+        pending_bom_queue: [],
+      },
+    ]);
+
+    await expect(
+      service.getSummary({ periodType: 'year', year: '2024' }),
+    ).resolves.toMatchObject({
+      periodType: 'year',
+      periodStart: '2024-01-01',
+      periodEnd: '2024-12-31',
+      trendGranularity: 'month',
+    });
+    expect(dataSource.query).toHaveBeenCalledWith(expect.any(String), [
+      '2024-01-01',
+      '2025-01-01',
+      'month',
+      'year',
+      '2023-01-01',
+      '2024-01-01',
+      '2025-01-01',
+    ]);
+  });
+
+  it('includes both endpoints in a date-range query, including leap day', async () => {
+    dataSource.query.mockResolvedValue([
+      {
+        total_purchase_orders: '0',
+        completed_purchase_orders: '0',
+        cancelled_purchase_orders: '0',
+        processing_purchase_orders: '0',
+        overdue_product_purchase_orders: '0',
+        upcoming_product_purchase_orders: '0',
+        pending_boms: '0',
+        active_employees: '0',
+        trend: [],
+        purchase_order_statuses: [],
+        bom_revision_statuses: [],
+        top_customers: [],
+        overdue_queue: [],
+        pending_bom_queue: [],
+      },
+    ]);
+
+    await expect(
+      service.getBusinessSummary({
+        periodType: 'range',
+        fromDate: '2024-02-28',
+        toDate: '2024-03-01',
+      }),
+    ).resolves.toMatchObject({
+      periodType: 'range',
+      periodStart: '2024-02-28',
+      periodEnd: '2024-03-01',
+      trendGranularity: 'day',
+    });
+    expect(dataSource.query).toHaveBeenCalledWith(expect.any(String), [
+      '2024-02-28',
+      '2024-03-02',
+      'day',
+      'range',
+      '2024-02-25',
+      '2024-02-28',
+      '2024-03-02',
+    ]);
+  });
+
+  it('rejects an invalid range before running the dashboard query', async () => {
+    await expect(
+      service.getSummary({
+        periodType: 'range',
+        fromDate: '2024-03-02',
+        toDate: '2024-03-01',
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(dataSource.query).not.toHaveBeenCalled();
+  });
+
+  it('omits the employee KPI from the business dashboard response', async () => {
+    dataSource.query.mockResolvedValue([
+      {
+        total_purchase_orders: '1',
+        completed_purchase_orders: '0',
+        cancelled_purchase_orders: '0',
+        processing_purchase_orders: '1',
+        overdue_product_purchase_orders: '0',
+        upcoming_product_purchase_orders: '0',
+        pending_boms: '0',
+        active_employees: '24',
+        trend: [],
+        purchase_order_statuses: [],
+        bom_revision_statuses: [],
+        top_customers: [],
+        overdue_queue: [],
+        upcoming_queue: [],
+        pending_bom_queue: [],
+      },
+    ]);
+
+    const summary = await service.getBusinessSummary({
+      periodType: 'month',
+      month: '2026-09',
+    });
+
+    expect(summary).not.toHaveProperty('activeEmployees');
+    expect(summary.totalPurchaseOrders).toBe(1);
   });
 
   it('returns management statuses and deadline days using the Vietnam business date', async () => {
