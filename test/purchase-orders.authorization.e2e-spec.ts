@@ -105,11 +105,11 @@ describe('Purchase-order write access mode (e2e)', () => {
       .expect(po);
   });
 
-  it('denies PO writes to an SA account in read-only mode', async () => {
+  it('allows PO writes for SA regardless of legacy mode', async () => {
     await request(app.getHttpServer())
       .post('/purchase-orders')
       .send({})
-      .expect(403);
+      .expect(400);
 
     expect(purchaseOrdersService.create).not.toHaveBeenCalled();
   });
@@ -199,20 +199,20 @@ describe('Purchase-order write access mode (e2e)', () => {
     expect(guards).toContain(PurchaseOrderFullAccessGuard);
   });
 
-  it('denies attachment download URLs for PO files in read-only mode but keeps previews available', async () => {
+  it('allows attachment download URLs for PO files when SA has the legacy read-only mode', async () => {
     const objectKey = `purchase-orders/${poId}/documents/tech_pack/file.pdf`;
 
     await request(app.getHttpServer())
       .get('/storage/uploads/view-url')
       .query({ objectKey, download: 'true' })
-      .expect(403);
+      .expect(200);
 
     await request(app.getHttpServer())
       .get('/storage/uploads/view-url')
       .query({ objectKey })
       .expect(200);
 
-    expect(storageService.getPresignedGetUrl).toHaveBeenCalledTimes(1);
+    expect(storageService.getPresignedGetUrl).toHaveBeenCalledTimes(2);
     expect(storageService.getPresignedGetUrl).toHaveBeenCalledWith(
       objectKey,
       expect.any(Number),
@@ -253,15 +253,15 @@ describe('Purchase-order write access mode (e2e)', () => {
       .expect(200);
   });
 
-  it('denies sample-round image download URLs to read-only SA accounts', async () => {
+  it('allows sample-round image download URLs for SA regardless of legacy mode', async () => {
     await request(app.getHttpServer())
       .get(
         `/purchase-orders/${poId}/products/22222222-2222-4222-8222-222222222222/sample-rounds/44444444-4444-4444-8444-444444444444/images/55555555-5555-4555-8555-555555555555/download-url`,
       )
-      .expect(403);
+      .expect(200);
 
     expect(
       purchaseOrdersService.getProductSampleImageDownloadUrl,
-    ).not.toHaveBeenCalled();
+    ).toHaveBeenCalled();
   });
 });

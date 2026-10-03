@@ -1273,7 +1273,9 @@ describe('BOM V2 Workflow State Machine: Forward, Reject, Approve (PR-04 Specifi
             assertCanAddLine(r, mockBom, mockRevision);
           }).toThrow(ForbiddenException);
         }
-        expect(() => assertCanAddLine(UserRoleCode.SA, mockBom, mockRevision)).not.toThrow();
+        expect(() =>
+          assertCanAddLine(UserRoleCode.SA, mockBom, mockRevision),
+        ).not.toThrow();
       });
     });
 

@@ -285,7 +285,10 @@ export function assertCanUpdateLine(
         'Đơn giá vật tư chỉ được phép cập nhật ở bước Kế toán (wait_accounting).',
       );
     }
-    if (roleUpper !== UserRoleCode.SA && !LINE_UNIT_COST_MUTATION_ROLES.has(roleUpper)) {
+    if (
+      roleUpper !== UserRoleCode.SA &&
+      !LINE_UNIT_COST_MUTATION_ROLES.has(roleUpper)
+    ) {
       forbidden(
         'Chỉ Kế toán (ACCOUNTING) mới có quyền cập nhật đơn giá vật tư.',
       );
@@ -558,7 +561,10 @@ export function assertCanForwardBom(
   }
 
   const roleUpper = actorRole.trim().toUpperCase();
-  if (roleUpper !== UserRoleCode.SA && !transitionRule.allowedRoles.has(roleUpper)) {
+  if (
+    roleUpper !== UserRoleCode.SA &&
+    !transitionRule.allowedRoles.has(roleUpper)
+  ) {
     forbidden(
       `Vai trò của bạn không có quyền forward NPL tại trạng thái: ${currentRev.status}`,
     );
@@ -737,7 +743,10 @@ export function assertCanRejectBom(
   }
 
   const roleUpper = actorRole.trim().toUpperCase();
-  if (roleUpper !== UserRoleCode.SA && !rejectRule.allowedRoles.has(roleUpper)) {
+  if (
+    roleUpper !== UserRoleCode.SA &&
+    !rejectRule.allowedRoles.has(roleUpper)
+  ) {
     forbidden(
       `Vai trò của bạn không có quyền trả lại NPL tại trạng thái: ${currentRev.status}`,
     );

@@ -214,6 +214,8 @@ export class AuthService {
     userId: string,
     mode: PurchaseOrderMode,
   ): Promise<AuthUserDto> {
+    // Keep accepting the legacy request payload; SA access is no longer switchable.
+    void mode;
     const user = await this.userRepository.findOne({ where: { id: userId } });
     if (!user) {
       throw new UnauthorizedException({
