@@ -43,6 +43,8 @@ import {
   DocumentFolderDto,
   DocumentFoldersQueryDto,
   DocumentLibraryQueryDto,
+  DocumentLibrarySearchQueryDto,
+  MoveLibraryDocumentsDto,
   PresignDocumentVersionDto,
   PresignLibraryDocumentDto,
 } from './dto/document-library.dto';
@@ -80,6 +82,41 @@ export type DocumentLibraryPage = {
     limit: number;
     totalPages: number;
   };
+};
+
+export type DocumentLibrarySearchPathItem = {
+  id: string;
+  parentId: string | null;
+  folderName: string;
+};
+
+export type DocumentLibrarySearchResult =
+  | {
+      kind: 'folder';
+      id: string;
+      folderName: string;
+      createdAt: Date;
+      path: DocumentLibrarySearchPathItem[];
+    }
+  | {
+      kind: 'file';
+      documentId: string;
+      title: string;
+      folderId: string;
+      folderName: string;
+      versionId: string;
+      versionNo: number;
+      fileName: string;
+      mimeType: string;
+      byteSize: number;
+      uploadedAt: Date;
+      isAssigned: boolean;
+      path: DocumentLibrarySearchPathItem[];
+    };
+
+export type DocumentLibrarySearchPage = {
+  data: DocumentLibrarySearchResult[];
+  meta: { total: number; page: number; limit: number; totalPages: number };
 };
 
 export type DocumentVersionListItem = {
@@ -190,6 +227,193 @@ export class DocumentsService {
       documentCount: Number(row.documentCount),
       hasChildren: Number(childCount) > 0,
     }));
+  }
+
+  async search(
+    query: DocumentLibrarySearchQueryDto,
+  ): Promise<DocumentLibrarySearchPage> {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
+    const term = query.search.trim();
+    const pattern = `%${term}%`;
+    const rows = await this.dataSource.query(
+      `
+        WITH search_results AS (
+          SELECT
+            'folder'::text AS kind,
+            folder.id AS result_id,
+            folder.folder_name AS name,
+            NULL::text AS title,
+            NULL::uuid AS document_id,
+            folder.id AS folder_id,
+            NULL::uuid AS version_id,
+            NULL::integer AS version_no,
+            NULL::text AS mime_type,
+            NULL::bigint AS byte_size,
+            folder.created_at AS occurred_at,
+            false AS is_assigned
+          FROM document_folders folder
+          WHERE folder.folder_name ILIKE $1
+
+          UNION ALL
+
+          SELECT
+            'file'::text AS kind,
+            document.id AS result_id,
+            version.original_file_name AS name,
+            document.title AS title,
+            document.id AS document_id,
+            folder.id AS folder_id,
+            version.id AS version_id,
+            version.version_no AS version_no,
+            version.mime_type AS mime_type,
+            version.byte_size AS byte_size,
+            version.uploaded_at AS occurred_at,
+            EXISTS (
+              SELECT 1
+              FROM style_documents assigned_document
+              WHERE assigned_document.document_id = document.id
+                AND assigned_document.purpose = $2
+            ) AS is_assigned
+          FROM documents document
+          INNER JOIN document_versions version
+            ON version.id = document.current_version_id
+          INNER JOIN folder_documents folder_document
+            ON folder_document.document_id = document.id
+          INNER JOIN document_folders folder
+            ON folder.id = folder_document.folder_id
+          WHERE document.archived_at IS NULL
+            AND (document.title ILIKE $1 OR version.original_file_name ILIKE $1)
+        )
+        SELECT search_results.*, COUNT(*) OVER() AS total_count
+        FROM search_results
+        ORDER BY
+          CASE WHEN kind = 'folder' THEN 0 ELSE 1 END,
+          LOWER(name),
+          result_id
+        LIMIT $3 OFFSET $4
+      `,
+      [pattern, DocumentPurpose.FIT_ATTACHMENT, limit, (page - 1) * limit],
+    ) as Array<{
+      kind: 'folder' | 'file';
+      result_id: string;
+      name: string;
+      title: string | null;
+      document_id: string | null;
+      folder_id: string | null;
+      version_id: string | null;
+      version_no: number | null;
+      mime_type: string | null;
+      byte_size: string | null;
+      occurred_at: Date;
+      is_assigned: boolean;
+      total_count: string;
+    }>;
+    // COUNT(*) OVER() has no row to carry the count when the requested page is
+    // beyond the last page, so fetch the count explicitly in that case.
+    const total = Number(
+      rows[0]?.total_count ??
+        (await this.dataSource.query(
+          `
+            SELECT
+              (SELECT COUNT(*) FROM document_folders WHERE folder_name ILIKE $1)
+              +
+              (SELECT COUNT(*)
+               FROM documents document
+               INNER JOIN document_versions version
+                 ON version.id = document.current_version_id
+               INNER JOIN folder_documents folder_document
+                 ON folder_document.document_id = document.id
+               WHERE document.archived_at IS NULL
+                 AND (document.title ILIKE $1 OR version.original_file_name ILIKE $1))
+                AS total_count
+          `,
+          [pattern],
+        ))[0]?.total_count ??
+        0,
+    );
+    const folderIds = [...new Set(rows.map((row) => row.folder_id).filter((id): id is string => Boolean(id)))];
+    const pathRows = folderIds.length
+      ? (await this.dataSource.query(
+          `
+            WITH RECURSIVE folder_paths AS (
+              SELECT
+                folder.id AS result_folder_id,
+                folder.id,
+                folder.parent_id,
+                folder.folder_name,
+                ARRAY[folder.id]::uuid[] AS folder_ids,
+                ARRAY[folder.folder_name]::text[] AS folder_names
+              FROM document_folders folder
+              WHERE folder.id = ANY($1::uuid[])
+
+              UNION ALL
+
+              SELECT
+                child_path.result_folder_id,
+                parent.id,
+                parent.parent_id,
+                parent.folder_name,
+                ARRAY[parent.id] || child_path.folder_ids,
+                ARRAY[parent.folder_name] || child_path.folder_names
+              FROM folder_paths child_path
+              INNER JOIN document_folders parent
+                ON parent.id = child_path.parent_id
+            )
+            SELECT DISTINCT ON (result_folder_id)
+              result_folder_id, folder_ids, folder_names
+            FROM folder_paths
+            WHERE parent_id IS NULL
+          `,
+          [folderIds],
+        )) as Array<{
+          result_folder_id: string;
+          folder_ids: string[];
+          folder_names: string[];
+        }>
+      : [];
+    const pathsByFolderId = new Map(pathRows.map((row) => [row.result_folder_id, row]));
+
+    return {
+      data: rows.map((row) => {
+        const folderPath = pathsByFolderId.get(row.folder_id!)!;
+        const path = folderPath.folder_ids.map((id, index) => ({
+          id,
+          parentId: index > 0 ? folderPath.folder_ids[index - 1] : null,
+          folderName: folderPath.folder_names[index],
+        }));
+        if (row.kind === 'folder') {
+          return {
+            kind: 'folder' as const,
+            id: row.result_id,
+            folderName: row.name,
+            createdAt: row.occurred_at,
+            path,
+          };
+        }
+        return {
+          kind: 'file' as const,
+          documentId: row.document_id!,
+          title: row.title!,
+          folderId: row.folder_id!,
+          folderName: folderPath.folder_names.at(-1)!,
+          versionId: row.version_id!,
+          versionNo: Number(row.version_no),
+          fileName: row.name,
+          mimeType: row.mime_type!,
+          byteSize: Number(row.byte_size),
+          uploadedAt: row.occurred_at,
+          isAssigned: Boolean(row.is_assigned),
+          path,
+        };
+      }),
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages: Math.max(1, Math.ceil(total / limit)),
+      },
+    };
   }
 
   async createFolder(
@@ -322,13 +546,7 @@ export class DocumentsService {
     const limit = query.limit ?? 10;
     const folderLinkCondition = query.folderId
       ? 'folderDocument.documentId = document.id AND folderDocument.folderId = :folderId'
-      : `folderDocument.documentId = document.id AND folderDocument.folderId = (
-          SELECT canonicalFolderDocument.folder_id
-          FROM folder_documents canonicalFolderDocument
-          WHERE canonicalFolderDocument.document_id = document.id
-          ORDER BY canonicalFolderDocument.linked_at ASC, canonicalFolderDocument.folder_id ASC
-          LIMIT 1
-        )`;
+      : 'folderDocument.documentId = document.id';
     const qb = this.documentRepo
       .createQueryBuilder('document')
       .innerJoin(
@@ -366,18 +584,8 @@ export class DocumentsService {
       );
     }
     if (query.search?.trim()) {
-      const folderSearch = query.folderId
-        ? 'folder.folderName ILIKE :search'
-        : `EXISTS (
-            SELECT 1
-            FROM folder_documents searchFolderDocument
-            INNER JOIN document_folders searchFolder
-              ON searchFolder.id = searchFolderDocument.folder_id
-            WHERE searchFolderDocument.document_id = document.id
-              AND searchFolder.folder_name ILIKE :search
-          )`;
       qb.andWhere(
-        `(document.title ILIKE :search OR version.originalFileName ILIKE :search OR ${folderSearch})`,
+        '(document.title ILIKE :search OR version.originalFileName ILIKE :search)',
         { search: `%${query.search.trim()}%` },
       );
     }
@@ -697,6 +905,83 @@ export class DocumentsService {
           ],
         });
       }
+    });
+  }
+
+  async moveDocuments(
+    dto: MoveLibraryDocumentsDto,
+    actor: AuditActor,
+  ): Promise<{ movedCount: number; targetFolderId: string }> {
+    return this.dataSource.transaction(async (manager) => {
+      const folder = await manager.getRepository(DocumentFolder).findOne({
+        where: { id: dto.targetFolderId },
+        lock: { mode: 'pessimistic_read' },
+      });
+      if (!folder) throw new NotFoundException('Không tìm thấy thư mục đích.');
+
+      const documentRepo = manager.getRepository(Document);
+      const documents = await documentRepo.find({
+        where: { id: In(dto.documentIds), archivedAt: IsNull() },
+        order: { id: 'ASC' },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (documents.length !== dto.documentIds.length) {
+        throw new NotFoundException('Một hoặc nhiều tài liệu không còn trong kho.');
+      }
+
+      const links = await manager.getRepository(FolderDocument).find({
+        where: { documentId: In(dto.documentIds) },
+        order: { documentId: 'ASC' },
+      });
+      if (links.length !== documents.length) {
+        throw new ConflictException('Một hoặc nhiều tài liệu chưa có thư mục.');
+      }
+
+      const linksToMove = links.filter(
+        (link) => link.folderId !== dto.targetFolderId,
+      );
+      if (linksToMove.length === 0) {
+        return { movedCount: 0, targetFolderId: folder.id };
+      }
+
+      const oldFolderIds = [...new Set(linksToMove.map((link) => link.folderId))];
+      const oldFolders = await manager.getRepository(DocumentFolder).find({
+        where: { id: In(oldFolderIds) },
+      });
+      const oldFolderNames = new Map(
+        oldFolders.map((oldFolder) => [oldFolder.id, oldFolder.folderName]),
+      );
+      const documentById = new Map(documents.map((document) => [document.id, document]));
+
+      await manager.query(
+        `
+          UPDATE folder_documents
+          SET folder_id = $1, linked_at = NOW(), linked_by = $2
+          WHERE document_id = ANY($3::uuid[])
+        `,
+        [dto.targetFolderId, actor.id, linksToMove.map((link) => link.documentId)],
+      );
+
+      for (const link of linksToMove) {
+        const document = documentById.get(link.documentId)!;
+        await this.auditService.recordEntityChange(manager, {
+          aggregateType: AGGREGATE_TYPE,
+          aggregateId: document.id,
+          actorId: actor.id,
+          actorRole: actor.roleCode,
+          targetLabel: document.title,
+          eventType: AuditEventType.UPDATED,
+          changes: [
+            {
+              fieldName: 'folder',
+              oldValue: oldFolderNames.get(link.folderId) ?? link.folderId,
+              newValue: folder.folderName,
+            },
+          ],
+        });
+      }
+
+      return { movedCount: linksToMove.length, targetFolderId: folder.id };
     });
   }
 

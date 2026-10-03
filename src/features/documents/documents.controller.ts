@@ -23,6 +23,8 @@ import {
   DocumentFolderDto,
   DocumentFoldersQueryDto,
   DocumentLibraryQueryDto,
+  DocumentLibrarySearchQueryDto,
+  MoveLibraryDocumentsDto,
   PresignDocumentVersionDto,
   PresignLibraryDocumentDto,
 } from './dto/document-library.dto';
@@ -48,6 +50,19 @@ export class DocumentsController {
   @ApiOperation({ summary: 'Tìm tài liệu trong kho dùng chung' })
   list(@Query() query: DocumentLibraryQueryDto) {
     return this.service.list(query);
+  }
+
+  @Get('search')
+  @ApiOperation({ summary: 'Tìm tên tài liệu, tên file và tên thư mục toàn kho' })
+  search(@Query() query: DocumentLibrarySearchQueryDto) {
+    return this.service.search(query);
+  }
+
+  @Post('move')
+  @Permission(MANAGE_PERMISSION)
+  @ApiOperation({ summary: 'Di chuyển một hoặc nhiều tài liệu sang thư mục khác' })
+  moveDocuments(@Body() dto: MoveLibraryDocumentsDto, @Req() req?: any) {
+    return this.service.moveDocuments(dto, getActor(req));
   }
 
   @Get('folders')

@@ -55,6 +55,26 @@ export class DocumentLibraryQueryDto {
   sortOrder?: 'newest' | 'oldest' = 'newest';
 }
 
+export class DocumentLibrarySearchQueryDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(200)
+  search: string;
+
+  @Type(() => Number)
+  @IsInt()
+  @IsPositive()
+  @IsOptional()
+  page?: number = 1;
+
+  @Type(() => Number)
+  @IsInt()
+  @IsPositive()
+  @Max(100)
+  @IsOptional()
+  limit?: number = 20;
+}
+
 export class DocumentFoldersQueryDto {
   @IsOptional()
   @IsUUID('4')
@@ -138,6 +158,18 @@ export class AssignLibraryDocumentsDto {
   @ArrayMaxSize(100)
   @IsUUID('4', { each: true })
   documentIds: string[];
+}
+
+export class MoveLibraryDocumentsDto {
+  @IsArray()
+  @ArrayNotEmpty()
+  @ArrayUnique()
+  @ArrayMaxSize(100)
+  @IsUUID('4', { each: true })
+  documentIds: string[];
+
+  @IsUUID('4')
+  targetFolderId: string;
 }
 
 export class DocumentVersionQueryDto {
