@@ -31,6 +31,7 @@ import {
   CreateBomDto,
   UpdateBomDto,
   DiscontinueBomDto,
+  RestoreBomDto,
   CreateBomLineDto,
   UpdateBomLineDto,
   ReorderBomLinesDto,
@@ -53,6 +54,7 @@ import {
 } from './dto';
 import { BomAggregateService } from './bom-aggregate.service';
 import { PurchaseOrderBomWriteAccessGuard } from './guards/purchase-order-bom-write-access.guard';
+import { QueryBomCreateTargetsDto } from './dto/query-bom-create-targets.dto';
 
 @ApiTags('boms')
 @ApiBearerAuth()
@@ -99,6 +101,24 @@ export class BomsController {
   })
   async getStats(@Query() query: QueryBomStatsDto): Promise<BomStatsDto> {
     return this.bomsService.getStats(query);
+  }
+
+  @Get('create-targets/po')
+  @ApiOperation({ summary: 'PO còn sản phẩm đủ điều kiện tạo NPL' })
+  async getEligiblePurchaseOrders(@Query() query: QueryBomCreateTargetsDto) {
+    return this.bomsService.getEligiblePurchaseOrders(query);
+  }
+
+  @Get('create-targets/fit')
+  @ApiOperation({ summary: 'Mẫu Fit chưa có NPL' })
+  async getEligibleFitStyles(@Query() query: QueryBomCreateTargetsDto) {
+    return this.bomsService.getEligibleFitStyles(query);
+  }
+
+  @Get('create-targets/po/:poId/products')
+  @ApiOperation({ summary: 'Sản phẩm PO chưa có NPL và còn có thể tạo NPL' })
+  async getEligiblePoProducts(@Param('poId', ParseUUIDPipe) poId: string) {
+    return this.bomsService.getEligiblePoProducts(poId);
   }
 
   @Get()
@@ -198,6 +218,27 @@ export class BomsController {
     const userId = req?.user?.id || req?.user?.sub;
     const roleCode = req?.user?.roleCode;
     return this.bomsService.discontinue(id, dto, userId, roleCode);
+  }
+
+  @Post(':id/restore')
+  @UseGuards(PurchaseOrderBomWriteAccessGuard)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Mở khóa và khôi phục sử dụng NPL' })
+  @ApiResponse({ status: 200, description: 'NPL đã được khôi phục sử dụng' })
+  @ApiResponse({
+    status: 400,
+    description: 'NPL chưa ngừng sử dụng hoặc dữ liệu đã cũ',
+  })
+  @ApiResponse({ status: 403, description: 'Không có quyền mở khóa NPL' })
+  @ApiResponse({ status: 404, description: 'Không tìm thấy NPL' })
+  async restore(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: RestoreBomDto,
+    @Req() req?: any,
+  ): Promise<BomDetailDto> {
+    const userId = req?.user?.id || req?.user?.sub;
+    const roleCode = req?.user?.roleCode;
+    return this.bomsService.restore(id, dto, userId, roleCode);
   }
 
   @Post(':id/lines')
