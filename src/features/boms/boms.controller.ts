@@ -31,6 +31,7 @@ import {
   CreateBomDto,
   UpdateBomDto,
   DiscontinueBomDto,
+  RestoreBomDto,
   CreateBomLineDto,
   UpdateBomLineDto,
   ReorderBomLinesDto,
@@ -217,6 +218,24 @@ export class BomsController {
     const userId = req?.user?.id || req?.user?.sub;
     const roleCode = req?.user?.roleCode;
     return this.bomsService.discontinue(id, dto, userId, roleCode);
+  }
+
+  @Post(':id/restore')
+  @UseGuards(PurchaseOrderBomWriteAccessGuard)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Mở khóa và khôi phục sử dụng NPL' })
+  @ApiResponse({ status: 200, description: 'NPL đã được khôi phục sử dụng' })
+  @ApiResponse({ status: 400, description: 'NPL chưa ngừng sử dụng hoặc dữ liệu đã cũ' })
+  @ApiResponse({ status: 403, description: 'Không có quyền mở khóa NPL' })
+  @ApiResponse({ status: 404, description: 'Không tìm thấy NPL' })
+  async restore(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: RestoreBomDto,
+    @Req() req?: any,
+  ): Promise<BomDetailDto> {
+    const userId = req?.user?.id || req?.user?.sub;
+    const roleCode = req?.user?.roleCode;
+    return this.bomsService.restore(id, dto, userId, roleCode);
   }
 
   @Post(':id/lines')

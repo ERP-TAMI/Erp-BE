@@ -41,6 +41,7 @@ import {
   CreateBomDto,
   UpdateBomDto,
   DiscontinueBomDto,
+  RestoreBomDto,
   CreateBomLineDto,
   UpdateBomLineDto,
   ReorderBomLinesDto,
@@ -64,6 +65,7 @@ import {
   assertCanCreateBom,
   assertCanUpdateBomHeader,
   assertCanDiscontinueBom,
+  assertCanRestoreBom,
   assertCanAddLine,
   assertCanUpdateLine,
   assertCanDeleteLine,
@@ -1409,6 +1411,70 @@ export class BomsService {
         ],
         AuditEventType.UPDATED,
         `Ngừng sử dụng NPL: ${cleanReason}`,
+      );
+    });
+
+    return this.findOne(id, roleCode);
+  }
+
+  /** Restores a discontinued BOM. Accessible only to TPKH and SA. */
+  async restore(
+    id: string,
+    dto: RestoreBomDto,
+    userId?: string,
+    roleCode?: string,
+  ): Promise<BomDetailDto> {
+    await this.dataSource.transaction(async (manager) => {
+      const bom = await manager.findOne(Bom, {
+        where: { id },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!bom) {
+        throw new NotFoundException(`Không tìm thấy NPL với ID: ${id}`);
+      }
+      await this.assertPoProductBomWritable(manager, bom.purchaseOrderProductId);
+
+      if (!bom.currentRevisionId) {
+        throw new BadRequestException('NPL chưa có revision hiện tại.');
+      }
+      const currentRev = await manager.findOne(BomRevision, {
+        where: { id: bom.currentRevisionId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!currentRev || currentRev.bomId !== bom.id) {
+        throw new BadRequestException(
+          'Current revision không hợp lệ hoặc không thuộc NPL này.',
+        );
+      }
+
+      this.assertExpectedRowVersion(currentRev, dto.expectedRowVersion);
+      assertCanRestoreBom(roleCode, bom);
+
+      const previousValues = {
+        discontinuedAt: bom.discontinuedAt,
+        discontinuedBy: bom.discontinuedBy,
+        discontinuedReason: bom.discontinuedReason,
+      };
+      bom.discontinuedAt = null;
+      bom.discontinuedBy = null;
+      bom.discontinuedReason = null;
+      bom.updatedBy = userId ?? null;
+      currentRev.rowVersion = Number(currentRev.rowVersion) + 1;
+      bom.rowVersion = Number(bom.rowVersion) + 1;
+
+      await manager.save(BomRevision, currentRev);
+      await manager.save(Bom, bom);
+      await this.bomAuditService.recordHeaderChange(
+        manager,
+        this.toActor(userId, roleCode),
+        bom,
+        [
+          { fieldName: 'discontinuedAt', oldValue: previousValues.discontinuedAt, newValue: null },
+          { fieldName: 'discontinuedBy', oldValue: previousValues.discontinuedBy, newValue: null },
+          { fieldName: 'discontinuedReason', oldValue: previousValues.discontinuedReason, newValue: null },
+        ],
+        AuditEventType.UPDATED,
+        'Mở khóa và khôi phục sử dụng NPL',
       );
     });
 
