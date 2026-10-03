@@ -5,7 +5,8 @@ import { LoggerModule } from 'nestjs-pino';
 import { destination, multistream } from 'pino';
 
 const logsDirectory = join(process.cwd(), 'logs');
-mkdirSync(logsDirectory, { recursive: true });
+const isProduction = process.env.NODE_ENV === 'production';
+if (!isProduction) mkdirSync(logsDirectory, { recursive: true });
 
 @Global()
 @Module({
@@ -13,19 +14,22 @@ mkdirSync(logsDirectory, { recursive: true });
     LoggerModule.forRoot({
       pinoHttp: {
         level: process.env.LOG_LEVEL ?? 'info',
-        stream: multistream([
-          { stream: process.stdout },
-          {
-            stream: destination({
-              dest: join(logsDirectory, 'app.log'),
-              mkdir: true,
-              sync: false,
-            }),
-          },
-        ]),
+        stream: isProduction
+          ? process.stdout
+          : multistream([
+              { stream: process.stdout },
+              {
+                stream: destination({
+                  dest: join(logsDirectory, 'app.log'),
+                  mkdir: true,
+                  sync: false,
+                }),
+              },
+            ]),
         redact: [
           'req.headers.authorization',
           'req.headers.cookie',
+          'req.headers["x-origin-verify"]',
           'req.body.password',
           'req.body.token',
           'res.headers["set-cookie"]',

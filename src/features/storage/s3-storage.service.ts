@@ -20,13 +20,22 @@ export class S3StorageService implements StorageService {
     this.bucket = config.getOrThrow<string>('AWS_S3_BUCKET');
     const region = config.getOrThrow<string>('AWS_S3_REGION');
     const endpoint = config.get<string>('AWS_S3_ENDPOINT');
+    const accessKeyId = config.get<string>('AWS_S3_ACCESS_KEY_ID');
+    const secretAccessKey = config.get<string>('AWS_S3_SECRET_ACCESS_KEY');
+
+    if (Boolean(accessKeyId) !== Boolean(secretAccessKey)) {
+      throw new Error(
+        'AWS_S3_ACCESS_KEY_ID and AWS_S3_SECRET_ACCESS_KEY must be set together',
+      );
+    }
 
     this.client = new S3Client({
       region,
-      credentials: {
-        accessKeyId: config.getOrThrow<string>('AWS_S3_ACCESS_KEY_ID'),
-        secretAccessKey: config.getOrThrow<string>('AWS_S3_SECRET_ACCESS_KEY'),
-      },
+      // Local development can use explicit credentials; AWS production uses
+      // the EC2 instance role through the SDK's default credential provider.
+      ...(accessKeyId && secretAccessKey
+        ? { credentials: { accessKeyId, secretAccessKey } }
+        : {}),
       ...(endpoint ? { endpoint, forcePathStyle: true } : {}),
     });
 
