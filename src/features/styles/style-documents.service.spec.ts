@@ -198,6 +198,10 @@ describe('StyleDocumentsService', () => {
 
   describe('confirm', () => {
     it('creates document, version and the style link inside one transaction', async () => {
+      storageMock.headObject.mockResolvedValue({
+        exists: true,
+        sizeBytes: 1536,
+      });
       const result = await service.confirm(STYLE_ID, 'user-1', {
         objectKey: `styles/${STYLE_ID}/documents/fit_attachment/x.pdf`,
         fileName: 'tech-pack.pdf',
@@ -218,9 +222,12 @@ describe('StyleDocumentsService', () => {
       expect(result).toMatchObject({
         fileName: 'tech-pack.pdf',
         mimeType: 'application/pdf',
-        byteSize: 2048,
+        byteSize: 1536,
         purpose: DocumentPurpose.FIT_ATTACHMENT,
       });
+      expect(versionRepoMock.create).toHaveBeenCalledWith(
+        expect.objectContaining({ byteSize: 1536 }),
+      );
     });
 
     it('rejects when the object was not actually uploaded to S3', async () => {

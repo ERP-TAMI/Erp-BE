@@ -9,7 +9,6 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
-  Put,
   Query,
   Req,
   UnauthorizedException,
@@ -47,27 +46,8 @@ export class DocumentsController {
 
   @Get()
   @ApiOperation({ summary: 'Tìm tài liệu trong kho dùng chung' })
-  list(@Query() query: DocumentLibraryQueryDto, @Req() req?: any) {
-    return this.service.list(query, getActor(req).id);
-  }
-
-  @Put(':documentId/pin')
-  @ApiOperation({ summary: 'Ghim tài liệu cho người dùng hiện tại' })
-  async pin(
-    @Param('documentId', ParseUUIDPipe) documentId: string,
-    @Req() req?: any,
-  ): Promise<void> {
-    await this.service.pin(documentId, getActor(req).id);
-  }
-
-  @Delete(':documentId/pin')
-  @HttpCode(HttpStatus.NO_CONTENT)
-  @ApiOperation({ summary: 'Bỏ ghim tài liệu cho người dùng hiện tại' })
-  async unpin(
-    @Param('documentId', ParseUUIDPipe) documentId: string,
-    @Req() req?: any,
-  ): Promise<void> {
-    await this.service.unpin(documentId, getActor(req).id);
+  list(@Query() query: DocumentLibraryQueryDto) {
+    return this.service.list(query);
   }
 
   @Get('folders')
@@ -97,11 +77,14 @@ export class DocumentsController {
   @Delete('folders/:folderId')
   @Permission(MANAGE_PERMISSION)
   @HttpCode(HttpStatus.NO_CONTENT)
-  @ApiOperation({ summary: 'Xóa thư mục rỗng trong kho' })
+  @ApiOperation({
+    summary: 'Xóa thư mục và lưu trữ tài liệu chỉ thuộc thư mục đó',
+  })
   async deleteFolder(
     @Param('folderId', ParseUUIDPipe) folderId: string,
+    @Req() req?: any,
   ): Promise<void> {
-    await this.service.deleteFolder(folderId);
+    await this.service.deleteFolder(folderId, getActor(req));
   }
 
   @Post('upload/presign')

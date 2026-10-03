@@ -153,9 +153,10 @@ export class StyleDocumentsService {
         'Tệp chưa được tải lên thành công, vui lòng thử upload lại.',
       );
     }
+    const actualSizeBytes = head.sizeBytes ?? dto.sizeBytes;
     // sizeBytes at presign is client-declared and unenforceable — S3 presigned
     // PUT has no way to cap it. Check the real uploaded size here instead.
-    if (head.sizeBytes && head.sizeBytes > DEFAULT_MAX_UPLOAD_SIZE_BYTES) {
+    if (actualSizeBytes > DEFAULT_MAX_UPLOAD_SIZE_BYTES) {
       await this.storage.deleteObject(dto.objectKey);
       throw new BadRequestException(
         `Dung lượng tệp vượt quá giới hạn ${(DEFAULT_MAX_UPLOAD_SIZE_BYTES / (1024 * 1024)).toFixed(0)}MB.`,
@@ -198,7 +199,7 @@ export class StyleDocumentsService {
             originalFileName: dto.fileName,
             storageKey: dto.objectKey,
             mimeType: dto.mimeType,
-            byteSize: dto.sizeBytes,
+            byteSize: actualSizeBytes,
             status: UploadStatus.READY,
             uploadedBy: userId || (null as any),
             uploadedAt: now,
@@ -246,7 +247,7 @@ export class StyleDocumentsService {
           isCurrentVersion: true,
           fileName: dto.fileName,
           mimeType: dto.mimeType,
-          byteSize: dto.sizeBytes,
+          byteSize: actualSizeBytes,
           uploadedAt: now,
           purpose: DocumentPurpose.FIT_ATTACHMENT,
         };

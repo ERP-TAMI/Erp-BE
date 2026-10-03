@@ -6,7 +6,6 @@ import { Document } from './entities/Document.entity';
 import { DocumentFolder } from './entities/DocumentFolder.entity';
 import { DocumentVersion } from './entities/DocumentVersion.entity';
 import { FolderDocument } from './entities/FolderDocument.entity';
-import { DocumentPin } from './entities/DocumentPin.entity';
 import { StyleDocument } from '../styles/entities/StyleDocument.entity';
 import { STORAGE_SERVICE, StorageService } from '../storage/storage.interface';
 import { AuditService } from '../audit/audit.service';
@@ -20,8 +19,6 @@ describe('DocumentsService', () => {
   };
   let documentQuery: Record<string, jest.Mock>;
   let documentCountQuery: Record<string, jest.Mock>;
-  let documentPinQuery: Record<string, jest.Mock>;
-  let documentPinRepo: { createQueryBuilder: jest.Mock; delete: jest.Mock };
   let versionRepo: {
     create: jest.Mock;
     save: jest.Mock;
@@ -31,14 +28,32 @@ describe('DocumentsService', () => {
     createQueryBuilder: jest.Mock;
     findOne: jest.Mock;
     save: jest.Mock;
+    count: jest.Mock;
   };
   let folderQuery: Record<string, jest.Mock>;
+  let folderDocumentRepo: {
+    find: jest.Mock;
+    count: jest.Mock;
+    save: jest.Mock;
+    delete: jest.Mock;
+  };
   let storage: jest.Mocked<StorageService>;
   let managerDocumentRepo: {
     findOne: jest.Mock;
+    find: jest.Mock;
     save: jest.Mock;
   };
+  let managerFolderRepo: {
+    findOne: jest.Mock;
+    count: jest.Mock;
+    remove: jest.Mock;
+  };
+  let managerFolderDocumentRepo: {
+    find: jest.Mock;
+    delete: jest.Mock;
+  };
   let dataSource: { transaction: jest.Mock };
+  let auditService: { recordEntityChange: jest.Mock };
 
   beforeEach(async () => {
     documentQuery = {};
@@ -68,15 +83,6 @@ describe('DocumentsService', () => {
       .mockResolvedValue({ total: '0', totalBytes: '0' });
     documentQuery.clone = jest.fn().mockReturnValue(documentCountQuery);
     documentQuery.getRawMany = jest.fn().mockResolvedValue([]);
-    documentPinQuery = {};
-    for (const method of ['insert', 'values', 'orIgnore']) {
-      documentPinQuery[method] = jest.fn().mockReturnValue(documentPinQuery);
-    }
-    documentPinQuery.execute = jest.fn().mockResolvedValue(undefined);
-    documentPinRepo = {
-      createQueryBuilder: jest.fn().mockReturnValue(documentPinQuery),
-      delete: jest.fn().mockResolvedValue({ affected: 1 }),
-    };
     documentRepo = {
       findOne: jest.fn(),
       createQueryBuilder: jest.fn().mockReturnValue(documentQuery),
@@ -113,6 +119,13 @@ describe('DocumentsService', () => {
       createQueryBuilder: jest.fn().mockReturnValue(folderQuery),
       findOne: jest.fn(),
       save: jest.fn((value) => value),
+      count: jest.fn().mockResolvedValue(0),
+    };
+    folderDocumentRepo = {
+      find: jest.fn().mockResolvedValue([]),
+      count: jest.fn().mockResolvedValue(0),
+      save: jest.fn(),
+      delete: jest.fn(),
     };
     storage = {
       getPresignedPutUrl: jest.fn().mockResolvedValue('https://s3.example/put'),
@@ -133,12 +146,31 @@ describe('DocumentsService', () => {
     documentRepo.findOne.mockResolvedValue(document);
     managerDocumentRepo = {
       findOne: jest.fn().mockResolvedValue(document),
+      find: jest.fn().mockResolvedValue([document]),
       save: jest.fn((value) => value),
+    };
+    managerFolderRepo = {
+      findOne: jest.fn().mockResolvedValue({
+        id: 'folder-1',
+        folderName: 'Mẫu hè',
+      }),
+      count: jest.fn().mockResolvedValue(0),
+      remove: jest.fn(),
+    };
+    managerFolderDocumentRepo = {
+      find: jest
+        .fn()
+        .mockResolvedValue([
+          { folderId: 'folder-1', documentId: 'document-1' },
+        ]),
+      delete: jest.fn(),
     };
     const transactionManager = {
       getRepository: (entity: unknown) => {
         if (entity === Document) return managerDocumentRepo;
         if (entity === DocumentVersion) return versionRepo;
+        if (entity === DocumentFolder) return managerFolderRepo;
+        if (entity === FolderDocument) return managerFolderDocumentRepo;
         throw new Error(
           `Unexpected entity ${(entity as { name?: string }).name}`,
         );
@@ -149,6 +181,7 @@ describe('DocumentsService', () => {
         callback(transactionManager),
       ),
     };
+    auditService = { recordEntityChange: jest.fn() };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -156,12 +189,14 @@ describe('DocumentsService', () => {
         { provide: getRepositoryToken(Document), useValue: documentRepo },
         { provide: getRepositoryToken(DocumentVersion), useValue: versionRepo },
         { provide: getRepositoryToken(DocumentFolder), useValue: folderRepo },
-        { provide: getRepositoryToken(FolderDocument), useValue: {} },
+        {
+          provide: getRepositoryToken(FolderDocument),
+          useValue: folderDocumentRepo,
+        },
         { provide: getRepositoryToken(StyleDocument), useValue: {} },
-        { provide: getRepositoryToken(DocumentPin), useValue: documentPinRepo },
         { provide: STORAGE_SERVICE, useValue: storage },
         { provide: DataSource, useValue: dataSource },
-        { provide: AuditService, useValue: { recordEntityChange: jest.fn() } },
+        { provide: AuditService, useValue: auditService },
       ],
     }).compile();
 
@@ -172,6 +207,11 @@ describe('DocumentsService', () => {
     const result = await service.listFolders();
 
     expect(folderRepo.createQueryBuilder).toHaveBeenCalledWith('folder');
+    expect(folderQuery.leftJoin).toHaveBeenCalledWith(
+      Document,
+      'document',
+      'document.id = folderDocument.documentId AND document.archivedAt IS NULL',
+    );
     expect(folderQuery.andWhere).toHaveBeenCalledWith(
       'folder.parentId IS NULL',
     );
@@ -203,13 +243,66 @@ describe('DocumentsService', () => {
     expect(folderRepo.save).not.toHaveBeenCalled();
   });
 
+  it('deletes a folder and archives documents that are only linked to it', async () => {
+    const document = {
+      id: 'document-1',
+      title: 'spec.pdf',
+      archivedAt: null,
+    };
+    managerDocumentRepo.find.mockResolvedValue([document]);
+
+    await service.deleteFolder('folder-1', {
+      id: 'user-1',
+      roleCode: 'MANAGER',
+    });
+
+    expect(managerFolderDocumentRepo.delete).toHaveBeenCalledWith({
+      folderId: 'folder-1',
+    });
+    expect(document.archivedAt).toBeInstanceOf(Date);
+    expect(managerDocumentRepo.save).toHaveBeenCalledWith(document);
+    expect(managerFolderRepo.remove).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'folder-1' }),
+    );
+    expect(auditService.recordEntityChange).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ aggregateId: 'document-1' }),
+    );
+  });
+
+  it('keeps a document active when it is still linked to another folder', async () => {
+    managerFolderDocumentRepo.find.mockResolvedValue([
+      { folderId: 'folder-1', documentId: 'document-1' },
+      { folderId: 'folder-2', documentId: 'document-1' },
+    ]);
+
+    await service.deleteFolder('folder-1');
+
+    expect(managerFolderDocumentRepo.delete).toHaveBeenCalledWith({
+      folderId: 'folder-1',
+    });
+    expect(managerDocumentRepo.find).not.toHaveBeenCalled();
+    expect(managerDocumentRepo.save).not.toHaveBeenCalled();
+    expect(managerFolderRepo.remove).toHaveBeenCalled();
+  });
+
+  it('does not delete a folder that still has child folders', async () => {
+    managerFolderRepo.count.mockResolvedValue(1);
+
+    await expect(service.deleteFolder('folder-1')).rejects.toThrow(
+      'Không thể xóa thư mục vì đang chứa thư mục con.',
+    );
+    expect(managerFolderDocumentRepo.delete).not.toHaveBeenCalled();
+    expect(managerFolderRepo.remove).not.toHaveBeenCalled();
+  });
+
   it('lists active documents by default and can filter archived documents', async () => {
-    await service.list({}, 'user-1');
+    await service.list({});
     expect(documentQuery.where).toHaveBeenLastCalledWith(
       'document.archivedAt IS NULL',
     );
 
-    await service.list({ archived: 'true' }, 'user-1');
+    await service.list({ archived: 'true' });
     expect(documentQuery.where).toHaveBeenLastCalledWith(
       'document.archivedAt IS NOT NULL',
     );
@@ -221,10 +314,12 @@ describe('DocumentsService', () => {
       totalBytes: '98765',
     });
 
-    const result = await service.list(
-      { page: 2, limit: 10, category: 'pdf', sortOrder: 'oldest' },
-      'user-1',
-    );
+    const result = await service.list({
+      page: 2,
+      limit: 10,
+      category: 'pdf',
+      sortOrder: 'oldest',
+    });
 
     expect(documentQuery.andWhere).toHaveBeenCalledWith(
       'LOWER(version.originalFileName) ~ :categoryPattern',
@@ -253,7 +348,7 @@ describe('DocumentsService', () => {
   });
 
   it('filters assigned documents by the Fit attachment purpose', async () => {
-    await service.list({ assigned: 'true' }, 'user-1');
+    await service.list({ assigned: 'true' });
 
     expect(documentQuery.andWhere).toHaveBeenCalledWith(
       'EXISTS (SELECT 1 FROM style_documents assignedDocument WHERE assignedDocument.document_id = document.id AND assignedDocument.purpose = :fitAttachmentPurpose)',
@@ -262,69 +357,12 @@ describe('DocumentsService', () => {
   });
 
   it('filters processing documents that are not assigned to a Fit style', async () => {
-    await service.list({ assigned: 'false' }, 'user-1');
+    await service.list({ assigned: 'false' });
 
     expect(documentQuery.andWhere).toHaveBeenCalledWith(
       'NOT EXISTS (SELECT 1 FROM style_documents assignedDocument WHERE assignedDocument.document_id = document.id AND assignedDocument.purpose = :fitAttachmentPurpose)',
       { fitAttachmentPurpose: 'fit_attachment' },
     );
-  });
-
-  it('returns only documents pinned by the current user', async () => {
-    documentQuery.getRawMany.mockResolvedValue([
-      {
-        documentId: 'document-1',
-        title: 'spec.pdf',
-        folderId: 'folder-1',
-        folderName: 'Mẫu hè',
-        versionId: 'version-1',
-        versionNo: 1,
-        fileName: 'spec.pdf',
-        mimeType: 'application/pdf',
-        byteSize: '1024',
-        uploadedAt: new Date('2026-01-01'),
-        isPinned: true,
-        isAssigned: true,
-      },
-    ]);
-    const result = await service.list({ pinned: 'true' }, 'user-1');
-
-    expect(documentQuery.leftJoin).toHaveBeenCalledWith(
-      DocumentPin,
-      'documentPin',
-      'documentPin.documentId = document.id AND documentPin.userId = :userId',
-      { userId: 'user-1' },
-    );
-    expect(documentQuery.andWhere).toHaveBeenCalledWith(
-      'documentPin.documentId IS NOT NULL',
-    );
-    expect(result.data[0]).toMatchObject({
-      isPinned: true,
-      isAssigned: true,
-      byteSize: 1024,
-    });
-  });
-
-  it('pins an active document idempotently for the current user', async () => {
-    await service.pin('document-1', 'user-1');
-
-    expect(documentRepo.findOne).toHaveBeenCalledWith({
-      where: { id: 'document-1', archivedAt: expect.anything() },
-    });
-    expect(documentPinQuery.values).toHaveBeenCalledWith({
-      documentId: 'document-1',
-      userId: 'user-1',
-    });
-    expect(documentPinQuery.orIgnore).toHaveBeenCalled();
-  });
-
-  it('unpins a document only for the current user', async () => {
-    await service.unpin('document-1', 'user-1');
-
-    expect(documentPinRepo.delete).toHaveBeenCalledWith({
-      documentId: 'document-1',
-      userId: 'user-1',
-    });
   });
 
   it('searches across folder names and includes the parent folder name', async () => {
