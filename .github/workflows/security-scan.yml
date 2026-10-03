@@ -1,0 +1,49 @@
+name: Security Scan
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    name: Trivy and Gitleaks
+    runs-on: ubuntu-latest
+    steps:
+      # actions/checkout v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+
+      # aquasecurity/trivy-action v0.36.0
+      - name: Scan dependencies and secrets with Trivy
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          version: v0.75.0
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret
+          severity: HIGH,CRITICAL
+          ignore-unfixed: false
+          exit-code: '1'
+
+      - name: Install Gitleaks CLI and verify release checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="8.30.1"
+          asset="gitleaks_${version}_linux_x64.tar.gz"
+          base="https://github.com/gitleaks/gitleaks/releases/download/v${version}"
+          curl --fail --silent --show-error --location "${base}/${asset}" --output "$RUNNER_TEMP/${asset}"
+          curl --fail --silent --show-error --location "${base}/gitleaks_${version}_checksums.txt" --output "$RUNNER_TEMP/checksums.txt"
+          expected="$(awk -v file="$asset" '$2 == file { print $1; exit }' "$RUNNER_TEMP/checksums.txt")"
+          test -n "$expected"
+          printf '%s  %s\n' "$expected" "$RUNNER_TEMP/${asset}" | sha256sum --check --status
+          tar -xzf "$RUNNER_TEMP/${asset}" -C "$RUNNER_TEMP" gitleaks
+          chmod 0755 "$RUNNER_TEMP/gitleaks"
+          "$RUNNER_TEMP/gitleaks" version
+
+      - name: Scan current branch history for secrets
+        shell: bash
+        run: "$RUNNER_TEMP/gitleaks git --redact --exit-code 1 ."

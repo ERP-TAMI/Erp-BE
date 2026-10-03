@@ -1,0 +1,123 @@
+name: Deploy dev
+
+on:
+  push:
+    branches: [dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-be-dev
+  cancel-in-progress: false
+
+jobs:
+  checks:
+    name: CI and security gates
+    uses: ./.github/workflows/ci.yml
+
+  deploy:
+    name: Build, scan and deploy API
+    needs: checks
+    if: ${{ github.ref == 'refs/heads/dev' && vars.AWS_ROLE_ARN != '' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      # actions/checkout v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Validate deployment variables
+        shell: bash
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
+          ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+          EC2_INSTANCE_ID: ${{ vars.EC2_INSTANCE_ID }}
+          SSM_DEPLOY_DIR: ${{ vars.SSM_DEPLOY_DIR }}
+        run: |
+          set -euo pipefail
+          [[ "$AWS_REGION" =~ ^[a-z]{2}(-gov)?-[a-z]+-[0-9]+$ ]]
+          [[ "$AWS_ROLE_ARN" =~ ^arn:aws:iam::[0-9]{12}:role/[A-Za-z0-9+=,.@_-]+$ ]]
+          [[ "$ECR_REPOSITORY" =~ ^[a-z0-9][a-z0-9._/-]*$ ]]
+          [[ "$EC2_INSTANCE_ID" =~ ^i-[0-9a-f]+$ ]]
+          [[ "$SSM_DEPLOY_DIR" == /opt/tami-erp ]]
+
+      # aws-actions/configure-aws-credentials v6.3.0
+      - name: Configure AWS credentials through GitHub OIDC
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: github-erp-be-dev
+
+      - name: Sign in to private ECR
+        id: ecr
+        shell: bash
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+        run: |
+          set -euo pipefail
+          account_id="$(aws sts get-caller-identity --query Account --output text)"
+          registry="${account_id}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$registry"
+          echo "registry=$registry" >> "$GITHUB_OUTPUT"
+          echo "image=$registry/$ECR_REPOSITORY:sha-$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Build immutable commit image
+        run: docker build --pull --tag "${{ steps.ecr.outputs.image }}" .
+
+      # aquasecurity/trivy-action v0.36.0
+      - name: Scan the exact API image before publishing
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          version: v0.75.0
+          scan-type: image
+          image-ref: ${{ steps.ecr.outputs.image }}
+          scanners: vuln,secret
+          severity: HIGH,CRITICAL
+          ignore-unfixed: false
+          exit-code: '1'
+
+      - name: Push image and resolve immutable digest
+        id: image
+        shell: bash
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+        run: |
+          set -euo pipefail
+          docker push "${{ steps.ecr.outputs.image }}"
+          digest="$(aws ecr describe-images --region "$AWS_REGION" --repository-name "$ECR_REPOSITORY" --image-ids "imageTag=sha-$GITHUB_SHA" --query 'imageDetails[0].imageDigest' --output text)"
+          [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy by digest through Systems Manager
+        shell: bash
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+          EC2_INSTANCE_ID: ${{ vars.EC2_INSTANCE_ID }}
+          SSM_DEPLOY_DIR: ${{ vars.SSM_DEPLOY_DIR }}
+          ECR_REGISTRY: ${{ steps.ecr.outputs.registry }}
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          set -euo pipefail
+          remote_script="$(cat <<EOF
+          set -euo pipefail
+          cd '$SSM_DEPLOY_DIR'
+          aws ecr get-login-password --region '$AWS_REGION' | docker login --username AWS --password-stdin '$ECR_REGISTRY'
+          printf 'RELEASE_DIGEST=%s\\n' '$IMAGE_DIGEST' > release.env.tmp
+          mv release.env.tmp release.env
+          docker compose --env-file release.env -f compose.yaml pull api
+          docker compose --env-file release.env -f compose.yaml run --rm api node_modules/.bin/typeorm migration:run -d dist/database/data-source.js
+          docker compose --env-file release.env -f compose.yaml up -d --no-deps api
+          EOF
+          )"
+          jq -n --arg command "$remote_script" '{commands: [$command]}' > "$RUNNER_TEMP/ssm-parameters.json"
+          command_id="$(aws ssm send-command --region "$AWS_REGION" --instance-ids "$EC2_INSTANCE_ID" --document-name AWS-RunShellScript --parameters "file://$RUNNER_TEMP/ssm-parameters.json" --query 'Command.CommandId' --output text)"
+          aws ssm wait command-executed --region "$AWS_REGION" --command-id "$command_id" --instance-id "$EC2_INSTANCE_ID"
+          echo "Deployed API digest $IMAGE_DIGEST"
