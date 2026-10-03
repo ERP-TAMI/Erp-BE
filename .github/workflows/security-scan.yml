@@ -44,6 +44,25 @@ jobs:
           chmod 0755 "$RUNNER_TEMP/gitleaks"
           "$RUNNER_TEMP/gitleaks" version
 
-      - name: Scan current branch history for secrets
+      - name: Scan current files and commits introduced by this change
         shell: bash
-        run: "$RUNNER_TEMP/gitleaks git --redact --exit-code 1 ."
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/gitleaks" dir --redact --exit-code 1 .
+
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            git fetch --no-tags origin "$BASE_REF"
+            commit_range="origin/$BASE_REF..$GITHUB_SHA"
+          elif [[ "$BEFORE_SHA" =~ ^0+$ ]]; then
+            commit_range="-1"
+          elif [[ -n "$BEFORE_SHA" ]]; then
+            commit_range="$BEFORE_SHA..$GITHUB_SHA"
+          else
+            commit_range="-1"
+          fi
+
+          "$RUNNER_TEMP/gitleaks" git --log-opts="--no-merges $commit_range" --redact --exit-code 1 .
