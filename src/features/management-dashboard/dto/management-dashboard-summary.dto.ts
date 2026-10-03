@@ -63,7 +63,12 @@ class DashboardPurchaseOrderQueueItemDto {
   @ApiProperty({ example: '2026-09-30' })
   deadline: string;
 
-  @ApiProperty({ example: 2, minimum: 1 })
+  @ApiProperty({
+    example: 2,
+    minimum: 0,
+    description:
+      'Overdue products for overdueQueue; open products (including zero) for upcomingQueue.',
+  })
   productCount: number;
 }
 
@@ -123,7 +128,12 @@ export class ManagementDashboardSummaryDto {
   @ApiProperty({ example: 7, minimum: 0 })
   overdueProductPurchaseOrders: number;
 
-  @ApiProperty({ example: 9, minimum: 0 })
+  @ApiProperty({
+    example: 9,
+    minimum: 0,
+    description:
+      'Open POs due from today through seven days ahead in Vietnam time, regardless of intake period or product deadlines. Legacy property name retained for compatibility.',
+  })
   upcomingProductPurchaseOrders: number;
 
   @ApiProperty({ example: 18, minimum: 0 })

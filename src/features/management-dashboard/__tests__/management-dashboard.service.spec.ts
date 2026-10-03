@@ -95,7 +95,9 @@ describe('ManagementDashboardService', () => {
     );
     expect(sql).toContain("product.status NOT IN ('closed', 'cancelled')");
     expect(sql).toContain('product.deadline < date_context.today');
-    expect(sql).toContain('product.deadline <= date_context.today + 6');
+    expect(sql).toContain(
+      'purchase_order.deadline BETWEEN date_context.today AND date_context.today + 7',
+    );
     expect(sql).toContain('COUNT(DISTINCT');
     expect(sql).toContain('purchase_order_products');
     expect(sql).toContain("AT TIME ZONE 'Asia/Ho_Chi_Minh'");

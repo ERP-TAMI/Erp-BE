@@ -34,8 +34,16 @@ type SummaryResponse = {
   purchaseOrderStatuses: Array<{ status: string; count: number }>;
   bomRevisionStatuses: Array<{ status: string; count: number }>;
   topCustomers: Array<{ customerName: string; count: number }>;
-  overdueQueue: Array<{ purchaseOrderId: string; productCount: number }>;
-  upcomingQueue: Array<{ purchaseOrderId: string; productCount: number }>;
+  overdueQueue: Array<{
+    purchaseOrderId: string;
+    productCount: number;
+    deadline: string;
+  }>;
+  upcomingQueue: Array<{
+    purchaseOrderId: string;
+    productCount: number;
+    deadline: string;
+  }>;
   pendingBomQueue: Array<{ bomId: string; status: string }>;
 };
 
@@ -606,6 +614,105 @@ describe('Management dashboard API with PostgreSQL (e2e)', () => {
     },
   );
 
+  it('uses PO deadlines for upcoming alerts including missing product deadlines and the seventh day', async () => {
+    const baseline = await getSummary();
+    const [{ today }] = await dataSource.query(
+      `SELECT (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Ho_Chi_Minh')::date::text AS today`,
+    );
+    const cases = [
+      { key: 'TODAY', offset: 0, products: [] },
+      { key: 'NULL-PRODUCT-DATE', offset: 6, products: [null] },
+      { key: 'DAY-SEVEN', offset: 7, products: [14, 15] },
+      { key: 'DAY-EIGHT', offset: 8, products: [1] },
+      { key: 'PAST', offset: -1, products: [1] },
+      { key: 'NO-PO-DATE', offset: null, products: [1] },
+      { key: 'CLOSED', offset: 1, products: [1], status: 'closed' },
+      { key: 'CANCELLED', offset: 1, products: [1], status: 'cancelled' },
+      { key: 'ARCHIVED', offset: 1, products: [1], archived: true },
+    ];
+    const ids: string[] = [];
+    try {
+      for (const fixture of cases) {
+        const [{ id }] = await dataSource.query(
+          `INSERT INTO purchase_orders
+            (po_code, customer_name_snapshot, received_date, deadline, status, cancellation_reason, closed_at, archived_at)
+           VALUES ($1, 'Dashboard deadline regression', '2026-01-01', $2::date, $3::po_status,
+             CASE WHEN $3 = 'cancelled' THEN 'Test cancellation' END,
+             CASE WHEN $3 = 'closed' THEN now() END,
+             CASE WHEN $4 THEN now() END) RETURNING id`,
+          [
+            `${runKey}-000-${fixture.key}`,
+            fixture.offset === null ? null : shiftDate(today, fixture.offset),
+            fixture.status ?? 'in_progress',
+            fixture.archived ?? false,
+          ],
+        );
+        ids.push(id);
+        for (const [index, offset] of fixture.products.entries()) {
+          await dataSource.query(
+            `INSERT INTO purchase_order_products (purchase_order_id, product_code, product_name, deadline, status)
+             VALUES ($1, $2, 'Dashboard deadline regression', $3::date, 'draft')`,
+            [
+              id,
+              `PRODUCT-${index}`,
+              offset === null ? null : shiftDate(today, offset),
+            ],
+          );
+        }
+      }
+      const result = await getSummary();
+      expect(result.upcomingProductPurchaseOrders).toBe(
+        baseline.upcomingProductPurchaseOrders + 3,
+      );
+      expect(result.overdueProductPurchaseOrders).toBe(
+        baseline.overdueProductPurchaseOrders,
+      );
+      expect(result.upcomingQueue).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            purchaseOrderId: ids[0],
+            productCount: 0,
+            deadline: today,
+          }),
+        ]),
+      );
+      // Independently verify the capped queue and its PO deadlines, including ordering.
+      const expectedQueue = await dataSource.query(
+        `SELECT po.id AS "purchaseOrderId", to_char(po.deadline, 'YYYY-MM-DD') AS deadline,
+           (SELECT COUNT(*)::int FROM purchase_order_products p WHERE p.purchase_order_id = po.id AND p.status NOT IN ('closed','cancelled')) AS "productCount"
+         FROM purchase_orders po WHERE po.archived_at IS NULL AND po.status NOT IN ('closed','cancelled')
+           AND po.deadline BETWEEN $1::date AND $1::date + 7
+         ORDER BY po.deadline, po.po_code LIMIT 5`,
+        [today],
+      );
+      expect(
+        result.upcomingQueue.map(
+          ({ purchaseOrderId, deadline, productCount }) => ({
+            purchaseOrderId,
+            deadline,
+            productCount,
+          }),
+        ),
+      ).toEqual(expectedQueue);
+      const business = await request(app.getHttpServer())
+        .get('/dashboard/summary?periodType=month&month=2026-12')
+        .expect(200);
+      expect(business.body.upcomingProductPurchaseOrders).toBe(
+        result.upcomingProductPurchaseOrders,
+      );
+      expect(business.body.upcomingQueue).toEqual(result.upcomingQueue);
+    } finally {
+      await dataSource.query(
+        'DELETE FROM purchase_order_products WHERE purchase_order_id = ANY($1::uuid[])',
+        [ids],
+      );
+      await dataSource.query(
+        'DELETE FROM purchase_orders WHERE id = ANY($1::uuid[])',
+        [ids],
+      );
+    }
+  });
+
   it('counts overdue POs by product deadlines and counts a PO once', async () => {
     const baseline = await getSummary();
     const [{ id: customerId }] = (await dataSource.query(
@@ -653,7 +760,9 @@ describe('Management dashboard API with PostgreSQL (e2e)', () => {
           ($4, $8, $9, '2026-09-20', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Ho_Chi_Minh')::date, 'pending_rd', NULL, NULL, NULL),
           ($5, $8, $9, '2026-10-01', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - 1, 'in_progress', NULL, NULL, NULL),
           ($6, $8, $9, '2026-09-10', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - 1, 'in_progress', NULL, NULL, now()),
-          ($7, $8, $9, '2026-09-22', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - 1, 'draft', NULL, NULL, NULL)
+          ($7, $8, $9, '2026-09-22', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - 1, 'draft', NULL, NULL, NULL),
+          ($10, $8, $9, '2026-08-01', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - 1, 'in_progress', NULL, NULL, NULL),
+          ($11, $8, $9, '2026-08-15', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Ho_Chi_Minh')::date + 3, 'in_progress', NULL, NULL, NULL)
         RETURNING id, po_code
       `,
       [
@@ -666,6 +775,8 @@ describe('Management dashboard API with PostgreSQL (e2e)', () => {
         `${runKey}-EMPTY-OVERDUE`,
         customerId,
         `${runKey} Customer`,
+        `${runKey}-OLD-OVERDUE`,
+        `${runKey}-OLD-UPCOMING`,
       ],
     )) as Array<{ id: string; po_code: string }>;
     const overduePoId = purchaseOrders.find((po) =>
@@ -673,6 +784,12 @@ describe('Management dashboard API with PostgreSQL (e2e)', () => {
     )?.id;
     const todayPoId = purchaseOrders.find((po) =>
       po.po_code.endsWith('-TODAY'),
+    )?.id;
+    const oldOverduePoId = purchaseOrders.find((po) =>
+      po.po_code.endsWith('-OLD-OVERDUE'),
+    )?.id;
+    const oldUpcomingPoId = purchaseOrders.find((po) =>
+      po.po_code.endsWith('-OLD-UPCOMING'),
     )?.id;
 
     await dataSource.query(
@@ -687,9 +804,11 @@ describe('Management dashboard API with PostgreSQL (e2e)', () => {
         VALUES
           ($1, 'OVERDUE-1', 'Overdue one', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - 1, 'sampling'),
           ($1, 'OVERDUE-2', 'Overdue two', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - 2, 'sampling'),
-          ($2, 'DUE-TODAY', 'Due today', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Ho_Chi_Minh')::date, 'sampling')
+          ($2, 'DUE-TODAY', 'Due today', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Ho_Chi_Minh')::date, 'sampling'),
+          ($3, 'OLD-OVERDUE', 'Imported overdue', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - 1, 'sampling'),
+          ($4, 'OLD-UPCOMING', 'Imported upcoming', (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Ho_Chi_Minh')::date + 3, 'sampling')
       `,
-      [overduePoId, todayPoId],
+      [overduePoId, todayPoId, oldOverduePoId, oldUpcomingPoId],
     );
 
     await expect(getSummary()).resolves.toMatchObject({
@@ -700,8 +819,8 @@ describe('Management dashboard API with PostgreSQL (e2e)', () => {
       completedPurchaseOrders: baseline.completedPurchaseOrders + 1,
       cancelledPurchaseOrders: baseline.cancelledPurchaseOrders + 1,
       processingPurchaseOrders: baseline.processingPurchaseOrders + 3,
-      overdueProductPurchaseOrders: baseline.overdueProductPurchaseOrders + 1,
-      upcomingProductPurchaseOrders: baseline.upcomingProductPurchaseOrders + 1,
+      overdueProductPurchaseOrders: baseline.overdueProductPurchaseOrders + 2,
+      upcomingProductPurchaseOrders: baseline.upcomingProductPurchaseOrders + 2,
       pendingBomCount: baseline.pendingBomCount,
       activeEmployees: baseline.activeEmployees + 1,
     });

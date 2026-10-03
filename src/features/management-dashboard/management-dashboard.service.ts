@@ -109,15 +109,7 @@ export class ManagementDashboardService {
             ) AS overdue_product_count,
             MIN(product.deadline) FILTER (
               WHERE product.deadline < date_context.today
-            ) AS overdue_deadline,
-            COUNT(*) FILTER (
-              WHERE product.deadline >= date_context.today
-                AND product.deadline <= date_context.today + 6
-            ) AS upcoming_product_count,
-            MIN(product.deadline) FILTER (
-              WHERE product.deadline >= date_context.today
-                AND product.deadline <= date_context.today + 6
-            ) AS upcoming_deadline
+            ) AS overdue_deadline
           FROM purchase_orders AS purchase_order
           INNER JOIN purchase_order_products AS product
             ON product.purchase_order_id = purchase_order.id
@@ -126,11 +118,27 @@ export class ManagementDashboardService {
             AND purchase_order.status NOT IN ('closed', 'cancelled')
             AND product.status NOT IN ('closed', 'cancelled')
             AND product.deadline IS NOT NULL
-            AND purchase_order.received_date >= date_context.period_start
-            AND purchase_order.received_date < date_context.period_end_exclusive
-            AND product.deadline <= date_context.today + 6
+            AND product.deadline < date_context.today
           GROUP BY purchase_order.id, purchase_order.po_code,
             purchase_order.customer_name_snapshot
+        ),
+        upcoming_purchase_orders AS (
+          SELECT
+            purchase_order.id AS purchase_order_id,
+            purchase_order.po_code,
+            purchase_order.customer_name_snapshot,
+            purchase_order.deadline AS upcoming_deadline,
+            COUNT(product.id) AS product_count
+          FROM purchase_orders AS purchase_order
+          LEFT JOIN purchase_order_products AS product
+            ON product.purchase_order_id = purchase_order.id
+            AND product.status NOT IN ('closed', 'cancelled')
+          CROSS JOIN date_context
+          WHERE purchase_order.archived_at IS NULL
+            AND purchase_order.status NOT IN ('closed', 'cancelled')
+            AND purchase_order.deadline BETWEEN date_context.today AND date_context.today + 7
+          GROUP BY purchase_order.id, purchase_order.po_code,
+            purchase_order.customer_name_snapshot, purchase_order.deadline
         ),
         current_bom_revisions AS (
           SELECT
@@ -172,9 +180,7 @@ export class ManagementDashboardService {
              FROM product_deadlines AS product_deadline
              WHERE product_deadline.overdue_product_count > 0
             ) AS overdue_product_purchase_orders,
-            (SELECT COUNT(DISTINCT product_deadline.purchase_order_id)
-             FROM product_deadlines AS product_deadline
-             WHERE product_deadline.upcoming_product_count > 0
+            (SELECT COUNT(*) FROM upcoming_purchase_orders
             ) AS upcoming_product_purchase_orders,
             (SELECT COUNT(*)
              FROM current_bom_revisions
@@ -403,13 +409,12 @@ export class ManagementDashboardService {
               'poCode', queue.po_code,
               'customerName', queue.customer_name_snapshot,
               'deadline', to_char(queue.upcoming_deadline, 'YYYY-MM-DD'),
-              'productCount', queue.upcoming_product_count
+              'productCount', queue.product_count
             ) ORDER BY queue.upcoming_deadline ASC, queue.po_code ASC),
             '[]'::json
           ) AS data
           FROM (
-            SELECT * FROM product_deadlines
-            WHERE upcoming_product_count > 0
+            SELECT * FROM upcoming_purchase_orders
             ORDER BY upcoming_deadline ASC, po_code ASC
             LIMIT 5
           ) AS queue
