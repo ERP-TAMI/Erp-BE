@@ -87,7 +87,7 @@ describe('JwtStrategy', () => {
       email: 'sa@tami.test',
       roleCode: 'SA',
       permissions: ['system.users.manage'],
-      purchaseOrderMode: PurchaseOrderMode.READ_ONLY,
+      purchaseOrderMode: PurchaseOrderMode.FULL_ACCESS,
     });
   });
 });

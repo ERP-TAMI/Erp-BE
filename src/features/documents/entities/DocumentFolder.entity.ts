@@ -6,13 +6,13 @@ export class DocumentFolder {
   id: string;
 
   @Column({ type: 'uuid', nullable: true, name: 'parent_id' })
-  parentId: string;
+  parentId: string | null;
 
   @Column({ type: 'varchar', length: 255, name: 'folder_name' })
   folderName: string;
 
   @Column({ type: 'uuid', nullable: true, name: 'created_by' })
-  createdBy: string;
+  createdBy: string | null;
 
   @Column({ type: 'timestamptz', name: 'created_at' })
   createdAt: Date;

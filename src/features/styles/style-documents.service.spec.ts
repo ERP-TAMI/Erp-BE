@@ -7,7 +7,10 @@ import { Style } from './entities/Style.entity';
 import { StyleDocument } from './entities/StyleDocument.entity';
 import { Document } from '../documents/entities/Document.entity';
 import { DocumentVersion } from '../documents/entities/DocumentVersion.entity';
-import { DocumentPurpose } from '../../common/enums/database.enums';
+import {
+  DocumentPurpose,
+  UploadStatus,
+} from '../../common/enums/database.enums';
 import { STORAGE_SERVICE, StorageService } from '../storage/storage.interface';
 import { AuditService } from '../audit/audit.service';
 
@@ -35,16 +38,28 @@ describe('StyleDocumentsService', () => {
   let styleRepoMock: { exist: jest.Mock };
   let styleDocRepoMock: {
     createQueryBuilder: jest.Mock;
+    find: jest.Mock;
     findOne: jest.Mock;
     remove: jest.Mock;
   };
   let storageMock: jest.Mocked<StorageService>;
-  let docRepoMock: { create: jest.Mock; save: jest.Mock; findOne: jest.Mock };
-  let versionRepoMock: { create: jest.Mock; save: jest.Mock };
+  let docRepoMock: {
+    create: jest.Mock;
+    save: jest.Mock;
+    find: jest.Mock;
+    findOne: jest.Mock;
+  };
+  let versionRepoMock: {
+    create: jest.Mock;
+    save: jest.Mock;
+    find: jest.Mock;
+    findOne: jest.Mock;
+  };
   let styleDocTxRepoMock: {
     create: jest.Mock;
     save: jest.Mock;
     remove: jest.Mock;
+    createQueryBuilder: jest.Mock;
   };
   let auditServiceMock: { recordEntityChange: jest.Mock };
 
@@ -53,7 +68,8 @@ describe('StyleDocumentsService', () => {
   beforeEach(async () => {
     styleRepoMock = { exist: jest.fn().mockResolvedValue(true) };
     styleDocRepoMock = {
-      createQueryBuilder: jest.fn(),
+      createQueryBuilder: jest.fn().mockReturnValue(buildQueryBuilderMock([])),
+      find: jest.fn().mockResolvedValue([]),
       findOne: jest.fn(),
       remove: jest.fn(),
     };
@@ -61,6 +77,7 @@ describe('StyleDocumentsService', () => {
     docRepoMock = {
       create: jest.fn().mockImplementation((v) => v),
       save: jest.fn().mockImplementation((v) => ({ id: 'doc-1', ...v })),
+      find: jest.fn().mockResolvedValue([]),
       findOne: jest
         .fn()
         .mockResolvedValue({ id: 'doc-1', title: 'tech-pack.pdf' }),
@@ -68,11 +85,20 @@ describe('StyleDocumentsService', () => {
     versionRepoMock = {
       create: jest.fn().mockImplementation((v) => v),
       save: jest.fn().mockImplementation((v) => ({ id: 'version-1', ...v })),
+      find: jest.fn().mockResolvedValue([]),
+      findOne: jest.fn(),
     };
     styleDocTxRepoMock = {
       create: jest.fn().mockImplementation((v) => v),
       save: jest.fn().mockResolvedValue(undefined),
       remove: jest.fn().mockResolvedValue(undefined),
+      createQueryBuilder: jest.fn().mockReturnValue({
+        insert: jest.fn().mockReturnThis(),
+        values: jest.fn().mockReturnThis(),
+        orIgnore: jest.fn().mockReturnThis(),
+        returning: jest.fn().mockReturnThis(),
+        execute: jest.fn().mockResolvedValue({ raw: [] }),
+      }),
     };
     auditServiceMock = {
       recordEntityChange: jest.fn().mockResolvedValue(undefined),
@@ -112,6 +138,10 @@ describe('StyleDocumentsService', () => {
           useValue: styleDocRepoMock,
         },
         { provide: getRepositoryToken(Document), useValue: docRepoMock },
+        {
+          provide: getRepositoryToken(DocumentVersion),
+          useValue: versionRepoMock,
+        },
         { provide: STORAGE_SERVICE, useValue: storageMock },
         { provide: DataSource, useValue: dataSourceMock },
         { provide: AuditService, useValue: auditServiceMock },
@@ -168,6 +198,10 @@ describe('StyleDocumentsService', () => {
 
   describe('confirm', () => {
     it('creates document, version and the style link inside one transaction', async () => {
+      storageMock.headObject.mockResolvedValue({
+        exists: true,
+        sizeBytes: 1536,
+      });
       const result = await service.confirm(STYLE_ID, 'user-1', {
         objectKey: `styles/${STYLE_ID}/documents/fit_attachment/x.pdf`,
         fileName: 'tech-pack.pdf',
@@ -188,9 +222,12 @@ describe('StyleDocumentsService', () => {
       expect(result).toMatchObject({
         fileName: 'tech-pack.pdf',
         mimeType: 'application/pdf',
-        byteSize: 2048,
+        byteSize: 1536,
         purpose: DocumentPurpose.FIT_ATTACHMENT,
       });
+      expect(versionRepoMock.create).toHaveBeenCalledWith(
+        expect.objectContaining({ byteSize: 1536 }),
+      );
     });
 
     it('rejects when the object was not actually uploaded to S3', async () => {
@@ -253,6 +290,9 @@ describe('StyleDocumentsService', () => {
           byteSize: '2048',
           uploadedAt: new Date('2026-01-01'),
           purpose: DocumentPurpose.FIT_ATTACHMENT,
+          documentVersionId: 'version-1',
+          versionNo: '2',
+          currentVersionId: 'version-2',
         },
       ]);
       styleDocRepoMock.createQueryBuilder.mockReturnValue(qb);
@@ -268,6 +308,9 @@ describe('StyleDocumentsService', () => {
           byteSize: 2048,
           uploadedAt: new Date('2026-01-01'),
           purpose: DocumentPurpose.FIT_ATTACHMENT,
+          documentVersionId: 'version-1',
+          versionNo: 2,
+          isCurrentVersion: false,
         },
       ]);
     });
@@ -322,6 +365,58 @@ describe('StyleDocumentsService', () => {
         NotFoundException,
       );
       expect(styleDocTxRepoMock.remove).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('assignFromLibrary', () => {
+    it('promotes an existing non-fit link instead of silently ignoring the assignment', async () => {
+      const document = {
+        id: 'doc-1',
+        title: 'spec.pdf',
+        currentVersionId: 'version-2',
+        archivedAt: null,
+      };
+      const existingLink = {
+        styleId: STYLE_ID,
+        documentId: 'doc-1',
+        documentVersionId: 'version-1',
+        purpose: DocumentPurpose.OTHER,
+        linkedBy: 'old-user',
+        linkedAt: new Date('2025-01-01T00:00:00.000Z'),
+      };
+      docRepoMock.find.mockResolvedValue([document]);
+      versionRepoMock.find.mockResolvedValue([
+        {
+          id: 'version-2',
+          documentId: 'doc-1',
+          versionNo: 2,
+          status: UploadStatus.READY,
+        },
+      ]);
+      styleDocRepoMock.find.mockResolvedValue([existingLink]);
+
+      await service.assignFromLibrary(STYLE_ID, ['doc-1'], {
+        id: 'rd-user',
+        roleCode: 'RD',
+      });
+
+      expect(styleDocTxRepoMock.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          styleId: STYLE_ID,
+          documentId: 'doc-1',
+          documentVersionId: 'version-2',
+          purpose: DocumentPurpose.FIT_ATTACHMENT,
+          linkedBy: 'rd-user',
+        }),
+      );
+      expect(auditServiceMock.recordEntityChange).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          aggregateId: 'doc-1',
+          parentId: STYLE_ID,
+          eventType: 'updated',
+        }),
+      );
     });
   });
 });

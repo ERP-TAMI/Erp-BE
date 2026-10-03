@@ -398,11 +398,11 @@ describe('BOM V2 Workflow State Machine: Forward, Reject, Approve (PR-04 Specifi
         workflow.forward(mockBom.id, {}, 'user-acct', UserRoleCode.ACCOUNTING),
       ).rejects.toThrow(ForbiddenException);
 
-      // SA at wait_accounting
+      // SA has full access at wait_accounting
       setupStatefulWorkflow(BomRevisionStatus.WAIT_ACCOUNTING);
       await expect(
         workflow.forward(mockBom.id, {}, 'user-sa', UserRoleCode.SA),
-      ).rejects.toThrow(ForbiddenException);
+      ).resolves.toMatchObject({ status: BomRevisionStatus.WAIT_SA_APPROVE });
 
       // Anonymous / null role
       setupStatefulWorkflow(BomRevisionStatus.WAIT_NVKH);
@@ -1064,7 +1064,7 @@ describe('BOM V2 Workflow State Machine: Forward, Reject, Approve (PR-04 Specifi
       }).toThrow(ForbiddenException);
     });
 
-    it('confirms N5 (SA) cannot edit lines in wait_sa_approve (read-only node)', () => {
+    it('confirms N5 (SA) can edit lines in wait_sa_approve', () => {
       setupStatefulWorkflow(BomRevisionStatus.WAIT_SA_APPROVE);
 
       // SA updating line: forbidden
@@ -1072,12 +1072,12 @@ describe('BOM V2 Workflow State Machine: Forward, Reject, Approve (PR-04 Specifi
         assertCanUpdateLine(UserRoleCode.SA, mockBom, mockRevision, {
           consumption: 1.0,
         });
-      }).toThrow(ForbiddenException);
+      }).not.toThrow();
 
       // SA adding line: forbidden
       expect(() => {
         assertCanAddLine(UserRoleCode.SA, mockBom, mockRevision);
-      }).toThrow(ForbiddenException);
+      }).not.toThrow();
     });
   });
 
@@ -1259,7 +1259,7 @@ describe('BOM V2 Workflow State Machine: Forward, Reject, Approve (PR-04 Specifi
         }).toThrow(ForbiddenException);
       });
 
-      it('confirms all roles cannot mutate lines in wait_sa_approve (read-only)', () => {
+      it('confirms SA can mutate lines in wait_sa_approve while other roles cannot', () => {
         setupStatefulWorkflow(BomRevisionStatus.WAIT_SA_APPROVE);
         const roles = [
           UserRoleCode.NVKH,
@@ -1268,11 +1268,14 @@ describe('BOM V2 Workflow State Machine: Forward, Reject, Approve (PR-04 Specifi
           UserRoleCode.ACCOUNTING,
           UserRoleCode.SA,
         ];
-        for (const r of roles) {
+        for (const r of roles.filter((role) => role !== UserRoleCode.SA)) {
           expect(() => {
             assertCanAddLine(r, mockBom, mockRevision);
           }).toThrow(ForbiddenException);
         }
+        expect(() =>
+          assertCanAddLine(UserRoleCode.SA, mockBom, mockRevision),
+        ).not.toThrow();
       });
     });
 

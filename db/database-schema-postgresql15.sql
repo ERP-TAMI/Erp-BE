@@ -1,6 +1,7 @@
 -- ERP May Mac - full target schema Module 1-7 - PostgreSQL 15
 -- Target terminology: Closed/Chốt. Legacy Final/PO_Final is migration-only.
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
 CREATE TYPE record_status AS ENUM ('active','inactive');
 CREATE TYPE po_status AS ENUM ('draft','pending_rd','in_progress','closed','cancelled');
@@ -50,6 +51,7 @@ CREATE TABLE document_versions (
  version_no integer NOT NULL CHECK(version_no>0), original_file_name varchar(500) NOT NULL,
  storage_key varchar(1000) NOT NULL UNIQUE, mime_type varchar(255) NOT NULL, byte_size bigint NOT NULL CHECK(byte_size>=0),
  sha256 char(64), status upload_status NOT NULL DEFAULT 'pending', change_reason text,
+ evidence_storage_key varchar(1000), evidence_file_name varchar(500), evidence_mime_type varchar(255),
  uploaded_by uuid REFERENCES users(id) ON DELETE SET NULL, uploaded_at timestamptz NOT NULL DEFAULT now(),
  CONSTRAINT uq_document_version UNIQUE(document_id,version_no), CONSTRAINT ck_sha256 CHECK(sha256 IS NULL OR sha256 ~ '^[0-9a-fA-F]{64}$')
 );
@@ -259,6 +261,10 @@ CREATE INDEX ix_po_list ON purchase_orders(status,created_at DESC,id DESC) WHERE
 CREATE INDEX ix_po_customer_date ON purchase_orders(customer_id,received_date DESC,id DESC) WHERE archived_at IS NULL;
 CREATE INDEX ix_product_po_status ON purchase_order_products(purchase_order_id,status,created_at DESC,id DESC);
 CREATE INDEX ix_doc_version_latest ON document_versions(document_id,version_no DESC);
+CREATE UNIQUE INDEX uq_folder_documents_document_id ON folder_documents(document_id);
+CREATE INDEX ix_documents_title_trgm ON documents USING gin (title gin_trgm_ops);
+CREATE INDEX ix_document_versions_file_name_trgm ON document_versions USING gin (original_file_name gin_trgm_ops);
+CREATE INDEX ix_document_folders_name_trgm ON document_folders USING gin (folder_name gin_trgm_ops);
 CREATE INDEX ix_style_docs_document ON style_documents(document_id);
 CREATE INDEX ix_po_docs_document ON purchase_order_documents(document_id);
 CREATE INDEX ix_product_docs_document ON purchase_order_product_documents(document_id);

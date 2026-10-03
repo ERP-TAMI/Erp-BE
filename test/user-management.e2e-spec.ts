@@ -102,11 +102,11 @@ describe('User management API (e2e)', () => {
     expect(userManagementService.findAll).not.toHaveBeenCalled();
   });
 
-  it('forbids access without system.users.manage', async () => {
+  it('allows SA to access user management without a fresh permission list', async () => {
     currentPermissions = [];
 
-    await request(app.getHttpServer()).get('/system/users').expect(403);
-    expect(userManagementService.findAll).not.toHaveBeenCalled();
+    await request(app.getHttpServer()).get('/system/users').expect(200);
+    expect(userManagementService.findAll).toHaveBeenCalled();
   });
 
   it('creates a user without accepting a password field', async () => {

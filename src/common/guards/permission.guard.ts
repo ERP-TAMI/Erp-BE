@@ -3,6 +3,7 @@ import { Reflector } from '@nestjs/core';
 import { PERMISSION_KEY } from '../decorators/permission.decorator';
 
 type RequestUser = {
+  roleCode?: string;
   permissions?: string[];
 };
 
@@ -21,6 +22,7 @@ export class PermissionGuard implements CanActivate {
     }
 
     const request = context.switchToHttp().getRequest<{ user?: RequestUser }>();
+    if (request.user?.roleCode === 'SA') return true;
     return request.user?.permissions?.includes(permission) ?? false;
   }
 }

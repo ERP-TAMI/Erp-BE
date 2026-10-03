@@ -25,16 +25,40 @@ export class DocumentVersion {
   byteSize: number;
 
   @Column({ type: 'char', length: 64, nullable: true })
-  sha256: string;
+  sha256: string | null;
 
   @Column({ type: 'enum', enum: UploadStatus, enumName: 'upload_status' })
   status: UploadStatus;
 
   @Column({ type: 'text', nullable: true, name: 'change_reason' })
-  changeReason: string;
+  changeReason: string | null;
+
+  @Column({
+    type: 'varchar',
+    length: 1000,
+    nullable: true,
+    name: 'evidence_storage_key',
+  })
+  evidenceStorageKey: string | null;
+
+  @Column({
+    type: 'varchar',
+    length: 500,
+    nullable: true,
+    name: 'evidence_file_name',
+  })
+  evidenceFileName: string | null;
+
+  @Column({
+    type: 'varchar',
+    length: 255,
+    nullable: true,
+    name: 'evidence_mime_type',
+  })
+  evidenceMimeType: string | null;
 
   @Column({ type: 'uuid', nullable: true, name: 'uploaded_by' })
-  uploadedBy: string;
+  uploadedBy: string | null;
 
   @Column({ type: 'timestamptz', name: 'uploaded_at' })
   uploadedAt: Date;

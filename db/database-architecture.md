@@ -320,6 +320,9 @@ Schema được chuẩn hoá theo aggregate Style, PurchaseOrder, PurchaseOrderP
 | `sha256` | `char(64)` | Nullable theo nghiệp vụ | Thuộc tính nghiệp vụ/kiểm soát của bảng. |
 | `status` | `upload_status` | not null, default: `'pending'` | Thuộc tính nghiệp vụ/kiểm soát của bảng. |
 | `change_reason` | `text` | Nullable theo nghiệp vụ | Thuộc tính nghiệp vụ/kiểm soát của bảng. |
+| `evidence_storage_key` | `varchar(1000)` | Nullable | Object key của ảnh chứng minh yêu cầu đổi phiên bản. |
+| `evidence_file_name` | `varchar(500)` | Nullable | Tên gốc của ảnh bằng chứng. |
+| `evidence_mime_type` | `varchar(255)` | Nullable | Kiểu MIME của ảnh bằng chứng. |
 | `uploaded_by` | `uuid` | Nullable theo nghiệp vụ | Thuộc tính nghiệp vụ/kiểm soát của bảng. |
 | `uploaded_at` | `timestamptz` | not null, default: `now()` | Thuộc tính nghiệp vụ/kiểm soát của bảng. |
 

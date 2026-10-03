@@ -214,6 +214,8 @@ export class AuthService {
     userId: string,
     mode: PurchaseOrderMode,
   ): Promise<AuthUserDto> {
+    // Keep accepting the legacy request payload; SA access is no longer switchable.
+    void mode;
     const user = await this.userRepository.findOne({ where: { id: userId } });
     if (!user) {
       throw new UnauthorizedException({
@@ -236,8 +238,12 @@ export class AuthService {
       });
     }
 
-    await this.userRepository.update(user.id, { purchaseOrderMode: mode });
-    user.purchaseOrderMode = mode;
+    // Legacy endpoint: SA access is always full, including clients that still
+    // try to switch back to READ_ONLY.
+    await this.userRepository.update(user.id, {
+      purchaseOrderMode: PurchaseOrderMode.FULL_ACCESS,
+    });
+    user.purchaseOrderMode = PurchaseOrderMode.FULL_ACCESS;
     return this.toAuthUserDto(user, roleInfo);
   }
 
@@ -387,7 +393,10 @@ export class AuthService {
       roleCode: roleInfo.roleCode,
       roleName: roleInfo.roleName,
       permissions: roleInfo.permissions,
-      purchaseOrderMode: user.purchaseOrderMode,
+      purchaseOrderMode:
+        roleInfo.roleCode === 'SA'
+          ? PurchaseOrderMode.FULL_ACCESS
+          : user.purchaseOrderMode,
     };
   }
 

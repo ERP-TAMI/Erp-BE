@@ -41,6 +41,7 @@ import {
   CreateBomDto,
   UpdateBomDto,
   DiscontinueBomDto,
+  RestoreBomDto,
   CreateBomLineDto,
   UpdateBomLineDto,
   ReorderBomLinesDto,
@@ -64,6 +65,7 @@ import {
   assertCanCreateBom,
   assertCanUpdateBomHeader,
   assertCanDiscontinueBom,
+  assertCanRestoreBom,
   assertCanAddLine,
   assertCanUpdateLine,
   assertCanDeleteLine,
@@ -87,6 +89,7 @@ import {
 import { stripHtmlTags } from '../../common/utils/sanitize-text.util';
 import { AuditActor } from '../audit/audit-actor.type';
 import { diffEntity } from '../audit/entity-diff.util';
+import { QueryBomCreateTargetsDto } from './dto/query-bom-create-targets.dto';
 
 export interface PaginatedResult<T> {
   data: T[];
@@ -129,6 +132,167 @@ export class BomsService {
     private readonly bomAuditService: BomAuditService,
     private readonly dataSource: DataSource,
   ) {}
+
+  private eligiblePoProductsQuery() {
+    return this.poProductRepository
+      .createQueryBuilder('product')
+      .leftJoin(
+        'boms',
+        'existing_bom',
+        'existing_bom.purchase_order_product_id = product.id AND existing_bom.bom_type = :bomType',
+        { bomType: BomType.PO },
+      )
+      .where('existing_bom.id IS NULL')
+      .andWhere('product.status NOT IN (:...blockedProductStatuses)', {
+        blockedProductStatuses: [ProductStatus.CLOSED, ProductStatus.CANCELLED],
+      });
+  }
+
+  async getEligiblePurchaseOrders(query: QueryBomCreateTargetsDto) {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
+    const eligibleProductExists = this.eligiblePoProductsQuery()
+      .select('1')
+      .andWhere('product.purchase_order_id = po.id')
+      .getQuery();
+    const qb = this.poRepository
+      .createQueryBuilder('po')
+      .where('po.status NOT IN (:...blockedPoStatuses)', {
+        blockedPoStatuses: [PoStatus.CLOSED, PoStatus.CANCELLED],
+      })
+      .andWhere('po.archived_at IS NULL')
+      .andWhere(`EXISTS (${eligibleProductExists})`)
+      .setParameters({
+        bomType: BomType.PO,
+        blockedProductStatuses: [ProductStatus.CLOSED, ProductStatus.CANCELLED],
+      });
+
+    const search = query.search?.trim();
+    if (search) {
+      qb.andWhere(
+        '(po.po_code ILIKE :search OR po.customer_name_snapshot ILIKE :search)',
+        { search: `%${search}%` },
+      );
+    }
+
+    const [items, total] = await qb
+      .orderBy('po.createdAt', 'DESC')
+      .addOrderBy('po.id', 'DESC')
+      .skip((page - 1) * limit)
+      .take(limit)
+      .getManyAndCount();
+
+    return {
+      items: items.map((po) => ({
+        id: po.id,
+        poCode: po.poCode,
+        customerNameSnapshot: po.customerNameSnapshot,
+      })),
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
+  }
+
+  async getEligibleFitStyles(query: QueryBomCreateTargetsDto) {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
+    const qb = this.styleRepository
+      .createQueryBuilder('style')
+      .leftJoin(
+        'boms',
+        'existing_bom',
+        'existing_bom.style_id = style.id AND existing_bom.bom_type = :bomType',
+        { bomType: BomType.FIT },
+      )
+      .where('existing_bom.id IS NULL');
+
+    const search = query.search?.trim();
+    if (search) {
+      qb.andWhere(
+        '(style.style_code ILIKE :search OR style.style_name ILIKE :search OR style.category ILIKE :search)',
+        { search: `%${search}%` },
+      );
+    }
+    const [styles, total] = await qb
+      .orderBy('style.createdAt', 'DESC')
+      .addOrderBy('style.id', 'DESC')
+      .skip((page - 1) * limit)
+      .take(limit)
+      .getManyAndCount();
+
+    return {
+      items: styles.map((style) => ({
+        id: style.id,
+        styleCode: style.styleCode,
+        styleName: style.styleName,
+        category: style.category,
+      })),
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
+  }
+
+  async getEligiblePoProducts(poId: string) {
+    const po = await this.poRepository.findOne({ where: { id: poId } });
+    if (!po) throw new NotFoundException('Không tìm thấy đơn hàng PO.');
+    if (
+      po.archivedAt ||
+      po.status === PoStatus.CLOSED ||
+      po.status === PoStatus.CANCELLED
+    ) {
+      return [];
+    }
+
+    const products = await this.eligiblePoProductsQuery()
+      .andWhere('product.purchase_order_id = :poId', { poId })
+      .orderBy('product.product_code', 'ASC')
+      .addOrderBy('product.id', 'ASC')
+      .getMany();
+    if (products.length === 0) return [];
+
+    const colors = await this.poColorRepository.find({
+      where: { productId: In(products.map((product) => product.id)) },
+      order: { orderIndex: 'ASC' },
+    });
+    const sizes = colors.length
+      ? await this.poColorSizeRepository.find({
+          where: { productColorId: In(colors.map((color) => color.id)) },
+        })
+      : [];
+    const quantityByColor = new Map<string, number>();
+    for (const size of sizes) {
+      quantityByColor.set(
+        size.productColorId,
+        (quantityByColor.get(size.productColorId) ?? 0) + Number(size.quantity),
+      );
+    }
+    const colorsByProduct = new Map<string, string[]>();
+    const quantityByProduct = new Map<string, number>();
+    for (const color of colors) {
+      colorsByProduct.set(color.productId, [
+        ...(colorsByProduct.get(color.productId) ?? []),
+        color.colorName,
+      ]);
+      quantityByProduct.set(
+        color.productId,
+        (quantityByProduct.get(color.productId) ?? 0) +
+          (quantityByColor.get(color.id) ?? 0),
+      );
+    }
+
+    return products.map((product) => ({
+      id: product.id,
+      status: product.status,
+      productCode: product.productCode,
+      productName: product.productName,
+      colors: colorsByProduct.get(product.id) ?? [],
+      totalQuantity: quantityByProduct.get(product.id) ?? 0,
+    }));
+  }
 
   private toActor(
     userId?: string,
@@ -1247,6 +1411,85 @@ export class BomsService {
         ],
         AuditEventType.UPDATED,
         `Ngừng sử dụng NPL: ${cleanReason}`,
+      );
+    });
+
+    return this.findOne(id, roleCode);
+  }
+
+  /** Restores a discontinued BOM. Accessible only to TPKH and SA. */
+  async restore(
+    id: string,
+    dto: RestoreBomDto,
+    userId?: string,
+    roleCode?: string,
+  ): Promise<BomDetailDto> {
+    await this.dataSource.transaction(async (manager) => {
+      const bom = await manager.findOne(Bom, {
+        where: { id },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!bom) {
+        throw new NotFoundException(`Không tìm thấy NPL với ID: ${id}`);
+      }
+      await this.assertPoProductBomWritable(
+        manager,
+        bom.purchaseOrderProductId,
+      );
+
+      if (!bom.currentRevisionId) {
+        throw new BadRequestException('NPL chưa có revision hiện tại.');
+      }
+      const currentRev = await manager.findOne(BomRevision, {
+        where: { id: bom.currentRevisionId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!currentRev || currentRev.bomId !== bom.id) {
+        throw new BadRequestException(
+          'Current revision không hợp lệ hoặc không thuộc NPL này.',
+        );
+      }
+
+      this.assertExpectedRowVersion(currentRev, dto.expectedRowVersion);
+      assertCanRestoreBom(roleCode, bom);
+
+      const previousValues = {
+        discontinuedAt: bom.discontinuedAt,
+        discontinuedBy: bom.discontinuedBy,
+        discontinuedReason: bom.discontinuedReason,
+      };
+      bom.discontinuedAt = null;
+      bom.discontinuedBy = null;
+      bom.discontinuedReason = null;
+      bom.updatedBy = userId ?? null;
+      currentRev.rowVersion = Number(currentRev.rowVersion) + 1;
+      bom.rowVersion = Number(bom.rowVersion) + 1;
+
+      await manager.save(BomRevision, currentRev);
+      await manager.save(Bom, bom);
+      await this.bomAuditService.recordHeaderChange(
+        manager,
+        this.toActor(userId, roleCode),
+        bom,
+        [
+          {
+            fieldName: 'discontinuedAt',
+            oldValue: previousValues.discontinuedAt,
+            newValue: null,
+          },
+          {
+            fieldName: 'discontinuedBy',
+            oldValue: previousValues.discontinuedBy,
+            newValue: null,
+          },
+          {
+            fieldName: 'discontinuedReason',
+            oldValue: previousValues.discontinuedReason,
+            newValue: null,
+          },
+        ],
+        AuditEventType.UPDATED,
+        'Mở khóa và khôi phục sử dụng NPL',
       );
     });
 

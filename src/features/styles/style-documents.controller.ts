@@ -10,6 +10,7 @@ import {
   Post,
   Query,
   Req,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { ApiOperation, ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { Auth } from '../../common/decorators/auth.decorator';
@@ -22,9 +23,11 @@ import {
 } from './style-documents.service';
 import { PresignStyleDocumentDto } from './dto/presign-style-document.dto';
 import { ConfirmStyleDocumentDto } from './dto/confirm-style-document.dto';
+import { AssignLibraryDocumentsDto } from '../documents/dto/document-library.dto';
 
 const VIEW_PERMISSION = 'master_data.styles.view';
 const MANAGE_PERMISSION = 'master_data.styles.manage';
+const ASSIGN_DOCUMENT_PERMISSION = 'master_data.documents.assign';
 
 @ApiTags('style-documents')
 @ApiBearerAuth()
@@ -59,6 +62,22 @@ export class StyleDocumentsController {
       ? { id: userId, roleCode: req?.user?.roleCode }
       : undefined;
     return this.service.confirm(styleId, userId, dto, actor);
+  }
+
+  @Post('from-library')
+  @Permission(ASSIGN_DOCUMENT_PERMISSION)
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: 'Gán tài liệu trong kho dùng chung vào mẫu Fit' })
+  async assignFromLibrary(
+    @Param('styleId', ParseUUIDPipe) styleId: string,
+    @Body() dto: AssignLibraryDocumentsDto,
+    @Req() req?: any,
+  ): Promise<StyleDocumentListItem[]> {
+    const userId = req?.user?.id || req?.user?.sub;
+    if (!userId)
+      throw new UnauthorizedException('Không xác định được người dùng.');
+    const actor = { id: userId, roleCode: req?.user?.roleCode ?? 'unknown' };
+    return this.service.assignFromLibrary(styleId, dto.documentIds, actor);
   }
 
   @Get()
