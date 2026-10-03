@@ -8,7 +8,10 @@ import {
   ValidationPipe,
 } from '@nestjs/common';
 import { PurchaseOrdersService } from './purchase-orders.service';
-import { ConfirmPoDocumentVersionDto, SaveProductOperationStepsDto } from './dto';
+import {
+  ConfirmPoDocumentVersionDto,
+  SaveProductOperationStepsDto,
+} from './dto';
 import { CreatePoProductDto } from './dto/po-product.dto';
 import { PurchaseOrder } from './entities/PurchaseOrder.entity';
 import { PurchaseOrderDocument } from './entities/PurchaseOrderDocument.entity';
@@ -1618,13 +1621,21 @@ describe('PurchaseOrdersService', () => {
     };
 
     it('accepts changeReason and optional evidence through the strict API validation pipe', async () => {
-      const pipe = new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true });
-      const dto = await pipe.transform({
-        ...confirmDto,
-        evidenceObjectKey: 'purchase-orders/po-1/products/prod-1/documents/other/evidence.png',
-        evidenceFileName: 'evidence.png',
-        evidenceMimeType: 'image/png',
-      }, { type: 'body', metatype: ConfirmPoDocumentVersionDto });
+      const pipe = new ValidationPipe({
+        whitelist: true,
+        forbidNonWhitelisted: true,
+        transform: true,
+      });
+      const dto = await pipe.transform(
+        {
+          ...confirmDto,
+          evidenceObjectKey:
+            'purchase-orders/po-1/products/prod-1/documents/other/evidence.png',
+          evidenceFileName: 'evidence.png',
+          evidenceMimeType: 'image/png',
+        },
+        { type: 'body', metatype: ConfirmPoDocumentVersionDto },
+      );
 
       expect(dto).toMatchObject({
         changeReason: 'Khách yêu cầu thay đổi',
@@ -1653,17 +1664,33 @@ describe('PurchaseOrdersService', () => {
 
     it('rejects a version when the uploaded file size differs from the confirmation', async () => {
       mockProductRepo.findOne.mockResolvedValueOnce({
-        id: 'prod-1', purchaseOrderId: 'po-1', status: ProductStatus.DRAFT,
+        id: 'prod-1',
+        purchaseOrderId: 'po-1',
+        status: ProductStatus.DRAFT,
       });
       mockGenericRepo.findOne.mockResolvedValueOnce({
-        productId: 'prod-1', documentId: 'doc-1', purpose: DocumentPurpose.OTHER,
+        productId: 'prod-1',
+        documentId: 'doc-1',
+        purpose: DocumentPurpose.OTHER,
       });
-      mockDocRepo.findOne.mockResolvedValueOnce({ id: 'doc-1', title: 'x.pdf' });
-      storageMock.headObject.mockResolvedValueOnce({ exists: true, sizeBytes: 99 });
+      mockDocRepo.findOne.mockResolvedValueOnce({
+        id: 'doc-1',
+        title: 'x.pdf',
+      });
+      storageMock.headObject.mockResolvedValueOnce({
+        exists: true,
+        sizeBytes: 99,
+      });
 
-      await expect(service.confirmProductDocumentVersion(
-        'po-1', 'prod-1', 'doc-1', 'user-1', confirmDto,
-      )).rejects.toThrow('Dung lượng tệp phiên bản không khớp');
+      await expect(
+        service.confirmProductDocumentVersion(
+          'po-1',
+          'prod-1',
+          'doc-1',
+          'user-1',
+          confirmDto,
+        ),
+      ).rejects.toThrow('Dung lượng tệp phiên bản không khớp');
     });
 
     it('appends a new version with an incremented versionNo', async () => {
@@ -1697,7 +1724,11 @@ describe('PurchaseOrdersService', () => {
       );
 
       expect(txVersionRepoMock.save).toHaveBeenCalledWith(
-        expect.objectContaining({ documentId: 'doc-1', versionNo: 2, changeReason: 'Khách yêu cầu thay đổi' }),
+        expect.objectContaining({
+          documentId: 'doc-1',
+          versionNo: 2,
+          changeReason: 'Khách yêu cầu thay đổi',
+        }),
       );
       expect(result.currentVersionNo).toBe(2);
       expect(result.versions).toHaveLength(2);
@@ -1705,76 +1736,133 @@ describe('PurchaseOrdersService', () => {
 
     it('stores optional image evidence on the new version', async () => {
       mockProductRepo.findOne.mockResolvedValueOnce({
-        id: 'prod-1', purchaseOrderId: 'po-1', status: ProductStatus.DRAFT,
+        id: 'prod-1',
+        purchaseOrderId: 'po-1',
+        status: ProductStatus.DRAFT,
       });
       mockGenericRepo.findOne.mockResolvedValueOnce({
-        productId: 'prod-1', documentId: 'doc-1', purpose: DocumentPurpose.OTHER,
+        productId: 'prod-1',
+        documentId: 'doc-1',
+        purpose: DocumentPurpose.OTHER,
       });
-      mockDocRepo.findOne.mockResolvedValueOnce({ id: 'doc-1', title: 'x.pdf' });
-      mockDocVersionRepo.find.mockResolvedValueOnce([{ id: 'v1', versionNo: 1, documentId: 'doc-1' }]);
+      mockDocRepo.findOne.mockResolvedValueOnce({
+        id: 'doc-1',
+        title: 'x.pdf',
+      });
+      mockDocVersionRepo.find.mockResolvedValueOnce([
+        { id: 'v1', versionNo: 1, documentId: 'doc-1' },
+      ]);
       storageMock.getObjectHead
         // appendDocumentVersion reads the primary and evidence signatures in
         // parallel; primary-file validation is queued first.
         .mockResolvedValueOnce(Buffer.from('%PDF-1.5 test'))
-        .mockResolvedValueOnce(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+        .mockResolvedValueOnce(
+          Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+        );
 
-      await service.confirmProductDocumentVersion('po-1', 'prod-1', 'doc-1', 'user-1', {
-        ...confirmDto,
-        evidenceObjectKey: 'purchase-orders/po-1/products/prod-1/documents/other/evidence.png',
-        evidenceFileName: 'evidence.png',
-        evidenceMimeType: 'image/png',
-      });
+      await service.confirmProductDocumentVersion(
+        'po-1',
+        'prod-1',
+        'doc-1',
+        'user-1',
+        {
+          ...confirmDto,
+          evidenceObjectKey:
+            'purchase-orders/po-1/products/prod-1/documents/other/evidence.png',
+          evidenceFileName: 'evidence.png',
+          evidenceMimeType: 'image/png',
+        },
+      );
 
-      expect(txVersionRepoMock.save).toHaveBeenCalledWith(expect.objectContaining({
-        changeReason: 'Khách yêu cầu thay đổi',
-        evidenceFileName: 'evidence.png',
-        evidenceMimeType: 'image/png',
-      }));
+      expect(txVersionRepoMock.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          changeReason: 'Khách yêu cầu thay đổi',
+          evidenceFileName: 'evidence.png',
+          evidenceMimeType: 'image/png',
+        }),
+      );
     });
 
     it('updates the same shared document from the PO', async () => {
-      mockPoRepo.findOne.mockResolvedValueOnce({ id: 'po-1', status: PoStatus.DRAFT });
+      mockPoRepo.findOne.mockResolvedValueOnce({
+        id: 'po-1',
+        status: PoStatus.DRAFT,
+      });
       mockPoDocRepo.findOne.mockResolvedValueOnce({
-        purchaseOrderId: 'po-1', documentId: 'doc-1', purpose: DocumentPurpose.OTHER,
+        purchaseOrderId: 'po-1',
+        documentId: 'doc-1',
+        purpose: DocumentPurpose.OTHER,
       });
-      mockDocRepo.findOne.mockResolvedValueOnce({ id: 'doc-1', title: 'x.pdf' });
-      mockDocVersionRepo.find.mockResolvedValueOnce([{ id: 'v1', versionNo: 1, documentId: 'doc-1' }]);
-
-      const result = await service.confirmPoDocumentVersion('po-1', 'doc-1', 'user-1', {
-        ...confirmDto,
-        objectKey: 'purchase-orders/po-1/documents/other/y.pdf',
+      mockDocRepo.findOne.mockResolvedValueOnce({
+        id: 'doc-1',
+        title: 'x.pdf',
       });
+      mockDocVersionRepo.find.mockResolvedValueOnce([
+        { id: 'v1', versionNo: 1, documentId: 'doc-1' },
+      ]);
 
-      expect(txVersionRepoMock.save).toHaveBeenCalledWith(expect.objectContaining({ documentId: 'doc-1', versionNo: 2 }));
+      const result = await service.confirmPoDocumentVersion(
+        'po-1',
+        'doc-1',
+        'user-1',
+        {
+          ...confirmDto,
+          objectKey: 'purchase-orders/po-1/documents/other/y.pdf',
+        },
+      );
+
+      expect(txVersionRepoMock.save).toHaveBeenCalledWith(
+        expect.objectContaining({ documentId: 'doc-1', versionNo: 2 }),
+      );
       expect(result.documentId).toBe('doc-1');
       expect(result.currentVersionNo).toBe(2);
     });
 
     it('shows the shared version reason and evidence in the PO document list', async () => {
-      mockPoDocRepo.findAndCount.mockResolvedValueOnce([[
-        { purchaseOrderId: 'po-1', documentId: 'doc-1', purpose: DocumentPurpose.OTHER, linkedAt: new Date('2026-01-01') },
-      ], 1]);
+      mockPoDocRepo.findAndCount.mockResolvedValueOnce([
+        [
+          {
+            purchaseOrderId: 'po-1',
+            documentId: 'doc-1',
+            purpose: DocumentPurpose.OTHER,
+            linkedAt: new Date('2026-01-01'),
+          },
+        ],
+        1,
+      ]);
       mockDocRepo.find.mockResolvedValueOnce([
         { id: 'doc-1', title: 'x.pdf', currentVersionId: 'v2' },
       ]);
       mockDocVersionRepo.find.mockResolvedValueOnce([
         {
-          id: 'v2', documentId: 'doc-1', versionNo: 2, originalFileName: 'y.pdf',
-          storageKey: 'purchase-orders/po-1/products/prod-1/documents/other/y.pdf',
-          byteSize: 13, changeReason: 'Khách yêu cầu thay đổi',
-          evidenceStorageKey: 'purchase-orders/po-1/products/prod-1/documents/other/evidence.png',
-          evidenceFileName: 'evidence.png', uploadedAt: new Date('2026-01-02'),
+          id: 'v2',
+          documentId: 'doc-1',
+          versionNo: 2,
+          originalFileName: 'y.pdf',
+          storageKey:
+            'purchase-orders/po-1/products/prod-1/documents/other/y.pdf',
+          byteSize: 13,
+          changeReason: 'Khách yêu cầu thay đổi',
+          evidenceStorageKey:
+            'purchase-orders/po-1/products/prod-1/documents/other/evidence.png',
+          evidenceFileName: 'evidence.png',
+          uploadedAt: new Date('2026-01-02'),
         },
       ]);
 
       const result = await service.getDocuments('po-1');
 
       expect(result.items[0]).toMatchObject({
-        documentId: 'doc-1', currentVersionNo: 2, fileName: 'y.pdf',
-        versions: [expect.objectContaining({
-          changeReason: 'Khách yêu cầu thay đổi', evidenceFileName: 'evidence.png',
-          evidenceUrl: 'https://s3.example/get',
-        })],
+        documentId: 'doc-1',
+        currentVersionNo: 2,
+        fileName: 'y.pdf',
+        versions: [
+          expect.objectContaining({
+            changeReason: 'Khách yêu cầu thay đổi',
+            evidenceFileName: 'evidence.png',
+            evidenceUrl: 'https://s3.example/get',
+          }),
+        ],
       });
     });
   });

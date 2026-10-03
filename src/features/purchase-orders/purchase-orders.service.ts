@@ -834,7 +834,9 @@ export class PurchaseOrdersService {
         const version = masterDoc?.currentVersionId
           ? docVersionsMap.get(masterDoc.currentVersionId)
           : null;
-        const versions = allVersions.filter((v) => v.documentId === pd.documentId);
+        const versions = allVersions.filter(
+          (v) => v.documentId === pd.documentId,
+        );
         return {
           documentId: pd.documentId,
           documentCode: masterDoc?.documentCode || null,
@@ -847,22 +849,24 @@ export class PurchaseOrdersService {
           fileName: version?.originalFileName || masterDoc?.title || null,
           fileSize: version?.byteSize ? Number(version.byteSize) : null,
           currentVersionNo: version?.versionNo || versions[0]?.versionNo || 1,
-          versions: await Promise.all(versions.map(async (v) => ({
-            id: v.id,
-            versionNo: v.versionNo,
-            originalFileName: v.originalFileName,
-            fileUrl: isResolvableObjectKey(v.storageKey)
-              ? await this.storage.getPresignedGetUrl(v.storageKey)
-              : null,
-            fileSize: v.byteSize ? Number(v.byteSize) : null,
-            changeReason: v.changeReason,
-            evidenceFileName: v.evidenceFileName,
-            evidenceUrl: v.evidenceStorageKey
-              ? await this.storage.getPresignedGetUrl(v.evidenceStorageKey)
-              : null,
-            uploadedAt: v.uploadedAt,
-            uploadedBy: v.uploadedBy,
-          }))),
+          versions: await Promise.all(
+            versions.map(async (v) => ({
+              id: v.id,
+              versionNo: v.versionNo,
+              originalFileName: v.originalFileName,
+              fileUrl: isResolvableObjectKey(v.storageKey)
+                ? await this.storage.getPresignedGetUrl(v.storageKey)
+                : null,
+              fileSize: v.byteSize ? Number(v.byteSize) : null,
+              changeReason: v.changeReason,
+              evidenceFileName: v.evidenceFileName,
+              evidenceUrl: v.evidenceStorageKey
+                ? await this.storage.getPresignedGetUrl(v.evidenceStorageKey)
+                : null,
+              uploadedAt: v.uploadedAt,
+              uploadedBy: v.uploadedBy,
+            })),
+          ),
         };
       }),
     );
@@ -3765,7 +3769,10 @@ export class PurchaseOrdersService {
       productId,
       String(prodDoc.purpose),
       actor,
-      { sourcePoDocument: prodDoc.sourcePoDocument, linkedAt: prodDoc.linkedAt },
+      {
+        sourcePoDocument: prodDoc.sourcePoDocument,
+        linkedAt: prodDoc.linkedAt,
+      },
     );
   }
 
@@ -3809,7 +3816,6 @@ export class PurchaseOrdersService {
     actor?: AuditActor,
     linkMetadata?: { sourcePoDocument?: boolean; linkedAt?: Date },
   ) {
-
     const doc = await this.docRepo.findOne({ where: { id: documentId } });
     if (!doc) {
       throw new NotFoundException('Không tìm thấy tài liệu.');
@@ -3830,7 +3836,11 @@ export class PurchaseOrdersService {
       maxSizeBytes: PO_DOCUMENT_MAX_SIZE_BYTES,
     });
 
-    const evidenceFields = [dto.evidenceObjectKey, dto.evidenceFileName, dto.evidenceMimeType];
+    const evidenceFields = [
+      dto.evidenceObjectKey,
+      dto.evidenceFileName,
+      dto.evidenceMimeType,
+    ];
     if (evidenceFields.some(Boolean) && !evidenceFields.every(Boolean)) {
       throw new BadRequestException('Thông tin ảnh bằng chứng chưa đầy đủ.');
     }
@@ -3854,12 +3864,19 @@ export class PurchaseOrdersService {
 
     if (dto.evidenceObjectKey && dto.evidenceFileName && dto.evidenceMimeType) {
       if (!evidenceHead?.exists || !evidenceBuffer || !evidenceExt) {
-        throw new BadRequestException('Ảnh bằng chứng chưa được tải lên thành công.');
+        throw new BadRequestException(
+          'Ảnh bằng chứng chưa được tải lên thành công.',
+        );
       }
-      assertAllowedFile(dto.evidenceFileName, dto.evidenceMimeType, evidenceHead.sizeBytes || 1, {
-        allowlist: SAMPLE_IMAGE_ALLOWLIST,
-        maxSizeBytes: MAX_SAMPLE_IMAGE_SIZE_BYTES,
-      });
+      assertAllowedFile(
+        dto.evidenceFileName,
+        dto.evidenceMimeType,
+        evidenceHead.sizeBytes || 1,
+        {
+          allowlist: SAMPLE_IMAGE_ALLOWLIST,
+          maxSizeBytes: MAX_SAMPLE_IMAGE_SIZE_BYTES,
+        },
+      );
       this.validateFileMagicBytes(evidenceExt, evidenceBuffer);
     }
 
@@ -3869,7 +3886,9 @@ export class PurchaseOrdersService {
       );
     }
     if (head.sizeBytes !== undefined && head.sizeBytes !== dto.sizeBytes) {
-      throw new BadRequestException('Dung lượng tệp phiên bản không khớp với tệp đã tải lên.');
+      throw new BadRequestException(
+        'Dung lượng tệp phiên bản không khớp với tệp đã tải lên.',
+      );
     }
     this.validateFileMagicBytes(ext, buffer);
 
@@ -3934,7 +3953,8 @@ export class PurchaseOrdersService {
         const allVersions = [newVersion, ...existingVersions];
 
         return {
-          productId: auditType === AUDIT_TYPE.PRODUCT_DOCUMENT ? parentId : null,
+          productId:
+            auditType === AUDIT_TYPE.PRODUCT_DOCUMENT ? parentId : null,
           documentId,
           documentCode: doc.documentCode,
           title: doc.title,
