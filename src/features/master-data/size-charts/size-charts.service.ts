@@ -188,7 +188,7 @@ export class SizeChartsService {
     } catch (error) {
       if (this.getDatabaseErrorValue(error, 'code') === '23503') {
         throw new ConflictException(
-          'Size chart cannot be deleted because it is referenced by business data',
+          'Không thể xóa bảng size vì đang được dữ liệu nghiệp vụ khác tham chiếu.',
         );
       }
       throw error;
@@ -219,7 +219,7 @@ export class SizeChartsService {
     id: string,
   ): Promise<SizeChart> {
     const chart = await repository.findOneBy({ id });
-    if (!chart) throw new NotFoundException('Size chart not found');
+    if (!chart) throw new NotFoundException('Không tìm thấy bảng size.');
     return chart;
   }
 
@@ -233,7 +233,7 @@ export class SizeChartsService {
       .where('LOWER(BTRIM(sizeChart.name)) = LOWER(BTRIM(:name))', { name })
       .getOne();
     if (existing && existing.id !== excludedId) {
-      throw new ConflictException('Size chart name already exists');
+      throw new ConflictException('Tên bảng size đã tồn tại trong hệ thống.');
     }
   }
 
@@ -242,14 +242,12 @@ export class SizeChartsService {
       .map((size) => normalizeSizeChartTextValue(size))
       .filter(Boolean);
     if (normalized.length === 0) {
-      throw new BadRequestException(
-        'Size chart must contain at least one size',
-      );
+      throw new BadRequestException('Bảng size phải có ít nhất một size.');
     }
     const normalizedKeys = normalized.map((size) => size.toUpperCase());
     if (new Set(normalizedKeys).size !== normalizedKeys.length) {
       throw new BadRequestException(
-        'Size chart cannot contain duplicate sizes',
+        'Bảng size không được chứa size trùng lặp.',
       );
     }
     return normalized;
@@ -263,7 +261,7 @@ export class SizeChartsService {
       typeof constraint === 'string' &&
       SIZE_CHART_NAME_CONSTRAINTS.has(constraint)
     ) {
-      throw new ConflictException('Size chart name already exists');
+      throw new ConflictException('Tên bảng size đã tồn tại trong hệ thống.');
     }
     throw error;
   }
