@@ -250,7 +250,7 @@ export class MaterialsService {
       return await this.materials.save(material);
     } catch (error) {
       if (this.hasDatabaseCode(error, '23505')) {
-        throw new ConflictException('Material code already exists');
+        throw new ConflictException('Mã vật tư đã tồn tại trong hệ thống.');
       }
       if (
         this.hasDatabaseCode(error, '23503') ||

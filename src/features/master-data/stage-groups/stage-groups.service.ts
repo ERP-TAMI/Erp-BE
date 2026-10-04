@@ -119,7 +119,7 @@ export class StageGroupsService {
         );
       } catch (error) {
         if (this.hasDatabaseCode(error, '23505')) {
-          throw new ConflictException('Stage group code already exists');
+          throw new ConflictException('Mã nhóm công đoạn đã tồn tại trong hệ thống.');
         }
         throw error;
       }
@@ -187,7 +187,7 @@ export class StageGroupsService {
       });
     } catch (error) {
       if (this.hasDatabaseCode(error, '23505')) {
-        throw new ConflictException('Stage group code already exists');
+        throw new ConflictException('Mã nhóm công đoạn đã tồn tại trong hệ thống.');
       }
       throw error;
     }
@@ -362,7 +362,7 @@ export class StageGroupsService {
       .where('UPPER(BTRIM(stageGroup.groupCode)) = :groupCode', { groupCode })
       .getOne();
     if (duplicate && duplicate.id !== excludedGroupId) {
-      throw new ConflictException('Stage group code already exists');
+      throw new ConflictException('Mã nhóm công đoạn đã tồn tại trong hệ thống.');
     }
   }
 

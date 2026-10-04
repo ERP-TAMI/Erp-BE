@@ -144,7 +144,7 @@ export class WorkshopsService {
       })
       .getOne();
     if (existing && existing.id !== excludedWorkshopId) {
-      throw new ConflictException('Workshop code already exists');
+      throw new ConflictException('Mã xưởng sản xuất đã tồn tại trong hệ thống.');
     }
   }
 
@@ -153,7 +153,7 @@ export class WorkshopsService {
       return await this.workshops.save(workshop);
     } catch (error) {
       if (this.hasDatabaseCode(error, '23505')) {
-        throw new ConflictException('Workshop code already exists');
+        throw new ConflictException('Mã xưởng sản xuất đã tồn tại trong hệ thống.');
       }
       throw error;
     }

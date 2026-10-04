@@ -148,7 +148,7 @@ export class StagesService {
   ): Promise<void> {
     const existing = await this.findByNormalizedCode(stageCode);
     if (existing && existing.id !== excludedStageId) {
-      throw new ConflictException('Stage code already exists');
+      throw new ConflictException('Mã công đoạn đã tồn tại trong hệ thống.');
     }
   }
 
@@ -164,7 +164,7 @@ export class StagesService {
       return await this.stages.save(stage);
     } catch (error) {
       if (this.hasDatabaseCode(error, '23505')) {
-        throw new ConflictException('Stage code already exists');
+        throw new ConflictException('Mã công đoạn đã tồn tại trong hệ thống.');
       }
       throw error;
     }
