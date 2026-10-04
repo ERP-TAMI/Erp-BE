@@ -1,151 +1,91 @@
-name: Deploy dev
+name: Deploy application
 
 on:
   push:
-    branches: [dev]
+    branches: [dev, main]
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: deploy-be-dev
+  group: deploy-be-${{ github.ref_name }}
   cancel-in-progress: false
 
 jobs:
   checks:
     name: CI and security gates
     uses: ./.github/workflows/ci.yml
+    with:
+      image_scan: false
 
   deploy:
     name: Build, scan and deploy API
     needs: checks
-    if: ${{ github.ref == 'refs/heads/dev' }}
+    if: ${{ github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main' }}
+    environment: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
     runs-on: ubuntu-latest
     timeout-minutes: 40
     permissions:
       contents: read
       id-token: write
+    env:
+      TARGET_ENV: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      DEPLOY_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
+      DEPLOYMENT_CONFIG_PARAMETER: ${{ vars.DEPLOYMENT_CONFIG_PARAMETER }}
     steps:
-      # actions/checkout v7.0.1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-
-      - name: Validate deployment variables
-        shell: bash
-        env:
-          AWS_REGION: ${{ vars.AWS_REGION }}
-          AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
-          ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
-          EC2_INSTANCE_ID: ${{ vars.EC2_INSTANCE_ID }}
-          SSM_DEPLOY_DIR: ${{ vars.SSM_DEPLOY_DIR }}
-        run: |
-          set -euo pipefail
-          [[ "$AWS_REGION" =~ ^[a-z]{2}(-gov)?-[a-z]+-[0-9]+$ ]]
-          [[ "$AWS_ROLE_ARN" =~ ^arn:aws:iam::[0-9]{12}:role/[A-Za-z0-9+=,.@_-]+$ ]]
-          [[ "$ECR_REPOSITORY" =~ ^[a-z0-9][a-z0-9._/-]*$ ]]
-          [[ "$EC2_INSTANCE_ID" =~ ^i-[0-9a-f]+$ ]]
-          [[ "$SSM_DEPLOY_DIR" == /opt/tami-erp ]]
-
-      # aws-actions/configure-aws-credentials v6.3.0
-      - name: Configure AWS credentials through GitHub OIDC
-        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
-          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
-          aws-region: ${{ vars.AWS_REGION }}
-          role-session-name: github-erp-be-dev
+          node-version: '22'
 
-      - name: Sign in to private ECR
-        id: ecr
-        shell: bash
-        env:
-          AWS_REGION: ${{ vars.AWS_REGION }}
-          ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
-        run: |
-          set -euo pipefail
-          account_id="$(aws sts get-caller-identity --query Account --output text)"
-          registry="${account_id}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-          aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$registry"
-          echo "registry=$registry" >> "$GITHUB_OUTPUT"
-          echo "image=$registry/$ECR_REPOSITORY:sha-$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+      - name: Build release image once
+        run: docker build --pull --tag tami-backend:release .
 
-      - name: Build immutable commit image
-        id: build
-        env:
-          IMAGE: ${{ steps.ecr.outputs.image }}
-          ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
-        run: |
-          set -euo pipefail
-          digest="$(aws ecr describe-images --repository-name "$ECR_REPOSITORY" --image-ids "imageTag=sha-$GITHUB_SHA" --query 'imageDetails[0].imageDigest' --output text 2>/dev/null || true)"
-          if [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]; then
-            docker pull "$IMAGE"
-            echo 'reuse=true' >> "$GITHUB_OUTPUT"
-          else
-            docker build --pull --tag "$IMAGE" .
-            echo 'reuse=false' >> "$GITHUB_OUTPUT"
-          fi
-
-      # aquasecurity/trivy-action v0.36.0
-      - name: Scan the exact API image before publishing
+      - name: Scan the image that will be deployed
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
           version: v0.75.0
           scan-type: image
-          image-ref: ${{ steps.ecr.outputs.image }}
+          image-ref: tami-backend:release
           scanners: vuln,secret
-          severity: HIGH,CRITICAL
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
           ignore-unfixed: false
           exit-code: '1'
 
-      - name: Push image and resolve immutable digest
+      - name: Assume environment deployment role
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: github-erp-be-${{ github.run_id }}
+
+      - name: Discover current infrastructure
+        id: target
+        run: node scripts/deployment-config.mjs
+
+      - name: Publish the scanned image and resolve its digest
         id: image
-        shell: bash
         env:
-          AWS_REGION: ${{ vars.AWS_REGION }}
-          ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
-          IMAGE: ${{ steps.ecr.outputs.image }}
-          REUSE_IMAGE: ${{ steps.build.outputs.reuse }}
+          ACCOUNT_ID: ${{ steps.target.outputs.account_id }}
+          ECR_REPOSITORY: ${{ steps.target.outputs.ecr_repository }}
         run: |
           set -euo pipefail
-          if [[ "$REUSE_IMAGE" != true ]]; then docker push "$IMAGE"; fi
-          digest="$(aws ecr describe-images --region "$AWS_REGION" --repository-name "$ECR_REPOSITORY" --image-ids "imageTag=sha-$GITHUB_SHA" --query 'imageDetails[0].imageDigest' --output text)"
+          registry="$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com"
+          image="$registry/$ECR_REPOSITORY:sha-$GITHUB_SHA-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          aws ecr get-login-password | docker login --username AWS --password-stdin "$registry"
+          docker tag tami-backend:release "$image"
+          docker push "$image"
+          digest="$(aws ecr describe-images --repository-name "$ECR_REPOSITORY" --image-ids "imageTag=${image##*:}" --query 'imageDetails[0].imageDigest' --output text)"
           [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
 
-      - name: Deploy by digest through Systems Manager
-        shell: bash
+      - name: Deploy through the Terraform-managed SSM document
         env:
-          AWS_REGION: ${{ vars.AWS_REGION }}
-          ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
-          EC2_INSTANCE_ID: ${{ vars.EC2_INSTANCE_ID }}
-          SSM_DEPLOY_DIR: ${{ vars.SSM_DEPLOY_DIR }}
-          ECR_REGISTRY: ${{ steps.ecr.outputs.registry }}
+          EC2_INSTANCE_ID: ${{ steps.target.outputs.instance_id }}
+          DEPLOY_DOCUMENT: ${{ steps.target.outputs.deploy_document }}
+          SSM_LOG_GROUP: ${{ steps.target.outputs.ssm_log_group }}
+          APP_URL: ${{ steps.target.outputs.app_url }}
           IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
-          SSM_LOG_GROUP: ${{ vars.SSM_LOG_GROUP }}
-          APP_URL: ${{ vars.APP_URL }}
-        run: |
-          set -euo pipefail
-          [[ "$IMAGE_DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]
-          [[ "$SSM_LOG_GROUP" =~ ^/[A-Za-z0-9/_-]+$ ]]
-          [[ "$APP_URL" =~ ^https://[A-Za-z0-9.-]+$ ]]
-          jq -n --arg command "/usr/local/sbin/tami-deploy.sh $IMAGE_DIGEST" \
-            '{commands: [$command], executionTimeout: ["1800"]}' > "$RUNNER_TEMP/ssm-parameters.json"
-          command_id="$(aws ssm send-command --region "$AWS_REGION" --instance-ids "$EC2_INSTANCE_ID" \
-            --document-name AWS-RunShellScript --parameters "file://$RUNNER_TEMP/ssm-parameters.json" \
-            --cloud-watch-output-config "CloudWatchOutputEnabled=true,CloudWatchLogGroupName=$SSM_LOG_GROUP" \
-            --query 'Command.CommandId' --output text)"
-          status=Pending
-          for _attempt in $(seq 1 180); do
-            status="$(aws ssm get-command-invocation --command-id "$command_id" --instance-id "$EC2_INSTANCE_ID" --query Status --output text 2>/dev/null || echo Pending)"
-            case "$status" in
-              Success) break ;;
-              Failed|Cancelled|TimedOut|Cancelling) break ;;
-            esac
-            sleep 10
-          done
-          if [[ "$status" != Success ]]; then
-            aws ssm get-command-invocation --command-id "$command_id" --instance-id "$EC2_INSTANCE_ID" \
-              --query '{Status:Status,Output:StandardOutputContent,Error:StandardErrorContent}'
-            exit 1
-          fi
-          curl --fail --silent --show-error --retry 6 --retry-all-errors --retry-delay 10 "$APP_URL/api/health/ready"
-          echo "Deployed API digest $IMAGE_DIGEST"
+        run: node scripts/deploy-api.mjs

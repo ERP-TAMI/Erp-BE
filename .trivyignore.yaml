@@ -1,0 +1,6 @@
+vulnerabilities:
+  - id: CVE-2026-93687
+    paths:
+      - package-lock.json
+    expired_at: 2026-11-03
+    statement: braces 3.0.3 reaches us only through jest -> micromatch (dev tooling, no untrusted input, not in the production image). Upstream has no fixed release; see micromatch/braces#70.

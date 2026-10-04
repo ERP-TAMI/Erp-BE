@@ -4,6 +4,10 @@ on:
   pull_request:
     branches: [dev, main]
   workflow_call:
+    inputs:
+      image_scan:
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -99,6 +103,7 @@ jobs:
 
   container:
     name: Production image scan
+    if: github.event_name == 'pull_request' || inputs.image_scan
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -110,6 +115,6 @@ jobs:
           scan-type: image
           image-ref: tami-backend:ci
           scanners: vuln,secret
-          severity: HIGH,CRITICAL
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
           ignore-unfixed: false
           exit-code: '1'

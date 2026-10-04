@@ -19,16 +19,20 @@ jobs:
       # aquasecurity/trivy-action v0.36.0
       - name: Scan dependencies and secrets with Trivy
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        env:
+          TRIVY_INCLUDE_DEV_DEPS: 'true'
         with:
           version: v0.75.0
           scan-type: fs
           scan-ref: .
           scanners: vuln,secret
-          severity: HIGH,CRITICAL
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
           ignore-unfixed: false
+          trivyignores: .trivyignore.yaml
           exit-code: '1'
 
       - name: Install Gitleaks CLI and verify release checksum
+        if: ${{ !cancelled() }}
         shell: bash
         run: |
           set -euo pipefail
@@ -45,6 +49,7 @@ jobs:
           "$RUNNER_TEMP/gitleaks" version
 
       - name: Scan commits introduced by this change
+        if: ${{ !cancelled() }}
         shell: bash
         env:
           EVENT_NAME: ${{ github.event_name }}
@@ -66,6 +71,7 @@ jobs:
           "$RUNNER_TEMP/gitleaks" git --log-opts="--no-merges $commit_range" --redact --exit-code 1 .
 
       - name: Scan the complete tracked source without Git internals
+        if: ${{ !cancelled() }}
         shell: bash
         run: |
           set -euo pipefail
