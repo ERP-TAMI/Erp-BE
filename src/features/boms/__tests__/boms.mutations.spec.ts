@@ -966,4 +966,117 @@ describe('BOM Mutations: Create, Update Header, Discontinue (PR-02 Specification
       ).rejects.toThrow(ConflictException);
     });
   });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // G. DELETE BOM (DELETE /:id)
+  // ──────────────────────────────────────────────────────────────────────────
+  describe('G. Delete discontinued BOM (DELETE /:id)', () => {
+    let managerDelete: jest.Mock;
+
+    function setupDeleteMocks(
+      discontinuedAt: Date | null = new Date(),
+      bomId = 'bom-discontinued',
+    ) {
+      const bom = new Bom();
+      bom.id = bomId;
+      bom.bomCode = 'BOM-TEST-001';
+      bom.currentRevisionId = 'rev-active';
+      bom.discontinuedAt = discontinuedAt;
+      bom.rowVersion = 1;
+
+      const revision = new BomRevision();
+      revision.id = 'rev-active';
+      revision.bomId = bom.id;
+      revision.rowVersion = 1;
+      revision.status = BomRevisionStatus.CLOSED;
+
+      bomRepoMock.findOne.mockResolvedValue(bom);
+      bomRevisionRepoMock.findOne.mockResolvedValue(revision);
+
+      managerDelete = jest.fn().mockResolvedValue({ affected: 1 });
+      dataSourceMock.transaction.mockImplementation(async (cb: any) =>
+        cb({
+          findOne: jest.fn().mockImplementation((entityClass, options) => {
+            if (entityClass === Bom) return bomRepoMock.findOne(options);
+            if (entityClass === BomRevision)
+              return bomRevisionRepoMock.findOne(options);
+            return Promise.resolve(null);
+          }),
+          delete: managerDelete,
+        }),
+      );
+
+      return { bom, revision };
+    }
+
+    const removeWithVersion = (
+      id: string,
+      expectedRowVersion: number,
+      userId: string,
+      roleCode: string,
+    ) => service.remove(id, { expectedRowVersion } as any, userId, roleCode);
+
+    it('deletes a discontinued BOM and removes it at the database level (cascade handles revisions/lines)', async () => {
+      setupDeleteMocks();
+
+      const result = await removeWithVersion(
+        'bom-discontinued',
+        1,
+        'tpkh-id',
+        'TPKH',
+      );
+
+      expect(managerDelete).toHaveBeenCalledWith(Bom, {
+        id: 'bom-discontinued',
+      });
+      expect(result).toEqual({ success: true, message: 'Đã xóa NPL.' });
+    });
+
+    it('rejects deleting a BOM that has not been discontinued yet (BadRequestException)', async () => {
+      setupDeleteMocks(null, 'bom-still-active');
+
+      await expect(
+        removeWithVersion('bom-still-active', 1, 'sa-id', 'SA'),
+      ).rejects.toThrow(BadRequestException);
+      expect(managerDelete).not.toHaveBeenCalled();
+    });
+
+    it('rejects unauthorized roles attempting to delete a discontinued BOM (e.g. NVKH, RD, ACCOUNTING)', async () => {
+      setupDeleteMocks();
+
+      await expect(
+        removeWithVersion('bom-discontinued', 1, 'user-id', 'NVKH'),
+      ).rejects.toThrow(ForbiddenException);
+      expect(managerDelete).not.toHaveBeenCalled();
+    });
+
+    it('rejects when expectedRowVersion is stale (ConflictException)', async () => {
+      setupDeleteMocks();
+
+      await expect(
+        removeWithVersion('bom-discontinued', 99, 'sa-id', 'SA'),
+      ).rejects.toThrow(ConflictException);
+      expect(managerDelete).not.toHaveBeenCalled();
+    });
+
+    it('rejects deleting a BOM that does not exist (NotFoundException)', async () => {
+      bomRepoMock.findOne.mockResolvedValue(null);
+      dataSourceMock.transaction.mockImplementation(async (cb: any) =>
+        cb({
+          findOne: jest
+            .fn()
+            .mockImplementation((entityClass, options) =>
+              entityClass === Bom
+                ? bomRepoMock.findOne(options)
+                : Promise.resolve(null),
+            ),
+          delete: jest.fn(),
+        }),
+      );
+
+      await expect(
+        removeWithVersion('missing-bom', 1, 'sa-id', 'SA'),
+      ).rejects.toThrow(NotFoundException);
+    });
+  });
 });

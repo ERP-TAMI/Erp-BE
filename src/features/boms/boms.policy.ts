@@ -21,6 +21,8 @@ const BOM_DISCONTINUE_ROLES = new Set<string>([
 
 const BOM_RESTORE_ROLES = new Set<string>([UserRoleCode.TPKH, UserRoleCode.SA]);
 
+const BOM_DELETE_ROLES = new Set<string>([UserRoleCode.TPKH, UserRoleCode.SA]);
+
 const DEADLINE_EDIT_ROLES = new Set<string>([
   UserRoleCode.NVKH,
   UserRoleCode.TPKH,
@@ -143,6 +145,24 @@ export function assertCanRestoreBom(
   if (!actorRole || !BOM_RESTORE_ROLES.has(actorRole.trim().toUpperCase())) {
     forbidden(
       'Chỉ Trưởng phòng Kế hoạch hoặc Quản trị hệ thống mới có quyền mở khóa NPL.',
+    );
+  }
+}
+
+export function assertCanDeleteBom(
+  actorRole: string | null | undefined,
+  bom: Bom,
+): void {
+  if (!bom.discontinuedAt) {
+    throw new BadRequestException({
+      code: ErrorCode.BAD_REQUEST,
+      message: 'Chỉ có thể xóa NPL đã ở trạng thái ngừng sử dụng.',
+    });
+  }
+
+  if (!actorRole || !BOM_DELETE_ROLES.has(actorRole.trim().toUpperCase())) {
+    forbidden(
+      'Chỉ Trưởng phòng Kế hoạch hoặc Quản trị hệ thống mới có quyền xóa NPL.',
     );
   }
 }

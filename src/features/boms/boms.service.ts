@@ -42,6 +42,7 @@ import {
   UpdateBomDto,
   DiscontinueBomDto,
   RestoreBomDto,
+  DeleteBomDto,
   CreateBomLineDto,
   UpdateBomLineDto,
   ReorderBomLinesDto,
@@ -66,6 +67,7 @@ import {
   assertCanUpdateBomHeader,
   assertCanDiscontinueBom,
   assertCanRestoreBom,
+  assertCanDeleteBom,
   assertCanAddLine,
   assertCanUpdateLine,
   assertCanDeleteLine,
@@ -1494,6 +1496,64 @@ export class BomsService {
     });
 
     return this.findOne(id, roleCode);
+  }
+
+  /**
+   * Hard-deletes a BOM. Only allowed once it has been discontinued — a BOM
+   * still in use may carry approved cost data referenced by its PO product,
+   * so "ngừng sử dụng" (discontinue) is the required step first. Revisions,
+   * lines and status history cascade at the database level (ON DELETE
+   * CASCADE); no other business table references a BOM. Accessible only to
+   * TPKH and SA, same as discontinue/restore.
+   */
+  async remove(
+    id: string,
+    dto: DeleteBomDto,
+    userId?: string,
+    roleCode?: string,
+  ): Promise<{ success: boolean; message: string }> {
+    return this.dataSource.transaction(async (manager) => {
+      const bom = await manager.findOne(Bom, {
+        where: { id },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!bom) {
+        throw new NotFoundException(`Không tìm thấy NPL với ID: ${id}`);
+      }
+      await this.assertPoProductBomWritable(
+        manager,
+        bom.purchaseOrderProductId,
+      );
+
+      if (!bom.currentRevisionId) {
+        throw new BadRequestException('NPL chưa có revision hiện tại.');
+      }
+      const currentRev = await manager.findOne(BomRevision, {
+        where: { id: bom.currentRevisionId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!currentRev || currentRev.bomId !== bom.id) {
+        throw new BadRequestException(
+          'Current revision không hợp lệ hoặc không thuộc NPL này.',
+        );
+      }
+
+      this.assertExpectedRowVersion(currentRev, dto.expectedRowVersion);
+      assertCanDeleteBom(roleCode, bom);
+
+      await this.bomAuditService.recordHeaderChange(
+        manager,
+        this.toActor(userId, roleCode),
+        bom,
+        [],
+        AuditEventType.DELETED,
+        `Xóa NPL: ${bom.bomCode}`,
+      );
+
+      await manager.delete(Bom, { id: bom.id });
+
+      return { success: true, message: 'Đã xóa NPL.' };
+    });
   }
 
   /**
