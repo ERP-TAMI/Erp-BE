@@ -9,4 +9,10 @@ export const typeOrmConfig = (): TypeOrmModuleOptions => ({
   password: process.env.DB_PASS ?? 'erp',
   autoLoadEntities: true,
   synchronize: false,
+  extra: {
+    max: 10,
+    connectionTimeoutMillis: 5000,
+    idleTimeoutMillis: 30000,
+    statement_timeout: 30000,
+  },
 });
