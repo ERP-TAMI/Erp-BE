@@ -23,4 +23,4 @@ GitHub environment dev chỉ branch dev; prod chỉ main. Mỗi environment có 
 
 Đã cập nhật các dependency có bản vá. Còn **braces 3.0.3 / CVE-2026-93687 (HIGH)** trong công cụ build/test, chưa có fixed version. CI giữ fail theo chính sách, không ignore CVE để lấy màu xanh.
 
-Upstream: https://github.com/micromatch/braces/issues/70 . Chưa merge cho tới khi xử lý blocker hoặc có quyết định ngoại lệ rõ ràng. Scanner xanh chỉ phản ánh lỗ hổng đã biết.
+Upstream: https://github.com/micromatch/braces/issues/70 (PR vá #72, #75 chưa merge). Ngoại lệ có hạn ở `.trivyignore.yaml`: chỉ source scan, chỉ CVE này, hết hạn 2026-11-03 thì CI đỏ lại để xem xét. Image scan production không dùng ngoại lệ. Scanner xanh chỉ phản ánh lỗ hổng đã biết.

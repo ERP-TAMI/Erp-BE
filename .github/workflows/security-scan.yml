@@ -28,6 +28,7 @@ jobs:
           scanners: vuln,secret
           severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
           ignore-unfixed: false
+          trivyignores: .trivyignore.yaml
           exit-code: '1'
 
       - name: Install Gitleaks CLI and verify release checksum
