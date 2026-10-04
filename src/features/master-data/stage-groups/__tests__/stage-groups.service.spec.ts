@@ -178,7 +178,7 @@ describe('StageGroupsService', () => {
   it('rejects creating a group without child operations at the service boundary', async () => {
     await expect(
       service.create({ groupName: 'Nhóm may', items: [] }),
-    ).rejects.toThrow('must contain at least one child operation');
+    ).rejects.toThrow('phải có ít nhất một công đoạn con');
     expect(groups.save).not.toHaveBeenCalled();
   });
 
@@ -186,7 +186,7 @@ describe('StageGroupsService', () => {
     groups.findOneBy.mockResolvedValue({ ...group });
 
     await expect(service.update(groupId, { items: [] })).rejects.toThrow(
-      'must contain at least one child operation',
+      'phải có ít nhất một công đoạn con',
     );
     expect(items.find).not.toHaveBeenCalled();
   });
@@ -266,7 +266,7 @@ describe('StageGroupsService', () => {
           },
         ],
       }),
-    ).rejects.toThrow('do not belong to this group');
+    ).rejects.toThrow('không thuộc nhóm này');
   });
 
   it('rejects duplicate retained child IDs', async () => {
@@ -279,7 +279,7 @@ describe('StageGroupsService', () => {
           { id: itemId, itemName: 'May 2', ssv: '2.000', orderIndex: 1 },
         ],
       }),
-    ).rejects.toThrow('duplicate IDs');
+    ).rejects.toThrow('trùng ID');
     expect(items.find).not.toHaveBeenCalled();
   });
 

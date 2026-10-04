@@ -119,7 +119,9 @@ export class StageGroupsService {
         );
       } catch (error) {
         if (this.hasDatabaseCode(error, '23505')) {
-          throw new ConflictException('Mã nhóm công đoạn đã tồn tại trong hệ thống.');
+          throw new ConflictException(
+            'Mã nhóm công đoạn đã tồn tại trong hệ thống.',
+          );
         }
         throw error;
       }
@@ -144,7 +146,7 @@ export class StageGroupsService {
       }
     }
 
-    throw new ConflictException('Unable to generate a unique stage group code');
+    throw new ConflictException('Không thể tạo mã nhóm công đoạn duy nhất.');
   }
 
   async update(
@@ -187,7 +189,9 @@ export class StageGroupsService {
       });
     } catch (error) {
       if (this.hasDatabaseCode(error, '23505')) {
-        throw new ConflictException('Mã nhóm công đoạn đã tồn tại trong hệ thống.');
+        throw new ConflictException(
+          'Mã nhóm công đoạn đã tồn tại trong hệ thống.',
+        );
       }
       throw error;
     }
@@ -210,7 +214,7 @@ export class StageGroupsService {
     } catch (error) {
       if (this.hasDatabaseCode(error, '23503')) {
         throw new ConflictException(
-          'Stage group cannot be deleted because it is referenced by business data',
+          'Không thể xóa nhóm công đoạn vì đang được dữ liệu nghiệp vụ khác tham chiếu.',
         );
       }
       throw error;
@@ -271,7 +275,7 @@ export class StageGroupsService {
     const foreignId = requestedIds.find((id) => !existingById.has(id));
     if (foreignId) {
       throw new BadRequestException(
-        'One or more stage group item IDs do not belong to this group',
+        'Một hoặc nhiều ID công đoạn con không thuộc nhóm này.',
       );
     }
 
@@ -295,7 +299,7 @@ export class StageGroupsService {
       } catch (error) {
         if (this.hasDatabaseCode(error, '23503')) {
           throw new ConflictException(
-            'Stage group item cannot be removed because it is referenced by business data',
+            'Không thể xóa công đoạn con này vì đang được dữ liệu nghiệp vụ khác tham chiếu.',
           );
         }
         throw error;
@@ -348,7 +352,7 @@ export class StageGroupsService {
     id: string,
   ): Promise<StageGroup> {
     const group = await repository.findOneBy({ id });
-    if (!group) throw new NotFoundException('Stage group not found');
+    if (!group) throw new NotFoundException('Không tìm thấy nhóm công đoạn.');
     return group;
   }
 
@@ -362,7 +366,9 @@ export class StageGroupsService {
       .where('UPPER(BTRIM(stageGroup.groupCode)) = :groupCode', { groupCode })
       .getOne();
     if (duplicate && duplicate.id !== excludedGroupId) {
-      throw new ConflictException('Mã nhóm công đoạn đã tồn tại trong hệ thống.');
+      throw new ConflictException(
+        'Mã nhóm công đoạn đã tồn tại trong hệ thống.',
+      );
     }
   }
 
@@ -389,7 +395,7 @@ export class StageGroupsService {
         return candidate;
       }
     }
-    throw new ConflictException('Unable to generate a unique stage group code');
+    throw new ConflictException('Không thể tạo mã nhóm công đoạn duy nhất.');
   }
 
   private buildGeneratedCode(groupName: string): string {
@@ -413,7 +419,7 @@ export class StageGroupsService {
   ): void {
     if (items.length === 0) {
       throw new BadRequestException(
-        'Stage group must contain at least one child operation',
+        'Nhóm công đoạn phải có ít nhất một công đoạn con.',
       );
     }
     const orderIndices = items
@@ -422,7 +428,7 @@ export class StageGroupsService {
     const isContiguous = orderIndices.every((value, index) => value === index);
     if (!isContiguous) {
       throw new BadRequestException(
-        'Stage group item order indices must be contiguous from zero',
+        'Thứ tự công đoạn con phải liên tục bắt đầu từ 0.',
       );
     }
   }
@@ -431,7 +437,7 @@ export class StageGroupsService {
     const itemIds = items.flatMap((item) => (item.id ? [item.id] : []));
     if (new Set(itemIds).size !== itemIds.length) {
       throw new BadRequestException(
-        'Stage group items cannot contain duplicate IDs',
+        'Danh sách công đoạn con không được trùng ID.',
       );
     }
   }

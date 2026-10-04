@@ -89,7 +89,7 @@ export class UnitsService {
     } catch (error) {
       if (this.isForeignKeyViolation(error)) {
         throw new ConflictException(
-          'Unit cannot be deleted because it is referenced by business data',
+          'Không thể xóa đơn vị tính vì đang được dữ liệu nghiệp vụ khác tham chiếu.',
         );
       }
       throw error;
@@ -99,7 +99,7 @@ export class UnitsService {
   private async getExistingUnit(id: string): Promise<Unit> {
     const unit = await this.units.findOneBy({ id });
     if (!unit) {
-      throw new NotFoundException('Unit not found');
+      throw new NotFoundException('Không tìm thấy đơn vị tính.');
     }
     return unit;
   }

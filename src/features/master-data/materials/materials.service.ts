@@ -162,7 +162,7 @@ export class MaterialsService {
     ]);
     if (referenceCounts.some((count) => count > 0)) {
       throw new ConflictException(
-        'Material cannot be deleted because business data references it',
+        'Không thể xóa vật tư vì đang được dữ liệu nghiệp vụ khác tham chiếu.',
       );
     }
 
@@ -171,7 +171,7 @@ export class MaterialsService {
     } catch (error) {
       if (this.hasDatabaseCode(error, '23503')) {
         throw new ConflictException(
-          'Material cannot be deleted because business data references it',
+          'Không thể xóa vật tư vì đang được dữ liệu nghiệp vụ khác tham chiếu.',
         );
       }
       throw error;
@@ -224,7 +224,7 @@ export class MaterialsService {
   private async getExistingMaterial(id: string): Promise<Material> {
     const material = await this.materials.findOneBy({ id });
     if (!material) {
-      throw new NotFoundException('Material not found');
+      throw new NotFoundException('Không tìm thấy vật tư.');
     }
     return material;
   }
@@ -232,7 +232,9 @@ export class MaterialsService {
   private async getActiveMaterialGroup(id: string): Promise<MaterialGroup> {
     const materialGroup = await this.materialGroups.findOneBy({ id });
     if (!materialGroup || materialGroup.status !== RecordStatus.ACTIVE) {
-      throw new BadRequestException('Active material group not found');
+      throw new BadRequestException(
+        'Không tìm thấy nhóm vật tư đang hoạt động.',
+      );
     }
     return materialGroup;
   }
@@ -240,7 +242,9 @@ export class MaterialsService {
   private async getActiveUnit(id: string): Promise<Unit> {
     const unit = await this.units.findOneBy({ id });
     if (!unit || unit.status !== RecordStatus.ACTIVE) {
-      throw new BadRequestException('Active default unit not found');
+      throw new BadRequestException(
+        'Không tìm thấy đơn vị tính mặc định đang hoạt động.',
+      );
     }
     return unit;
   }
@@ -257,7 +261,7 @@ export class MaterialsService {
         this.hasDatabaseCode(error, '23514') ||
         this.hasDatabaseCode(error, '22003')
       ) {
-        throw new BadRequestException('Material data is no longer valid');
+        throw new BadRequestException('Dữ liệu vật tư không còn hợp lệ.');
       }
       throw error;
     }

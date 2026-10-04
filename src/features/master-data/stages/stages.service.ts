@@ -113,7 +113,7 @@ export class StagesService {
     } catch (error) {
       if (this.hasDatabaseCode(error, '23503')) {
         throw new ConflictException(
-          'Stage cannot be deleted because it is referenced by business data',
+          'Không thể xóa công đoạn vì đang được dữ liệu nghiệp vụ khác tham chiếu.',
         );
       }
       throw error;
@@ -124,7 +124,7 @@ export class StagesService {
     const ids = dto.items.map((item) => item.id);
     const stages = await this.stages.findBy({ id: In(ids) });
     if (stages.length !== ids.length) {
-      throw new NotFoundException('One or more stages were not found');
+      throw new NotFoundException('Một hoặc nhiều công đoạn không tồn tại.');
     }
 
     const ssvById = new Map(dto.items.map((item) => [item.id, item.ssv]));
@@ -138,7 +138,7 @@ export class StagesService {
 
   private async getExistingStage(id: string): Promise<Stage> {
     const stage = await this.stages.findOneBy({ id });
-    if (!stage) throw new NotFoundException('Stage not found');
+    if (!stage) throw new NotFoundException('Không tìm thấy công đoạn.');
     return stage;
   }
 
@@ -188,7 +188,7 @@ export class StagesService {
       }
     }
 
-    throw new ConflictException('Unable to generate a unique stage code');
+    throw new ConflictException('Không thể tạo mã công đoạn duy nhất.');
   }
 
   private createStageEntity(
@@ -219,7 +219,7 @@ export class StagesService {
       if (!(await this.findByNormalizedCode(candidate))) return candidate;
     }
 
-    throw new ConflictException('Unable to generate a unique stage code');
+    throw new ConflictException('Không thể tạo mã công đoạn duy nhất.');
   }
 
   private buildGeneratedCode(stageName: string): string {

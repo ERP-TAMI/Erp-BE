@@ -860,7 +860,7 @@ export class StyleProductionDocsService {
    */
   async exportExcel(styleId: string): Promise<Buffer> {
     const style = await this.styleRepo.findOne({ where: { id: styleId } });
-    if (!style) throw new NotFoundException('Style not found');
+    if (!style) throw new NotFoundException('Không tìm thấy mẫu Fit.');
 
     const docs = await this.prodDocRepo.find({
       where: { styleId },

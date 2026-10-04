@@ -120,7 +120,7 @@ export class WorkshopsService {
     } catch (error) {
       if (this.hasDatabaseCode(error, '23503')) {
         throw new ConflictException(
-          'Workshop cannot be deleted because it is referenced by business data',
+          'Không thể xóa xưởng sản xuất vì đang được dữ liệu nghiệp vụ khác tham chiếu.',
         );
       }
       throw error;
@@ -129,7 +129,8 @@ export class WorkshopsService {
 
   private async getExistingWorkshop(id: string): Promise<Workshop> {
     const workshop = await this.workshops.findOneBy({ id });
-    if (!workshop) throw new NotFoundException('Workshop not found');
+    if (!workshop)
+      throw new NotFoundException('Không tìm thấy xưởng sản xuất.');
     return workshop;
   }
 
@@ -144,7 +145,9 @@ export class WorkshopsService {
       })
       .getOne();
     if (existing && existing.id !== excludedWorkshopId) {
-      throw new ConflictException('Mã xưởng sản xuất đã tồn tại trong hệ thống.');
+      throw new ConflictException(
+        'Mã xưởng sản xuất đã tồn tại trong hệ thống.',
+      );
     }
   }
 
@@ -153,7 +156,9 @@ export class WorkshopsService {
       return await this.workshops.save(workshop);
     } catch (error) {
       if (this.hasDatabaseCode(error, '23505')) {
-        throw new ConflictException('Mã xưởng sản xuất đã tồn tại trong hệ thống.');
+        throw new ConflictException(
+          'Mã xưởng sản xuất đã tồn tại trong hệ thống.',
+        );
       }
       throw error;
     }

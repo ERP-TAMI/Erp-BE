@@ -536,7 +536,9 @@ export class ManagementDashboardService {
     const limit = query.limit ?? 10;
     const offset = (page - 1) * limit;
     if (!Number.isSafeInteger(offset) || offset < 0) {
-      throw new BadRequestException('page and limit produce an unsafe offset');
+      throw new BadRequestException(
+        'Tham số page và limit tạo ra vị trí phân trang không hợp lệ.',
+      );
     }
     const [row] = await this.dataSource.query<PurchaseOrdersOverviewRow[]>(
       `
@@ -692,7 +694,7 @@ export class ManagementDashboardService {
 
     if (period.periodType === 'year' && period.year) {
       if (!/^(?!0000)\d{4}$/.test(period.year)) {
-        throw new BadRequestException('year must use YYYY format');
+        throw new BadRequestException('Năm phải theo định dạng YYYY.');
       }
       const nextYear = String(Number(period.year) + 1).padStart(4, '0');
       return {
@@ -717,7 +719,7 @@ export class ManagementDashboardService {
       };
     }
 
-    throw new BadRequestException('Invalid dashboard summary period');
+    throw new BadRequestException('Kỳ thống kê dashboard không hợp lệ.');
   }
 
   private getTrendGranularity(

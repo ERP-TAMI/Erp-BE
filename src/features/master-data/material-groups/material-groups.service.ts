@@ -112,7 +112,7 @@ export class MaterialGroupsService {
     const materialGroup = await this.getExistingGroup(id);
     if ((await this.materials.countBy({ materialGroupId: id })) > 0) {
       throw new ConflictException(
-        'Material group cannot be deleted because materials reference it',
+        'Không thể xóa nhóm vật tư vì còn vật tư thuộc nhóm này.',
       );
     }
     try {
@@ -120,7 +120,7 @@ export class MaterialGroupsService {
     } catch (error) {
       if (this.isForeignKeyViolation(error)) {
         throw new ConflictException(
-          'Material group cannot be deleted because it is referenced by business data',
+          'Không thể xóa nhóm vật tư vì đang được dữ liệu nghiệp vụ khác tham chiếu.',
         );
       }
       throw error;
@@ -130,7 +130,7 @@ export class MaterialGroupsService {
   private async getExistingGroup(id: string): Promise<MaterialGroup> {
     const materialGroup = await this.materialGroups.findOneBy({ id });
     if (!materialGroup) {
-      throw new NotFoundException('Material group not found');
+      throw new NotFoundException('Không tìm thấy nhóm vật tư.');
     }
     return materialGroup;
   }
@@ -144,7 +144,7 @@ export class MaterialGroupsService {
       .where('LOWER(BTRIM(materialGroup.name)) = LOWER(BTRIM(:name))', { name })
       .getOne();
     if (existing && existing.id !== ignoredId) {
-      throw new ConflictException('Material group name already exists');
+      throw new ConflictException('Tên nhóm vật tư đã tồn tại trong hệ thống.');
     }
   }
 
@@ -155,7 +155,9 @@ export class MaterialGroupsService {
       return await this.materialGroups.save(materialGroup);
     } catch (error) {
       if (this.isUniqueViolation(error)) {
-        throw new ConflictException('Material group name already exists');
+        throw new ConflictException(
+          'Tên nhóm vật tư đã tồn tại trong hệ thống.',
+        );
       }
       throw error;
     }
