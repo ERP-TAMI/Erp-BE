@@ -6,15 +6,36 @@ export type BootstrapAccount = {
   email: string;
   password: string;
   fullName: string;
-  roleCode: 'SA' | 'IT';
+  roleCode: 'SA' | 'IT' | 'TPKH' | 'NVKH' | 'RD' | 'ACCOUNTING';
 };
 
-const MIN_PASSWORD_LENGTH = 12;
+// Same minimum as the app's own password setup (MinLength(8)).
+const MIN_PASSWORD_LENGTH = 8;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const SLOTS = [
   { prefix: 'BOOTSTRAP_ADMIN', fullName: 'Quản trị hệ thống', roleCode: 'SA' },
   { prefix: 'BOOTSTRAP_IT', fullName: 'Công nghệ thông tin', roleCode: 'IT' },
+  {
+    prefix: 'BOOTSTRAP_TPKH',
+    fullName: 'Trưởng phòng Kế hoạch',
+    roleCode: 'TPKH',
+  },
+  {
+    prefix: 'BOOTSTRAP_NVKH',
+    fullName: 'Nhân viên Kế hoạch',
+    roleCode: 'NVKH',
+  },
+  {
+    prefix: 'BOOTSTRAP_RD',
+    fullName: 'Nghiên cứu và Phát triển',
+    roleCode: 'RD',
+  },
+  {
+    prefix: 'BOOTSTRAP_ACCOUNTING',
+    fullName: 'Kế toán',
+    roleCode: 'ACCOUNTING',
+  },
 ] as const;
 
 export function readBootstrapAccounts(

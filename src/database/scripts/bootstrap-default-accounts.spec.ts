@@ -38,7 +38,20 @@ describe('readBootstrapAccounts', () => {
         BOOTSTRAP_IT_EMAIL: 'it@example.com',
         BOOTSTRAP_IT_PASSWORD: 'short',
       }),
-    ).toThrow(/at least 12 characters/);
+    ).toThrow(/at least 8 characters/);
+  });
+
+  it('accepts an 8 character password and maps every supported role', () => {
+    const env: NodeJS.ProcessEnv = {};
+    const prefixes = ['ADMIN', 'IT', 'TPKH', 'NVKH', 'RD', 'ACCOUNTING'];
+    for (const prefix of prefixes) {
+      env[`BOOTSTRAP_${prefix}_EMAIL`] = `${prefix.toLowerCase()}@example.com`;
+      env[`BOOTSTRAP_${prefix}_PASSWORD`] = '12345678';
+    }
+
+    expect(
+      readBootstrapAccounts(env).map((account) => account.roleCode),
+    ).toEqual(['SA', 'IT', 'TPKH', 'NVKH', 'RD', 'ACCOUNTING']);
   });
 
   it('rejects an invalid email', () => {
