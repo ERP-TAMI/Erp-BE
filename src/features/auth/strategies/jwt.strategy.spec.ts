@@ -11,6 +11,7 @@ function buildUser(overrides: Partial<User> = {}): User {
     id: 'user-1',
     email: 'sa@tami.test',
     status: RecordStatus.ACTIVE,
+    mustChangePassword: false,
     lockoutUntil: null,
     manuallyLockedAt: null,
     purchaseOrderMode: PurchaseOrderMode.READ_ONLY,
@@ -88,6 +89,17 @@ describe('JwtStrategy', () => {
       roleCode: 'SA',
       permissions: ['system.users.manage'],
       purchaseOrderMode: PurchaseOrderMode.FULL_ACCESS,
+      mustChangePassword: false,
+    });
+  });
+
+  it('marks sessions using an administrator-provided temporary password', async () => {
+    userRepository.findOne.mockResolvedValue(
+      buildUser({ mustChangePassword: true }),
+    );
+
+    await expect(strategy.validate(payload)).resolves.toMatchObject({
+      mustChangePassword: true,
     });
   });
 });

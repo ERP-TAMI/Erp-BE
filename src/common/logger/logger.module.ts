@@ -31,6 +31,7 @@ if (!isProduction) mkdirSync(logsDirectory, { recursive: true });
           'req.headers.cookie',
           'req.headers["x-origin-verify"]',
           'req.body.password',
+          'req.body.temporaryPassword',
           'req.body.token',
           'res.headers["set-cookie"]',
         ],

@@ -14,4 +14,5 @@ export type RequestUser = {
   roleCode: string;
   permissions: string[];
   purchaseOrderMode: PurchaseOrderMode;
+  mustChangePassword: boolean;
 };

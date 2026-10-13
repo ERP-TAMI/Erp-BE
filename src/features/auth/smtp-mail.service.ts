@@ -50,6 +50,27 @@ export class SmtpMailService implements OnModuleDestroy {
     });
   }
 
+  async sendTemporaryPasswordEmail(input: {
+    email: string;
+    fullName: string;
+    temporaryPassword: string;
+  }): Promise<void> {
+    const user =
+      this.config.get<string>('MAIL_USERNAME') ||
+      this.config.getOrThrow<string>('MAIL_USER');
+    const pass =
+      this.config.get<string>('MAIL_PASSWORD') ||
+      this.config.getOrThrow<string>('MAIL_PASS');
+    const from = this.config.get<string>('MAIL_FROM') || user;
+    await this.getTransporter(user, pass).sendMail({
+      from,
+      to: input.email,
+      subject: 'Mật khẩu tạm thời TAMI ERP',
+      text: `Xin chào ${input.fullName},\n\nQuản trị viên đã đặt mật khẩu tạm cho tài khoản TAMI ERP của bạn.\n\nTài khoản: ${input.email}\nMật khẩu tạm: ${input.temporaryPassword}\n\nSau khi đăng nhập, bạn bắt buộc phải đổi mật khẩu trước khi tiếp tục sử dụng hệ thống.`,
+      html: `<p>Xin chào ${escapeHtml(input.fullName)},</p><p>Quản trị viên đã đặt mật khẩu tạm cho tài khoản TAMI ERP của bạn.</p><p><strong>Tài khoản:</strong> ${escapeHtml(input.email)}<br><strong>Mật khẩu tạm:</strong> ${escapeHtml(input.temporaryPassword)}</p><p>Sau khi đăng nhập, bạn bắt buộc phải đổi mật khẩu trước khi tiếp tục sử dụng hệ thống.</p>`,
+    });
+  }
+
   async sendAccountLockedEmail(input: {
     email: string;
     fullName: string;

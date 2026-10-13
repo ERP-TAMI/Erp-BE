@@ -5,7 +5,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
-import { DataSource } from 'typeorm';
+import { DataSource, IsNull } from 'typeorm';
 import {
   AuditEventType,
   RecordStatus,
@@ -20,6 +20,7 @@ import { AuthService } from './auth.service';
 import { AuthUserDto } from './dto/auth-response.dto';
 import { ChangeMyPasswordDto, UpdateMyProfileDto } from './dto/profile.dto';
 import { User } from './entities/User.entity';
+import { UserSession } from './entities/UserSession.entity';
 import { PasswordSetupService } from './password-setup.service';
 
 type ProfileActor = { id: string; roleCode: string };
@@ -94,7 +95,7 @@ export class ProfileService {
         where: { id: actor.id },
         lock: { mode: 'pessimistic_write' },
       });
-      this.assertAccountUsable(user);
+      this.assertAccountUsable(user, true);
 
       const currentPasswordMatches = await verifyPassword(
         dto.currentPassword,
@@ -119,7 +120,18 @@ export class ProfileService {
       }
 
       user.passwordHash = await hashPassword(dto.newPassword);
+      const wasTemporaryPassword = user.mustChangePassword;
+      user.mustChangePassword = false;
+      if (wasTemporaryPassword) user.authVersion += 1;
       await users.save(user);
+      if (wasTemporaryPassword) {
+        await manager
+          .getRepository(UserSession)
+          .update(
+            { userId: user.id, revokedAt: IsNull() },
+            { revokedAt: new Date(), revokeReason: 'password_changed' },
+          );
+      }
       await this.passwordSetup.revokeActive(manager, user.id);
       await this.audit.recordUserChange(manager, {
         actorId: actor.id,
@@ -133,7 +145,10 @@ export class ProfileService {
     });
   }
 
-  private assertAccountUsable(user: User | null): asserts user is User {
+  private assertAccountUsable(
+    user: User | null,
+    allowPasswordChange = false,
+  ): asserts user is User {
     const isLocked =
       !!user?.manuallyLockedAt ||
       (!!user?.lockoutUntil && user.lockoutUntil.getTime() > Date.now());
@@ -144,7 +159,7 @@ export class ProfileService {
       });
     }
 
-    if (user.mustChangePassword) {
+    if (user.mustChangePassword && !allowPasswordChange) {
       throw new ForbiddenException({
         code: ErrorCode.PASSWORD_SETUP_REQUIRED,
         message: 'Bạn cần hoàn tất thiết lập mật khẩu trước.',

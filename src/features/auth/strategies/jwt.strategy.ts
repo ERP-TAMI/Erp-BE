@@ -51,6 +51,7 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
         payload.roleCode === 'SA'
           ? PurchaseOrderMode.FULL_ACCESS
           : user.purchaseOrderMode,
+      mustChangePassword: user.mustChangePassword,
     };
   }
 }

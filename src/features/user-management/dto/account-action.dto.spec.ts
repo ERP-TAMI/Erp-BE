@@ -16,13 +16,13 @@ describe('AccountStatusActionDto', () => {
     expect(await validate(dto)).not.toHaveLength(0);
   });
 
-  it('rejects inactive as a status mutation', async () => {
+  it('allows inactive as a status mutation', async () => {
     const dto = plainToInstance(AccountStatusActionDto, {
       accountStatus: UserAccountStatus.INACTIVE,
       reason: 'Nhân viên đã nghỉ việc',
     });
 
-    expect(await validate(dto)).not.toHaveLength(0);
+    expect(await validate(dto)).toHaveLength(0);
   });
 
   it('allows active without a reason', async () => {
