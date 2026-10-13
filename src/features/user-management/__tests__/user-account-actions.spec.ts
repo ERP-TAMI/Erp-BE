@@ -7,9 +7,11 @@ import { PasswordSetupService } from '../../auth/password-setup.service';
 import { AuditService } from '../../audit/audit.service';
 import { SmtpMailService } from '../../auth/smtp-mail.service';
 import {
+  AuditEventType,
   NotificationDeliveryStatus,
   RecordStatus,
 } from '../../../common/enums/database.enums';
+import { verifyPassword } from '../../../common/security/password.util';
 import { NotificationsService } from '../../notifications/notifications.service';
 import { UserRoleCode } from '../dto/query-users.dto';
 import { UserAccountStatus } from '../dto/user-account-status.enum';
@@ -61,6 +63,7 @@ describe('UserManagementService account actions', () => {
     userRepository = {
       findOne: jest.fn().mockResolvedValue(target),
       save: jest.fn(async (value) => value),
+      delete: jest.fn().mockResolvedValue({ affected: 1 }),
     } as unknown as jest.Mocked<Repository<User>>;
     sessionRepository = {
       update: jest.fn().mockResolvedValue({ affected: 1 }),
@@ -88,6 +91,7 @@ describe('UserManagementService account actions', () => {
     } as unknown as jest.Mocked<AuditService>;
     mail = {
       sendAccountLockedEmail: jest.fn().mockResolvedValue(undefined),
+      sendTemporaryPasswordEmail: jest.fn().mockResolvedValue(undefined),
     } as unknown as jest.Mocked<SmtpMailService>;
     notifications = {
       createAccountLockedEmailDelivery: jest
@@ -294,31 +298,120 @@ describe('UserManagementService account actions', () => {
     expect(result.user.accountStatus).toBe(UserAccountStatus.ACTIVE);
   });
 
-  it('resets password immediately, revokes sessions and queues one setup email', async () => {
+  it('sets the administrator-provided temporary password, revokes sessions and emails credentials', async () => {
     target.lockoutUntil = null;
-    passwordSetup.deliver.mockReturnValue(new Promise(() => undefined));
+    const temporaryPassword = 'Temp-Pass-482!';
 
-    const result = await service.resetPassword(target.id, {
-      id: 'sa-actor',
-      roleCode: UserRoleCode.SA,
-    });
+    const result = await service.resetPassword(
+      target.id,
+      {
+        temporaryPassword,
+      },
+      {
+        id: 'sa-actor',
+        roleCode: UserRoleCode.SA,
+      },
+    );
 
-    expect(target.passwordHash).not.toBe('existing-hash');
+    expect(await verifyPassword(temporaryPassword, target.passwordHash)).toBe(
+      true,
+    );
     expect(target.mustChangePassword).toBe(true);
     expect(target.authVersion).toBe(2);
     expect(sessionRepository.update).toHaveBeenCalledWith(
       expect.objectContaining({ userId: target.id }),
       expect.objectContaining({ revokeReason: 'password_reset' }),
     );
-    expect(passwordSetup.issue).toHaveBeenCalledWith(
-      manager,
-      target.id,
-      'sa-actor',
-    );
-    expect(passwordSetup.deliver).toHaveBeenCalledWith(
-      expect.objectContaining({ token: 'raw-token' }),
-    );
-    expect(result.invitationStatus).toBe('pending');
+    expect(passwordSetup.revokeActive).toHaveBeenCalledWith(manager, target.id);
+    expect(passwordSetup.issue).not.toHaveBeenCalled();
+    expect(mail.sendTemporaryPasswordEmail).toHaveBeenCalledWith({
+      email: target.email,
+      fullName: target.fullName,
+      temporaryPassword,
+    });
+    expect(result.temporaryPasswordEmailStatus).toBe('sent');
     expect(result.user.accountStatus).toBe(UserAccountStatus.PENDING_SETUP);
+  });
+
+  it('reports a temporary credential email failure without exposing the password in the response', async () => {
+    target.lockoutUntil = null;
+    mail.sendTemporaryPasswordEmail.mockRejectedValue(
+      new Error('SMTP unavailable'),
+    );
+
+    const result = await service.resetPassword(
+      target.id,
+      { temporaryPassword: 'Temp-Pass-482!' },
+      { id: 'sa-actor', roleCode: UserRoleCode.SA },
+    );
+
+    expect(result.temporaryPasswordEmailStatus).toBe('failed');
+    expect(result).not.toHaveProperty('temporaryPassword');
+    expect(result.user).not.toHaveProperty('temporaryPassword');
+    expect(target.mustChangePassword).toBe(true);
+  });
+
+  it('deactivates an account, revokes sessions and outstanding setup links', async () => {
+    target.lockoutUntil = null;
+
+    const result = await service.updateAccountStatus(
+      target.id,
+      { accountStatus: UserAccountStatus.INACTIVE },
+      { id: 'it-actor', roleCode: UserRoleCode.IT },
+    );
+
+    expect(target.status).toBe(RecordStatus.INACTIVE);
+    expect(target.authVersion).toBe(2);
+    expect(sessionRepository.update).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: target.id }),
+      expect.objectContaining({ revokeReason: 'account_deactivated' }),
+    );
+    expect(passwordSetup.revokeActive).toHaveBeenCalledWith(manager, target.id);
+    expect(audit.recordUserChange).toHaveBeenCalledWith(
+      manager,
+      expect.objectContaining({
+        eventType: AuditEventType.STATUS_CHANGED,
+        changes: [
+          expect.objectContaining({ newValue: UserAccountStatus.INACTIVE }),
+        ],
+      }),
+    );
+    expect(result.user.accountStatus).toBe(UserAccountStatus.INACTIVE);
+  });
+
+  it('deletes only an inactive user and records the deletion before removing the user', async () => {
+    target.status = RecordStatus.INACTIVE;
+
+    await service.deleteUser(target.id, {
+      id: 'it-actor',
+      roleCode: UserRoleCode.IT,
+    });
+
+    expect(audit.recordUserChange).toHaveBeenCalledWith(
+      manager,
+      expect.objectContaining({
+        actorId: 'it-actor',
+        targetId: target.id,
+        targetLabel: target.email,
+        eventType: AuditEventType.DELETED,
+        reason: expect.any(String),
+        changes: [],
+      }),
+    );
+    expect(userRepository.delete).toHaveBeenCalledWith({ id: target.id });
+  });
+
+  it('rejects deletion of an active user', async () => {
+    target.lockoutUntil = null;
+
+    await expect(
+      service.deleteUser(target.id, {
+        id: 'sa-actor',
+        roleCode: UserRoleCode.SA,
+      }),
+    ).rejects.toMatchObject({ status: 409 });
+
+    expect(userRepository.delete).not.toHaveBeenCalled();
+    expect(audit.recordUserChange).not.toHaveBeenCalled();
   });
 });

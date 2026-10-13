@@ -57,6 +57,35 @@ describe('SmtpMailService', () => {
     expect(message.text.toLowerCase()).not.toContain('mật khẩu tạm');
   });
 
+  it('emails the temporary credentials and requires the user to change the password', async () => {
+    const values: Record<string, string> = {
+      MAIL_HOST: 'smtp.gmail.com',
+      MAIL_PORT: '587',
+      MAIL_USERNAME: 'sender@example.test',
+      MAIL_PASSWORD: 'secret-from-env',
+      MAIL_FROM: 'TAMI ERP <sender@example.test>',
+    };
+    const config = {
+      getOrThrow: jest.fn((key: string) => values[key]),
+      get: jest.fn((key: string) => values[key]),
+    } as unknown as ConfigService;
+    const service = new SmtpMailService(config);
+
+    await service.sendTemporaryPasswordEmail({
+      email: 'employee@example.test',
+      fullName: 'Nguyễn Văn A',
+      temporaryPassword: 'Temp-Pass-482!',
+    });
+
+    const message = sendMail.mock.calls[0][0];
+    expect(message.to).toBe('employee@example.test');
+    expect(message.text).toContain('employee@example.test');
+    expect(message.text).toContain('Temp-Pass-482!');
+    expect(message.text).toContain('đổi mật khẩu trước khi tiếp tục');
+    expect(message.html).toContain('Temp-Pass-482!');
+    expect(message.html).toContain('đổi mật khẩu trước khi tiếp tục');
+  });
+
   it('reuses the SMTP pool and closes it during shutdown', async () => {
     const values: Record<string, string> = {
       MAIL_HOST: 'smtp.gmail.com',

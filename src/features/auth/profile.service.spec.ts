@@ -1,4 +1,4 @@
-import { DataSource, EntityManager, Repository } from 'typeorm';
+import { DataSource, EntityManager, IsNull, Repository } from 'typeorm';
 import {
   AuditEventType,
   RecordStatus,
@@ -8,6 +8,7 @@ import * as passwordUtil from '../../common/security/password.util';
 import { AuditService } from '../audit/audit.service';
 import { AuthService } from './auth.service';
 import { User } from './entities/User.entity';
+import { UserSession } from './entities/UserSession.entity';
 import { PasswordSetupService } from './password-setup.service';
 import { ProfileService } from './profile.service';
 
@@ -36,6 +37,7 @@ function buildUser(overrides: Partial<User> = {}): User {
 
 describe('ProfileService', () => {
   let users: jest.Mocked<Repository<User>>;
+  let sessions: jest.Mocked<Repository<UserSession>>;
   let dataSource: jest.Mocked<DataSource>;
   let audit: jest.Mocked<AuditService>;
   let passwordSetup: jest.Mocked<PasswordSetupService>;
@@ -47,8 +49,13 @@ describe('ProfileService', () => {
       findOne: jest.fn(),
       save: jest.fn(async (value) => value),
     } as unknown as jest.Mocked<Repository<User>>;
+    sessions = {
+      update: jest.fn().mockResolvedValue({ affected: 1 }),
+    } as unknown as jest.Mocked<Repository<UserSession>>;
     const manager = {
-      getRepository: jest.fn(() => users),
+      getRepository: jest.fn((entity: unknown) =>
+        entity === User ? users : sessions,
+      ),
     } as unknown as EntityManager;
     dataSource = {
       transaction: jest.fn((run) => run(manager)),
@@ -160,25 +167,28 @@ describe('ProfileService', () => {
     expect(audit.recordUserChange).not.toHaveBeenCalled();
   });
 
-  it('explains that password setup is required before password changes', async () => {
+  it('allows a temporary-password user to change their password before using the ERP', async () => {
     const user = buildUser({ mustChangePassword: true });
     users.findOne.mockResolvedValue(user);
+    jest
+      .spyOn(passwordUtil, 'verifyPassword')
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(false);
+    jest.spyOn(passwordUtil, 'hashPassword').mockResolvedValue('new-hash');
 
-    await expect(
-      service.changePassword(
-        { currentPassword: 'current-password', newPassword: 'new-password' },
-        { id: user.id, roleCode: 'NVKH' },
-      ),
-    ).rejects.toMatchObject({
-      status: 403,
-      response: {
-        code: 'PASSWORD_SETUP_REQUIRED',
-        message: 'Bạn cần hoàn tất thiết lập mật khẩu trước.',
-      },
-    });
+    await service.changePassword(
+      { currentPassword: 'current-password', newPassword: 'new-password' },
+      { id: user.id, roleCode: 'NVKH' },
+    );
 
-    expect(passwordUtil.verifyPassword).not.toHaveBeenCalled();
-    expect(users.save).not.toHaveBeenCalled();
+    expect(passwordUtil.verifyPassword).toHaveBeenCalledTimes(2);
+    expect(user.passwordHash).toBe('new-hash');
+    expect(user.mustChangePassword).toBe(false);
+    expect(users.save).toHaveBeenCalledWith(user);
+    expect(audit.recordUserChange).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ eventType: AuditEventType.PASSWORD_CHANGED }),
+    );
   });
 
   it('rejects an incorrect current password without changing persisted data', async () => {
@@ -218,8 +228,8 @@ describe('ProfileService', () => {
     });
   });
 
-  it('changes the password without revoking the current session and revokes old reset links', async () => {
-    const user = buildUser();
+  it('increments the auth version and revokes sessions when replacing a temporary password', async () => {
+    const user = buildUser({ mustChangePassword: true });
     users.findOne.mockResolvedValue(user);
     jest
       .spyOn(passwordUtil, 'verifyPassword')
@@ -233,7 +243,14 @@ describe('ProfileService', () => {
     );
 
     expect(user.passwordHash).toBe('new-hash');
-    expect(user.authVersion).toBe(3);
+    expect(user.authVersion).toBe(4);
+    expect(sessions.update).toHaveBeenCalledWith(
+      { userId: user.id, revokedAt: IsNull() },
+      expect.objectContaining({
+        revokedAt: expect.any(Date),
+        revokeReason: 'password_changed',
+      }),
+    );
     expect(passwordSetup.revokeActive).toHaveBeenCalledWith(
       expect.anything(),
       user.id,
@@ -245,5 +262,23 @@ describe('ProfileService', () => {
         changes: [],
       }),
     );
+  });
+
+  it('preserves the existing session policy for an ordinary password change', async () => {
+    const user = buildUser();
+    users.findOne.mockResolvedValue(user);
+    jest
+      .spyOn(passwordUtil, 'verifyPassword')
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(false);
+    jest.spyOn(passwordUtil, 'hashPassword').mockResolvedValue('new-hash');
+
+    await service.changePassword(
+      { currentPassword: 'current-password', newPassword: 'new-password' },
+      { id: user.id, roleCode: 'NVKH' },
+    );
+
+    expect(user.authVersion).toBe(3);
+    expect(sessions.update).not.toHaveBeenCalled();
   });
 });
