@@ -2578,8 +2578,16 @@ describe('PurchaseOrdersService', () => {
 
       expect(result.totalQuantity).toBe(28);
       expect(result.colors).toEqual([
-        expect.objectContaining({ colorName: 'Đen', ratio: '1:2:1', totalQuantity: 25 }),
-        expect.objectContaining({ colorName: 'Trắng', ratio: null, totalQuantity: 3 }),
+        expect.objectContaining({
+          colorName: 'Đen',
+          ratio: '1:2:1',
+          totalQuantity: 25,
+        }),
+        expect.objectContaining({
+          colorName: 'Trắng',
+          ratio: null,
+          totalQuantity: 3,
+        }),
       ]);
     });
 
