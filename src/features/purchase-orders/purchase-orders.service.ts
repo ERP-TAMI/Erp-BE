@@ -362,6 +362,12 @@ function formatColorSizes(
     : sizes.map((s) => `${s.sizeLabel}: ${Number(s.quantity)}`).join(' · ');
 }
 
+function normalizeColorRatio(ratio?: string | null): string | null {
+  if (ratio === null || ratio === undefined) return null;
+  const trimmed = String(ratio).trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
 @Injectable()
 export class PurchaseOrdersService {
   constructor(
@@ -2293,6 +2299,7 @@ export class PurchaseOrdersService {
         acc[c.productId].push({
           id: c.id,
           colorName: c.colorName,
+          ratio: c.ratio ?? null,
           orderIndex: c.orderIndex,
           sizes: colorSizes.map((s) => ({
             id: s.id,
@@ -2509,6 +2516,7 @@ export class PurchaseOrdersService {
       return {
         id: c.id,
         colorName: c.colorName,
+        ratio: c.ratio ?? null,
         orderIndex: c.orderIndex,
         sizes: colorSizes,
         totalQuantity: colorQty,
@@ -3004,6 +3012,7 @@ export class PurchaseOrdersService {
             const colorEntity = manager.create(PurchaseOrderProductColor, {
               productId: savedProduct.id,
               colorName: cDto.colorName.trim(),
+              ratio: normalizeColorRatio(cDto.ratio),
               orderIndex: cIdx,
             });
             const savedColor = await manager.save(
@@ -3040,11 +3049,26 @@ export class PurchaseOrdersService {
           : undefined,
         changes: [
           ...auditDiff(null, savedProduct, PRODUCT_AUDIT_FIELDS),
-          ...(dto.colors ?? []).map((color) => ({
-            fieldName: `${color.colorName.trim()}::sizes`,
-            oldValue: null,
-            newValue: formatColorSizes(color.sizes ?? []),
-          })),
+          ...(dto.colors ?? []).flatMap((color) => {
+            const trimmedName = color.colorName.trim();
+            const normalizedRatio = normalizeColorRatio(color.ratio);
+            return [
+              ...(normalizedRatio !== null
+                ? [
+                    {
+                      fieldName: `${trimmedName}::ratio`,
+                      oldValue: null,
+                      newValue: normalizedRatio,
+                    },
+                  ]
+                : []),
+              {
+                fieldName: `${trimmedName}::sizes`,
+                oldValue: null,
+                newValue: formatColorSizes(color.sizes ?? []),
+              },
+            ];
+          }),
         ],
       });
 
@@ -3176,16 +3200,25 @@ export class PurchaseOrdersService {
         const colorName = cDto.colorName.trim();
         const existing = cDto.id ? existingById.get(cDto.id) : undefined;
         const oldName = existing?.colorName;
+        const oldRatio = existing ? (existing.ratio ?? null) : null;
+        const nextRatio =
+          cDto.ratio !== undefined
+            ? normalizeColorRatio(cDto.ratio)
+            : existing
+              ? (existing.ratio ?? null)
+              : null;
 
         let savedColor: PurchaseOrderProductColor;
         if (existing) {
           existing.colorName = colorName;
+          existing.ratio = nextRatio;
           existing.orderIndex = cIdx;
           savedColor = await manager.save(PurchaseOrderProductColor, existing);
         } else {
           const newColor = manager.create(PurchaseOrderProductColor, {
             productId,
             colorName,
+            ratio: nextRatio,
             orderIndex: cIdx,
           });
           savedColor = await manager.save(PurchaseOrderProductColor, newColor);
@@ -3221,6 +3254,13 @@ export class PurchaseOrdersService {
             fieldName: `${colorName}::colorName`,
             oldValue: oldName,
             newValue: colorName,
+          });
+        }
+        if (oldRatio !== nextRatio) {
+          changes.push({
+            fieldName: `${colorName}::ratio`,
+            oldValue: oldRatio,
+            newValue: nextRatio,
           });
         }
         if (oldSizes !== newSizes) {

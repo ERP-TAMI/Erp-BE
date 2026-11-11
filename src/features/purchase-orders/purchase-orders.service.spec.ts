@@ -161,6 +161,7 @@ describe('PurchaseOrdersService', () => {
     id: string;
     productId: string;
     colorName: string;
+    ratio?: string | null;
     orderIndex: number;
   }> = [];
   let mockExistingColorSizes: Array<{
@@ -1159,6 +1160,68 @@ describe('PurchaseOrdersService', () => {
       );
       // Không có màu nào bị xóa — vẫn còn nguyên trong danh sách gửi lên.
       expect(txColorRepoMock.delete).not.toHaveBeenCalled();
+    });
+
+    it('updates one color ratio independently without altering other colors ratios, and stores null when ratio is empty', async () => {
+      mockExistingColors = [
+        {
+          id: 'color-1',
+          productId: 'prod-1',
+          colorName: 'Đen',
+          ratio: '1:2:1',
+          orderIndex: 0,
+        },
+        {
+          id: 'color-2',
+          productId: 'prod-1',
+          colorName: 'Trắng',
+          ratio: '2:1',
+          orderIndex: 1,
+        },
+      ];
+
+      await service.updateProduct('po-1', 'prod-1', {
+        colors: [
+          {
+            id: 'color-1',
+            colorName: 'Đen',
+            ratio: '3:1',
+            sizes: [{ sizeLabel: 'M', quantity: 10 }],
+          },
+          {
+            id: 'color-2',
+            colorName: 'Trắng',
+            ratio: '2:1',
+            sizes: [{ sizeLabel: 'S', quantity: 5 }],
+          },
+          {
+            colorName: 'Xanh',
+            ratio: '   ',
+            sizes: [{ sizeLabel: 'L', quantity: 8 }],
+          },
+        ],
+      });
+
+      expect(txColorRepoMock.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 'color-1',
+          colorName: 'Đen',
+          ratio: '3:1',
+        }),
+      );
+      expect(txColorRepoMock.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 'color-2',
+          colorName: 'Trắng',
+          ratio: '2:1',
+        }),
+      );
+      expect(txColorRepoMock.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          colorName: 'Xanh',
+          ratio: null,
+        }),
+      );
     });
 
     it('creates a brand-new color when the incoming entry has no id (or an id that does not match any existing row)', async () => {
@@ -2484,8 +2547,8 @@ describe('PurchaseOrdersService', () => {
     it('getProductColors returns colors with per-color size totals', async () => {
       mockGenericRepo.find
         .mockResolvedValueOnce([
-          { id: 'c-1', colorName: 'Đen', orderIndex: 0 },
-          { id: 'c-2', colorName: 'Trắng', orderIndex: 1 },
+          { id: 'c-1', colorName: 'Đen', ratio: '1:2:1', orderIndex: 0 },
+          { id: 'c-2', colorName: 'Trắng', ratio: null, orderIndex: 1 },
         ])
         .mockResolvedValueOnce([
           {
@@ -2515,8 +2578,8 @@ describe('PurchaseOrdersService', () => {
 
       expect(result.totalQuantity).toBe(28);
       expect(result.colors).toEqual([
-        expect.objectContaining({ colorName: 'Đen', totalQuantity: 25 }),
-        expect.objectContaining({ colorName: 'Trắng', totalQuantity: 3 }),
+        expect.objectContaining({ colorName: 'Đen', ratio: '1:2:1', totalQuantity: 25 }),
+        expect.objectContaining({ colorName: 'Trắng', ratio: null, totalQuantity: 3 }),
       ]);
     });
 

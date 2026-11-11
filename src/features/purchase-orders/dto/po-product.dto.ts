@@ -42,6 +42,17 @@ export class ProductColorItemDto {
   colorName: string;
 
   @ApiPropertyOptional({
+    description: 'Tỷ lệ riêng của màu (nếu chưa nhập thì lưu null)',
+    example: '1:2:1',
+    maxLength: 100,
+    nullable: true,
+  })
+  @IsOptional()
+  @IsString({ message: 'ratio phải là chuỗi ký tự' })
+  @MaxLength(100, { message: 'ratio không vượt quá 100 ký tự' })
+  ratio?: string | null;
+
+  @ApiPropertyOptional({
     description: 'Bảng size breakdown của màu',
     type: [ProductColorSizeItemDto],
   })
