@@ -1224,6 +1224,104 @@ describe('PurchaseOrdersService', () => {
       );
     });
 
+    it('updates only targeted color ratios via colorRatios without deleting sizes or concurrently added colors', async () => {
+      mockExistingColors = [
+        {
+          id: 'color-1',
+          productId: 'prod-1',
+          colorName: 'Đen',
+          ratio: '1:2:1',
+          orderIndex: 0,
+        },
+        {
+          id: 'color-2',
+          productId: 'prod-1',
+          colorName: 'Trắng',
+          ratio: null,
+          orderIndex: 1,
+        },
+        {
+          id: 'color-concurrent',
+          productId: 'prod-1',
+          colorName: 'Đỏ (người khác vừa thêm)',
+          ratio: '4:1',
+          orderIndex: 2,
+        },
+      ];
+      mockExistingColorSizes = [
+        { productColorId: 'color-1', sizeLabel: 'M', quantity: 99 },
+        { productColorId: 'color-2', sizeLabel: 'L', quantity: 50 },
+        { productColorId: 'color-concurrent', sizeLabel: 'S', quantity: 30 },
+      ];
+
+      await service.updateProduct(
+        'po-1',
+        'prod-1',
+        {
+          productName: 'Áo Polo Cập Nhật',
+          colorRatios: [{ id: 'color-2', ratio: '  2:2:1  ' }],
+        },
+        'user-1',
+        { userId: 'user-1', username: 'tester' } as any,
+      );
+
+      expect(txColorRepoMock.save).toHaveBeenCalledTimes(1);
+      expect(txColorRepoMock.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 'color-2',
+          colorName: 'Trắng',
+          ratio: '2:2:1',
+          orderIndex: 1,
+        }),
+      );
+      expect(txColorRepoMock.delete).not.toHaveBeenCalled();
+      expect(txColorSizeRepoMock.delete).not.toHaveBeenCalled();
+      expect(txColorSizeRepoMock.save).not.toHaveBeenCalled();
+      expect(mockAuditService.recordEntityChange).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          changes: expect.arrayContaining([
+            {
+              fieldName: 'Trắng::ratio',
+              oldValue: null,
+              newValue: '2:2:1',
+            },
+          ]),
+        }),
+      );
+    });
+
+    it('rejects colorRatios when a target color was deleted concurrently or when combined with colors', async () => {
+      mockExistingColors = [
+        {
+          id: 'color-1',
+          productId: 'prod-1',
+          colorName: 'Đen',
+          ratio: '1:2:1',
+          orderIndex: 0,
+        },
+      ];
+
+      await expect(
+        service.updateProduct('po-1', 'prod-1', {
+          colorRatios: [{ id: 'color-deleted', ratio: '2:1' }],
+        }),
+      ).rejects.toThrow(BadRequestException);
+
+      await expect(
+        service.updateProduct('po-1', 'prod-1', {
+          colors: [
+            {
+              id: 'color-1',
+              colorName: 'Đen',
+              sizes: [{ sizeLabel: 'M', quantity: 10 }],
+            },
+          ],
+          colorRatios: [{ id: 'color-1', ratio: '2:1' }],
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
     it('creates a brand-new color when the incoming entry has no id (or an id that does not match any existing row)', async () => {
       mockExistingColors = [];
 
