@@ -32,13 +32,16 @@ describe('User management API (e2e)', () => {
     resendPasswordSetup: jest.fn(),
     updateAccountStatus: jest.fn(),
     resetPassword: jest.fn(),
+    deleteUser: jest.fn(),
   };
   let currentPermissions: string[];
+  let currentRoleCode: string;
   let app: INestApplication;
 
   beforeEach(async () => {
     jest.clearAllMocks();
     currentPermissions = ['system.users.manage'];
+    currentRoleCode = 'SA';
     const moduleRef = await Test.createTestingModule({
       controllers: [UserManagementController],
       providers: [
@@ -50,7 +53,7 @@ describe('User management API (e2e)', () => {
         canActivate: (context: ExecutionContext) => {
           context.switchToHttp().getRequest().user = {
             id: '11111111-1111-4111-8111-111111111111',
-            roleCode: 'SA',
+            roleCode: currentRoleCode,
             permissions: currentPermissions,
           };
           return true;
@@ -190,7 +193,7 @@ describe('User management API (e2e)', () => {
       .expect(400);
   });
 
-  it('validates account status reasons and accepts password reset asynchronously', async () => {
+  it('validates account status reasons and accepts a chosen temporary password', async () => {
     const id = '22222222-2222-4222-8222-222222222222';
     userManagementService.updateAccountStatus.mockResolvedValue({
       user: { ...response.data[0], accountStatus: UserAccountStatus.LOCKED },
@@ -198,10 +201,9 @@ describe('User management API (e2e)', () => {
     userManagementService.resetPassword.mockResolvedValue({
       user: {
         ...response.data[0],
-        accountStatus: UserAccountStatus.PENDING_SETUP,
         passwordSetupRequired: true,
       },
-      invitationStatus: 'pending',
+      temporaryPasswordEmailStatus: 'sent',
     });
 
     await request(app.getHttpServer())
@@ -216,7 +218,6 @@ describe('User management API (e2e)', () => {
 
     for (const payload of [
       { accountStatus: 'locked' },
-      { accountStatus: 'inactive', reason: 'Đã nghỉ việc' },
       { accountStatus: 'pending_setup', reason: 'Không hợp lệ' },
     ]) {
       await request(app.getHttpServer())
@@ -226,16 +227,60 @@ describe('User management API (e2e)', () => {
     }
 
     await request(app.getHttpServer())
+      .patch(`/system/users/${id}/account-status`)
+      .send({ accountStatus: 'inactive', reason: 'Đã nghỉ việc' })
+      .expect(200);
+
+    for (const payload of [
+      {},
+      { temporaryPassword: 'short' },
+      { temporaryPassword: 'x'.repeat(73) },
+    ]) {
+      await request(app.getHttpServer())
+        .post(`/system/users/${id}/password-reset`)
+        .send(payload)
+        .expect(400);
+    }
+    expect(userManagementService.resetPassword).not.toHaveBeenCalled();
+
+    await request(app.getHttpServer())
       .post(`/system/users/${id}/password-reset`)
-      .expect(202)
+      .send({ temporaryPassword: 'Temp-Pass-482!' })
+      .expect(200)
       .expect(({ body }) =>
         expect(body).toEqual(
-          expect.objectContaining({ invitationStatus: 'pending' }),
+          expect.objectContaining({ temporaryPasswordEmailStatus: 'sent' }),
         ),
       );
     expect(userManagementService.resetPassword).toHaveBeenCalledWith(
       id,
+      { temporaryPassword: 'Temp-Pass-482!' },
       expect.objectContaining({ roleCode: 'SA' }),
     );
+  });
+
+  it('deletes a user through the authorized endpoint without returning a body', async () => {
+    const id = response.data[0].id;
+    userManagementService.deleteUser.mockResolvedValue(undefined);
+
+    await request(app.getHttpServer())
+      .delete(`/system/users/${id}`)
+      .expect(204);
+
+    expect(userManagementService.deleteUser).toHaveBeenCalledWith(
+      id,
+      expect.objectContaining({ roleCode: 'SA' }),
+    );
+  });
+
+  it('rejects deletion without user-management permission', async () => {
+    currentRoleCode = 'NVKH';
+    currentPermissions = [];
+
+    await request(app.getHttpServer())
+      .delete(`/system/users/${response.data[0].id}`)
+      .expect(403);
+
+    expect(userManagementService.deleteUser).not.toHaveBeenCalled();
   });
 });

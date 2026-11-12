@@ -99,22 +99,6 @@ export class AuthService {
       });
     }
 
-    await this.dataSource.transaction(async (manager) => {
-      await manager.getRepository(User).update(user.id, {
-        loginFailedCount: 0,
-        lockoutUntil: null,
-        lastLoginAt: new Date(),
-      });
-      await this.audit.recordUserChange(manager, {
-        actorId: user.id,
-        actorRole: roleInfo.roleCode,
-        targetId: user.id,
-        targetLabel: user.email,
-        eventType: AuditEventType.LOGIN,
-        changes: [],
-      });
-    });
-
     return this.issueSession(user, roleInfo, meta);
   }
 
@@ -164,12 +148,7 @@ export class AuthService {
       });
     }
 
-    await this.sessionRepository.update(session.id, {
-      revokedAt: new Date(),
-      revokeReason: 'rotated',
-    });
-
-    return this.issueSession(user, roleInfo, meta);
+    return this.issueSession(user, roleInfo, meta, session.id);
   }
 
   async logout(rawToken: string | undefined): Promise<void> {
@@ -355,33 +334,84 @@ export class AuthService {
     user: User,
     roleInfo: RoleInfo,
     meta: SessionMeta,
+    refreshSessionId?: string,
   ): Promise<LoginResult> {
-    const payload: JwtPayload = {
-      sub: user.id,
-      email: user.email,
-      roleCode: roleInfo.roleCode,
-      permissions: roleInfo.permissions,
-      authVersion: user.authVersion,
-    };
-    const accessToken = this.jwtService.sign(payload);
+    return this.dataSource.transaction(async (manager) => {
+      const users = manager.getRepository(User);
+      // Serialize issuance with password changes, which lock the same user row.
+      const currentUser = await users.findOne({
+        where: { id: user.id },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!currentUser || currentUser.authVersion !== user.authVersion) {
+        throw new UnauthorizedException({
+          code: ErrorCode.UNAUTHORIZED,
+          message: 'Phiên đăng nhập không hợp lệ.',
+        });
+      }
+      this.assertAccountUsable(currentUser);
 
-    const refreshToken = generateRefreshToken();
-    const session = this.sessionRepository.create({
-      userId: user.id,
-      refreshTokenHash: hashRefreshToken(refreshToken),
-      userAgent: meta.userAgent,
-      ipAddress: meta.ipAddress,
-      expiresAt: new Date(
-        Date.now() + REFRESH_TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000,
-      ),
+      const sessions = manager.getRepository(UserSession);
+      if (refreshSessionId) {
+        const previousSession = await sessions.findOne({
+          where: { id: refreshSessionId, userId: currentUser.id },
+        });
+        if (
+          !previousSession ||
+          previousSession.revokedAt ||
+          previousSession.expiresAt.getTime() <= Date.now()
+        ) {
+          throw new UnauthorizedException({
+            code: ErrorCode.UNAUTHORIZED,
+            message: 'Phiên đăng nhập đã hết hạn hoặc không hợp lệ.',
+          });
+        }
+        await sessions.update(previousSession.id, {
+          revokedAt: new Date(),
+          revokeReason: 'rotated',
+        });
+      } else {
+        await users.update(currentUser.id, {
+          loginFailedCount: 0,
+          lockoutUntil: null,
+          lastLoginAt: new Date(),
+        });
+        await this.audit.recordUserChange(manager, {
+          actorId: currentUser.id,
+          actorRole: roleInfo.roleCode,
+          targetId: currentUser.id,
+          targetLabel: currentUser.email,
+          eventType: AuditEventType.LOGIN,
+          changes: [],
+        });
+      }
+
+      const payload: JwtPayload = {
+        sub: currentUser.id,
+        email: currentUser.email,
+        roleCode: roleInfo.roleCode,
+        permissions: roleInfo.permissions,
+        authVersion: currentUser.authVersion,
+      };
+      const accessToken = this.jwtService.sign(payload);
+      const refreshToken = generateRefreshToken();
+      const session = sessions.create({
+        userId: currentUser.id,
+        refreshTokenHash: hashRefreshToken(refreshToken),
+        userAgent: meta.userAgent,
+        ipAddress: meta.ipAddress,
+        expiresAt: new Date(
+          Date.now() + REFRESH_TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000,
+        ),
+      });
+      await sessions.save(session);
+
+      return {
+        accessToken,
+        refreshToken,
+        user: this.toAuthUserDto(currentUser, roleInfo),
+      };
     });
-    await this.sessionRepository.save(session);
-
-    return {
-      accessToken,
-      refreshToken,
-      user: this.toAuthUserDto(user, roleInfo),
-    };
   }
 
   private toAuthUserDto(user: User, roleInfo: RoleInfo): AuthUserDto {
@@ -397,6 +427,7 @@ export class AuthService {
         roleInfo.roleCode === 'SA'
           ? PurchaseOrderMode.FULL_ACCESS
           : user.purchaseOrderMode,
+      mustChangePassword: user.mustChangePassword,
     };
   }
 

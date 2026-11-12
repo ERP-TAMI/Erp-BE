@@ -25,6 +25,9 @@ export class AuthUserDto {
 
   @ApiProperty({ enum: PurchaseOrderMode })
   purchaseOrderMode: PurchaseOrderMode;
+
+  @ApiProperty()
+  mustChangePassword: boolean;
 }
 
 export class AuthResponseDto {

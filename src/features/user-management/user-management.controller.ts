@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   HttpStatus,
@@ -12,9 +13,9 @@ import {
   Req,
 } from '@nestjs/common';
 import {
-  ApiAcceptedResponse,
   ApiBearerAuth,
   ApiCreatedResponse,
+  ApiNoContentResponse,
   ApiOkResponse,
   ApiTags,
 } from '@nestjs/swagger';
@@ -32,6 +33,7 @@ import {
   AccountStatusActionDto,
   AccountStatusActionResponseDto,
   PasswordResetResponseDto,
+  SetTemporaryPasswordDto,
 } from './dto/account-action.dto';
 import { QueryUsersDto } from './dto/query-users.dto';
 import { UserListResponseDto } from './dto/user-list-response.dto';
@@ -90,12 +92,23 @@ export class UserManagementController {
   }
 
   @Post(':id/password-reset')
-  @HttpCode(HttpStatus.ACCEPTED)
-  @ApiAcceptedResponse({ type: PasswordResetResponseDto })
+  @HttpCode(HttpStatus.OK)
+  @ApiOkResponse({ type: PasswordResetResponseDto })
   resetPassword(
     @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: SetTemporaryPasswordDto,
     @Req() req: Request & { user: RequestUser },
   ): Promise<PasswordResetResponseDto> {
-    return this.userManagementService.resetPassword(id, req.user);
+    return this.userManagementService.resetPassword(id, dto, req.user);
+  }
+
+  @Delete(':id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiNoContentResponse({ description: 'Inactive user deleted' })
+  deleteUser(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() req: Request & { user: RequestUser },
+  ): Promise<void> {
+    return this.userManagementService.deleteUser(id, req.user);
   }
 }

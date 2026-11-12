@@ -1,11 +1,19 @@
-import { BadRequestException, GoneException, Logger } from '@nestjs/common';
-import { DataSource, EntityManager, Repository } from 'typeorm';
+import {
+  BadRequestException,
+  GoneException,
+  Logger,
+  UnauthorizedException,
+} from '@nestjs/common';
+import { DataSource, EntityManager, IsNull, Repository } from 'typeorm';
 import { PasswordSetupService } from './password-setup.service';
 import { UserPasswordSetupToken } from './entities/UserPasswordSetupToken.entity';
 import { User } from './entities/User.entity';
 import { SmtpMailService } from './smtp-mail.service';
 import { RecordStatus } from '../../common/enums/database.enums';
 import { PasswordTokenPurpose } from './password-token-purpose.enum';
+import { UserSession } from './entities/UserSession.entity';
+import { JwtStrategy } from './strategies/jwt.strategy';
+import { verifyPassword } from '../../common/security/password.util';
 
 function buildUser(): User {
   return {
@@ -15,6 +23,7 @@ function buildUser(): User {
     status: RecordStatus.ACTIVE,
     manuallyLockedAt: null,
     mustChangePassword: true,
+    authVersion: 7,
   } as User;
 }
 
@@ -36,6 +45,7 @@ function buildToken(overrides: Partial<UserPasswordSetupToken> = {}) {
 describe('PasswordSetupService', () => {
   let tokenRepository: jest.Mocked<Repository<UserPasswordSetupToken>>;
   let userRepository: jest.Mocked<Repository<User>>;
+  let sessionRepository: jest.Mocked<Repository<UserSession>>;
   let dataSource: jest.Mocked<DataSource>;
   let mail: jest.Mocked<SmtpMailService>;
   let manager: EntityManager;
@@ -52,9 +62,16 @@ describe('PasswordSetupService', () => {
       findOne: jest.fn().mockResolvedValue(buildUser()),
       save: jest.fn(async (value) => value),
     } as unknown as jest.Mocked<Repository<User>>;
+    sessionRepository = {
+      update: jest.fn().mockResolvedValue({ affected: 2 }),
+    } as unknown as jest.Mocked<Repository<UserSession>>;
     manager = {
       getRepository: jest.fn((entity) =>
-        entity === UserPasswordSetupToken ? tokenRepository : userRepository,
+        entity === UserPasswordSetupToken
+          ? tokenRepository
+          : entity === UserSession
+            ? sessionRepository
+            : userRepository,
       ),
     } as unknown as EntityManager;
     dataSource = {
@@ -213,6 +230,40 @@ describe('PasswordSetupService', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(userRepository.save).not.toHaveBeenCalled();
     expect(setupToken.usedAt).toBeNull();
+  });
+
+  it('invalidates temporary-password access tokens and refresh sessions when setup completes', async () => {
+    const user = buildUser();
+    userRepository.findOne.mockResolvedValue(user);
+    tokenRepository.findOne.mockResolvedValue(buildToken());
+    const strategy = new JwtStrategy(userRepository);
+    const oldPayload = {
+      sub: user.id,
+      email: user.email,
+      roleCode: 'NVKH',
+      permissions: [],
+      authVersion: user.authVersion,
+    };
+    await expect(strategy.validate(oldPayload)).resolves.toMatchObject({
+      mustChangePassword: true,
+    });
+
+    await service.complete('raw-token', 'replacement password');
+
+    await expect(strategy.validate(oldPayload)).rejects.toBeInstanceOf(
+      UnauthorizedException,
+    );
+    expect(user.authVersion).toBe(8);
+    expect(sessionRepository.update).toHaveBeenCalledWith(
+      { userId: user.id, revokedAt: IsNull() },
+      { revokedAt: expect.any(Date), revokeReason: 'password_changed' },
+    );
+    await expect(
+      verifyPassword('replacement password', user.passwordHash),
+    ).resolves.toBe(true);
+    await expect(
+      strategy.validate({ ...oldPayload, authVersion: user.authVersion }),
+    ).resolves.toMatchObject({ mustChangePassword: false });
   });
 
   it('rejects a second active token after another token completed setup', async () => {

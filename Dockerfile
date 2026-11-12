@@ -12,7 +12,8 @@ FROM node:22-alpine AS runtime
 ENV NODE_ENV=production
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev --no-audit --no-fund \
+RUN apk upgrade --no-cache zlib \
+    && npm ci --omit=dev --no-audit --no-fund \
     && npm cache clean --force \
     && rm -rf /usr/local/lib/node_modules/npm /opt/yarn* \
     && rm -f /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/yarn /usr/local/bin/yarnpkg

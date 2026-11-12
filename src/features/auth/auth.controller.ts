@@ -32,6 +32,7 @@ import {
   REFRESH_TOKEN_TTL_DAYS,
 } from './auth.constants';
 import { RequestUser } from './jwt-payload.type';
+import { AllowForcedPasswordChange } from '../../common/guards/jwt-auth.guard';
 import {
   CompletePasswordSetupDto,
   PasswordSetupValidationResponseDto,
@@ -173,6 +174,7 @@ export class AuthController {
   }
 
   @Get('me')
+  @AllowForcedPasswordChange()
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiOkResponse({ type: AuthUserDto })
@@ -209,6 +211,7 @@ export class AuthController {
   }
 
   @Patch('me/password')
+  @AllowForcedPasswordChange()
   @HttpCode(HttpStatus.NO_CONTENT)
   @UseGuards(JwtAuthGuard, ThrottlerGuard)
   @Throttle({

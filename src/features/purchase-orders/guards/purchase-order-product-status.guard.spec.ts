@@ -15,6 +15,7 @@ function makeUser(
     roleCode,
     permissions,
     purchaseOrderMode,
+    mustChangePassword: false,
   };
 }
 

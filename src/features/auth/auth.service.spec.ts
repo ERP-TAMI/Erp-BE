@@ -78,7 +78,9 @@ describe('AuthService', () => {
       update: jest.fn(),
     } as unknown as jest.Mocked<Repository<UserSession>>;
     const manager = {
-      getRepository: jest.fn(() => userRepository),
+      getRepository: jest.fn((entity: unknown) =>
+        entity === User ? userRepository : sessionRepository,
+      ),
     } as unknown as EntityManager;
     dataSource = {
       query: jest.fn().mockResolvedValue(roleInfoRow),
@@ -117,6 +119,18 @@ describe('AuthService', () => {
   });
 
   describe('login', () => {
+    it('does not issue a session if the password was replaced after credential verification', async () => {
+      const user = buildUser({ mustChangePassword: true });
+      userRepository.findOne
+        .mockResolvedValueOnce(user)
+        .mockResolvedValueOnce(buildUser({ authVersion: 2 }));
+      jest.spyOn(passwordUtil, 'verifyPassword').mockResolvedValue(true);
+
+      await expect(
+        service.login(user.email, 'temporary-password', {}),
+      ).rejects.toBeInstanceOf(UnauthorizedException);
+      expect(sessionRepository.save).not.toHaveBeenCalled();
+    });
     it('rejects an unknown email with a generic invalid-credentials error', async () => {
       userRepository.findOne.mockResolvedValue(null);
 
@@ -254,6 +268,17 @@ describe('AuthService', () => {
   });
 
   describe('refresh', () => {
+    it('does not rotate a session revoked after the initial refresh-token lookup', async () => {
+      sessionRepository.findOne
+        .mockResolvedValueOnce(buildSession())
+        .mockResolvedValueOnce(buildSession({ revokedAt: new Date() }));
+      userRepository.findOne.mockResolvedValue(buildUser());
+
+      await expect(service.refresh('raw-token', {})).rejects.toBeInstanceOf(
+        UnauthorizedException,
+      );
+      expect(sessionRepository.save).not.toHaveBeenCalled();
+    });
     it('rejects when no refresh token is provided', async () => {
       await expect(service.refresh(undefined, {})).rejects.toBeInstanceOf(
         UnauthorizedException,

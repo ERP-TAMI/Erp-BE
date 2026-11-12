@@ -5,6 +5,7 @@ describe('redactSensitiveData', () => {
     const result = redactSensitiveData({
       email: 'user@example.com',
       password: 'secret',
+      temporaryPassword: 'temporary-secret',
       Token: 'jwt-value',
       nested: { refreshToken: 'refresh-value', keep: 'kept' },
     });
@@ -12,6 +13,7 @@ describe('redactSensitiveData', () => {
     expect(result).toEqual({
       email: 'user@example.com',
       password: '[REDACTED]',
+      temporaryPassword: '[REDACTED]',
       Token: '[REDACTED]',
       nested: { refreshToken: '[REDACTED]', keep: 'kept' },
     });

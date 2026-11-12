@@ -45,6 +45,7 @@ import {
   AccountStatusActionDto,
   AccountStatusActionResponseDto,
   PasswordResetResponseDto,
+  SetTemporaryPasswordDto,
 } from './dto/account-action.dto';
 import { AuditService } from '../audit/audit.service';
 import { SmtpMailService } from '../auth/smtp-mail.service';
@@ -299,11 +300,16 @@ export class UserManagementService {
 
       const previousStatus = this.deriveAccountStatus(user);
       if (previousStatus === UserAccountStatus.INACTIVE) {
-        throw new ConflictException({
-          code: ErrorCode.CONFLICT,
-          message:
-            'Tài khoản vô hiệu hóa cũ chỉ được giữ để tra cứu và không thể thay đổi trạng thái.',
-        });
+        if (dto.accountStatus !== UserAccountStatus.INACTIVE) {
+          throw new ConflictException({
+            code: ErrorCode.CONFLICT,
+            message: 'Không thể kích hoạt lại tài khoản đã vô hiệu hóa.',
+          });
+        }
+        return {
+          response: { user: this.toUserItem(user, role.code, role.name) },
+          accountRestrictionNotification: null,
+        };
       }
       const changesState =
         dto.accountStatus !== previousStatus ||
@@ -341,7 +347,10 @@ export class UserManagementService {
           this.accountSessionRevokeReason(dto.accountStatus),
         );
       }
-      if (dto.accountStatus === UserAccountStatus.LOCKED) {
+      if (
+        dto.accountStatus === UserAccountStatus.LOCKED ||
+        dto.accountStatus === UserAccountStatus.INACTIVE
+      ) {
         await this.passwordSetup.revokeActive(manager, id);
       }
       await this.audit.recordUserChange(manager, {
@@ -350,7 +359,7 @@ export class UserManagementService {
         targetId: user.id,
         targetLabel: user.email,
         eventType: AuditEventType.STATUS_CHANGED,
-        reason: this.accountStatusAuditReason(reason),
+        reason: this.accountStatusAuditReason(reason, dto.accountStatus),
         changes: [
           {
             fieldName: 'accountStatus',
@@ -400,6 +409,7 @@ export class UserManagementService {
 
   async resetPassword(
     id: string,
+    dto: SetTemporaryPasswordDto,
     actor: { id: string; roleCode: string },
   ): Promise<PasswordResetResponseDto> {
     const result = await this.dataSource.transaction(async (manager) => {
@@ -416,48 +426,112 @@ export class UserManagementService {
         targetId: id,
         targetRole: role.code,
       });
-      if (user.mustChangePassword) {
-        throw new BadRequestException({
-          code: ErrorCode.BAD_REQUEST,
-          message:
-            'Người dùng đang chờ đặt mật khẩu. Hãy dùng thao tác gửi lại email.',
+      if (
+        user.status === RecordStatus.INACTIVE ||
+        this.deriveAccountStatus(user) === UserAccountStatus.LOCKED
+      ) {
+        throw new ConflictException({
+          code: ErrorCode.CONFLICT,
+          message: 'Chỉ có thể đặt mật khẩu tạm cho tài khoản đang hoạt động.',
         });
       }
 
-      user.passwordHash = await hashPassword(randomBytes(32).toString('hex'));
+      const wasPasswordSetupRequired = user.mustChangePassword;
+      user.passwordHash = await hashPassword(dto.temporaryPassword);
       user.mustChangePassword = true;
       user.authVersion += 1;
       await userRepository.save(user);
       await this.revokeSessions(manager, id, 'password_reset');
+      await this.passwordSetup.revokeActive(manager, id);
       await this.audit.recordUserChange(manager, {
         actorId: actor.id,
         actorRole: actor.roleCode,
         targetId: user.id,
         targetLabel: user.email,
         eventType: AuditEventType.UPDATED,
-        reason: 'Quản trị viên yêu cầu đặt lại mật khẩu.',
+        reason: 'Quản trị viên đặt mật khẩu tạm cho người dùng.',
         changes: [
           {
             fieldName: 'passwordSetupRequired',
-            oldValue: false,
+            oldValue: wasPasswordSetupRequired,
             newValue: true,
           },
         ],
       });
-      const invitation = await this.passwordSetup.issue(manager, id, actor.id);
-      return { user, role, invitation };
+      return { user, role };
     });
 
-    this.deliverInBackground(result.invitation);
+    let temporaryPasswordEmailStatus: 'sent' | 'failed' = 'failed';
+    try {
+      await this.mail.sendTemporaryPasswordEmail({
+        email: result.user.email,
+        fullName: result.user.fullName,
+        temporaryPassword: dto.temporaryPassword,
+      });
+      temporaryPasswordEmailStatus = 'sent';
+    } catch {
+      temporaryPasswordEmailStatus = 'failed';
+    }
     return {
       user: this.toUserItem(
         result.user,
         result.role.code,
         result.role.name,
-        PasswordSetupEmailStatus.PENDING,
+        null,
       ),
-      invitationStatus: 'pending',
+      temporaryPasswordEmailStatus,
     };
+  }
+
+  async deleteUser(
+    id: string,
+    actor: { id: string; roleCode: string },
+  ): Promise<void> {
+    try {
+      await this.dataSource.transaction(async (manager) => {
+        const userRepository = manager.getRepository(User);
+        const user = await userRepository.findOne({
+          where: { id },
+          lock: { mode: 'pessimistic_write' },
+        });
+        if (!user) this.throwUserNotFound();
+        if (user.status !== RecordStatus.INACTIVE) {
+          throw new ConflictException({
+            code: ErrorCode.CONFLICT,
+            message: 'Chỉ có thể xóa người dùng đã vô hiệu hóa.',
+          });
+        }
+        const role = await this.currentRole(id, manager);
+        assertCanManageAccountAction({
+          actorId: actor.id,
+          actorRole: actor.roleCode,
+          targetId: id,
+          targetRole: role.code,
+        });
+        await this.audit.recordUserChange(manager, {
+          actorId: actor.id,
+          actorRole: actor.roleCode,
+          targetId: user.id,
+          targetLabel: user.email,
+          eventType: AuditEventType.DELETED,
+          reason: 'Quản trị viên xóa người dùng đã vô hiệu hóa.',
+          changes: [],
+        });
+        await userRepository.delete({ id });
+      });
+    } catch (error) {
+      if (
+        error instanceof QueryFailedError &&
+        (error.driverError as { code?: string }).code === '23503'
+      ) {
+        throw new ConflictException({
+          code: ErrorCode.CONFLICT,
+          message:
+            'Không thể xóa người dùng vì còn dữ liệu nghiệp vụ đang tham chiếu đến tài khoản này.',
+        });
+      }
+      throw error;
+    }
   }
 
   async findAll(query: QueryUsersDto): Promise<UserListResponseDto> {
@@ -645,15 +719,28 @@ export class UserManagementService {
     nextStatus: EditableUserAccountStatus,
   ): string {
     if (nextStatus === UserAccountStatus.LOCKED) return 'account_locked';
+    if (nextStatus === UserAccountStatus.INACTIVE) return 'account_deactivated';
     return 'account_unlocked';
   }
 
-  private accountStatusAuditReason(reason?: string): string {
+  private accountStatusAuditReason(
+    reason: string | undefined,
+    status: EditableUserAccountStatus,
+  ): string {
     if (reason) return reason;
+    if (status === UserAccountStatus.INACTIVE)
+      return 'Quản trị viên vô hiệu hóa người dùng.';
     return 'Quản trị viên mở khóa tài khoản.';
   }
 
   private accountState(status: EditableUserAccountStatus, actorId: string) {
+    if (status === UserAccountStatus.INACTIVE) {
+      return {
+        status: RecordStatus.INACTIVE,
+        manuallyLockedAt: null,
+        manuallyLockedBy: null,
+      };
+    }
     if (status === UserAccountStatus.LOCKED) {
       return {
         status: RecordStatus.ACTIVE,

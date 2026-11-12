@@ -4,6 +4,7 @@ import {
   IsNotEmpty,
   IsString,
   MaxLength,
+  MinLength,
   ValidateIf,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
@@ -40,10 +41,19 @@ export class AccountStatusActionResponseDto {
   user: UserListItemResponseDto;
 }
 
+export class SetTemporaryPasswordDto {
+  @ApiProperty({ minLength: 8, maxLength: 72 })
+  @IsString()
+  @IsNotEmpty()
+  @MinLength(8)
+  @MaxLength(72)
+  temporaryPassword: string;
+}
+
 export class PasswordResetResponseDto {
   @ApiProperty({ type: UserListItemResponseDto })
   user: UserListItemResponseDto;
 
-  @ApiProperty({ enum: ['pending'] })
-  invitationStatus: 'pending';
+  @ApiProperty({ enum: ['sent', 'failed'] })
+  temporaryPasswordEmailStatus: 'sent' | 'failed';
 }
