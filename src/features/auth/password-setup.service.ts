@@ -11,6 +11,7 @@ import { ErrorCode } from '../../common/enums/error-code.enum';
 import { RecordStatus } from '../../common/enums/database.enums';
 import { hashPassword } from '../../common/security/password.util';
 import { User } from './entities/User.entity';
+import { UserSession } from './entities/UserSession.entity';
 import { UserPasswordSetupToken } from './entities/UserPasswordSetupToken.entity';
 import {
   generatePasswordSetupToken,
@@ -165,7 +166,14 @@ export class PasswordSetupService {
       const passwordHash = await hashPassword(password);
       user.passwordHash = passwordHash;
       user.mustChangePassword = false;
+      user.authVersion += 1;
       await userRepository.save(user);
+      await manager
+        .getRepository(UserSession)
+        .update(
+          { userId: user.id, revokedAt: IsNull() },
+          { revokedAt: new Date(), revokeReason: 'password_changed' },
+        );
       setupToken.usedAt = new Date();
       await tokenRepository.save(setupToken);
     });
