@@ -72,6 +72,7 @@ import {
   CreatePoProductDto,
   UpdatePoProductDto,
   ProductColorItemDto,
+  ProductColorRatioItemDto,
   SaveProductOperationStepsDto,
   CreateProductSampleRoundDto,
   UpdateProductSampleRoundDto,
@@ -360,6 +361,12 @@ function formatColorSizes(
   return sizes.length === 0
     ? '(không có size)'
     : sizes.map((s) => `${s.sizeLabel}: ${Number(s.quantity)}`).join(' · ');
+}
+
+function normalizeColorRatio(ratio?: string | null): string | null {
+  if (ratio === null || ratio === undefined) return null;
+  const trimmed = String(ratio).trim();
+  return trimmed.length > 0 ? trimmed : null;
 }
 
 @Injectable()
@@ -2293,6 +2300,7 @@ export class PurchaseOrdersService {
         acc[c.productId].push({
           id: c.id,
           colorName: c.colorName,
+          ratio: c.ratio ?? null,
           orderIndex: c.orderIndex,
           sizes: colorSizes.map((s) => ({
             id: s.id,
@@ -2509,6 +2517,7 @@ export class PurchaseOrdersService {
       return {
         id: c.id,
         colorName: c.colorName,
+        ratio: c.ratio ?? null,
         orderIndex: c.orderIndex,
         sizes: colorSizes,
         totalQuantity: colorQty,
@@ -3004,6 +3013,7 @@ export class PurchaseOrdersService {
             const colorEntity = manager.create(PurchaseOrderProductColor, {
               productId: savedProduct.id,
               colorName: cDto.colorName.trim(),
+              ratio: normalizeColorRatio(cDto.ratio),
               orderIndex: cIdx,
             });
             const savedColor = await manager.save(
@@ -3040,11 +3050,26 @@ export class PurchaseOrdersService {
           : undefined,
         changes: [
           ...auditDiff(null, savedProduct, PRODUCT_AUDIT_FIELDS),
-          ...(dto.colors ?? []).map((color) => ({
-            fieldName: `${color.colorName.trim()}::sizes`,
-            oldValue: null,
-            newValue: formatColorSizes(color.sizes ?? []),
-          })),
+          ...(dto.colors ?? []).flatMap((color) => {
+            const trimmedName = color.colorName.trim();
+            const normalizedRatio = normalizeColorRatio(color.ratio);
+            return [
+              ...(normalizedRatio !== null
+                ? [
+                    {
+                      fieldName: `${trimmedName}::ratio`,
+                      oldValue: null,
+                      newValue: normalizedRatio,
+                    },
+                  ]
+                : []),
+              {
+                fieldName: `${trimmedName}::sizes`,
+                oldValue: null,
+                newValue: formatColorSizes(color.sizes ?? []),
+              },
+            ];
+          }),
         ],
       });
 
@@ -3108,6 +3133,12 @@ export class PurchaseOrdersService {
     product.updatedBy = userId || product.updatedBy;
     product.updatedAt = new Date();
 
+    if (dto.colors !== undefined && dto.colorRatios !== undefined) {
+      throw new BadRequestException(
+        'Không thể gửi đồng thời colors và colorRatios trong cùng một yêu cầu cập nhật.',
+      );
+    }
+
     const incomingColors =
       dto.colors === undefined
         ? undefined
@@ -3116,11 +3147,39 @@ export class PurchaseOrdersService {
           : [];
     if (incomingColors) this.validateColorsBusinessRules(incomingColors);
 
+    const incomingColorRatios =
+      dto.colorRatios === undefined
+        ? undefined
+        : Array.isArray(dto.colorRatios)
+          ? dto.colorRatios
+          : [];
+    if (incomingColorRatios) {
+      const seenColorIds = new Set<string>();
+      for (const item of incomingColorRatios) {
+        const trimmedId = item.id?.trim();
+        if (!trimmedId) {
+          throw new BadRequestException('ID màu cập nhật tỷ lệ không hợp lệ.');
+        }
+        if (seenColorIds.has(trimmedId)) {
+          throw new BadRequestException(
+            'Danh sách cập nhật tỷ lệ chứa ID màu bị trùng lặp.',
+          );
+        }
+        seenColorIds.add(trimmedId);
+      }
+    }
+
     return this.dataSource.transaction(async (manager) => {
       const saved = await manager.save(PurchaseOrderProduct, product);
-      const sizeChanges = incomingColors
+      const colorChanges = incomingColors
         ? await this.replaceProductColors(manager, productId, incomingColors)
-        : [];
+        : incomingColorRatios && incomingColorRatios.length > 0
+          ? await this.updateProductColorRatios(
+              manager,
+              productId,
+              incomingColorRatios,
+            )
+          : [];
       await this.recordAudit(manager, actor, {
         aggregateType: AUDIT_TYPE.PRODUCT,
         aggregateId: productId,
@@ -3130,11 +3189,56 @@ export class PurchaseOrdersService {
         reason: dto.reason || undefined,
         changes: [
           ...auditDiff(before, product, PRODUCT_AUDIT_FIELDS),
-          ...sizeChanges,
+          ...colorChanges,
         ],
       });
       return saved;
     });
+  }
+
+  /**
+   * Cập nhật riêng cột ratio của từng màu theo ID mà không thay thế danh sách
+   * màu hay xóa/tạo lại size breakdown — tránh ghi đè dữ liệu màu/size do người
+   * khác vừa cập nhật song song khi người dùng chỉ sửa ở modal Thông tin chung.
+   */
+  private async updateProductColorRatios(
+    manager: EntityManager,
+    productId: string,
+    incomingColorRatios: ProductColorRatioItemDto[],
+  ): Promise<EntityFieldChange[]> {
+    const existingColors = await manager.find(PurchaseOrderProductColor, {
+      where: { productId },
+    });
+    const existingById = new Map(
+      existingColors
+        .filter((c) => !c.productId || c.productId === productId)
+        .map((c) => [c.id, c]),
+    );
+    const changes: EntityFieldChange[] = [];
+
+    for (const item of incomingColorRatios) {
+      const targetId = item.id.trim();
+      const existing = existingById.get(targetId);
+      if (!existing) {
+        throw new BadRequestException(
+          'Một hoặc nhiều màu cần cập nhật tỷ lệ không còn tồn tại. Vui lòng tải lại dữ liệu mới nhất.',
+        );
+      }
+
+      const oldRatio = existing.ratio ?? null;
+      const nextRatio = normalizeColorRatio(item.ratio);
+      if (oldRatio === nextRatio) continue;
+
+      existing.ratio = nextRatio;
+      await manager.save(PurchaseOrderProductColor, existing);
+      changes.push({
+        fieldName: `${existing.colorName}::ratio`,
+        oldValue: oldRatio,
+        newValue: nextRatio,
+      });
+    }
+
+    return changes;
   }
 
   /**
@@ -3176,16 +3280,25 @@ export class PurchaseOrdersService {
         const colorName = cDto.colorName.trim();
         const existing = cDto.id ? existingById.get(cDto.id) : undefined;
         const oldName = existing?.colorName;
+        const oldRatio = existing ? (existing.ratio ?? null) : null;
+        const nextRatio =
+          cDto.ratio !== undefined
+            ? normalizeColorRatio(cDto.ratio)
+            : existing
+              ? (existing.ratio ?? null)
+              : null;
 
         let savedColor: PurchaseOrderProductColor;
         if (existing) {
           existing.colorName = colorName;
+          existing.ratio = nextRatio;
           existing.orderIndex = cIdx;
           savedColor = await manager.save(PurchaseOrderProductColor, existing);
         } else {
           const newColor = manager.create(PurchaseOrderProductColor, {
             productId,
             colorName,
+            ratio: nextRatio,
             orderIndex: cIdx,
           });
           savedColor = await manager.save(PurchaseOrderProductColor, newColor);
@@ -3221,6 +3334,13 @@ export class PurchaseOrdersService {
             fieldName: `${colorName}::colorName`,
             oldValue: oldName,
             newValue: colorName,
+          });
+        }
+        if (oldRatio !== nextRatio) {
+          changes.push({
+            fieldName: `${colorName}::ratio`,
+            oldValue: oldRatio,
+            newValue: nextRatio,
           });
         }
         if (oldSizes !== newSizes) {

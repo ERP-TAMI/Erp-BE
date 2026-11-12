@@ -11,6 +11,9 @@ export class PurchaseOrderProductColor {
   @Column({ type: 'varchar', length: 100, name: 'color_name' })
   colorName: string;
 
+  @Column({ type: 'varchar', length: 100, nullable: true, name: 'ratio' })
+  ratio: string | null;
+
   @Column({ type: 'int', default: 0, name: 'order_index' })
   orderIndex: number;
 }

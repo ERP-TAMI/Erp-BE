@@ -77,6 +77,7 @@ export const ENTITY_AUDIT_CONFIG: Record<string, EntityAuditConfig> = {
       status: 'Trạng thái',
       sizes: 'Size & số lượng',
       colorName: 'Tên màu',
+      ratio: 'Tỷ lệ',
     },
     fieldValueLabels: {
       // Sản phẩm PO chỉ còn 2 trạng thái thực tế: Đang xử lý / Khoá.

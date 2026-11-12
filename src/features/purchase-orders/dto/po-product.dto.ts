@@ -42,6 +42,17 @@ export class ProductColorItemDto {
   colorName: string;
 
   @ApiPropertyOptional({
+    description: 'Tỷ lệ riêng của màu (nếu chưa nhập thì lưu null)',
+    example: '1:2:1',
+    maxLength: 100,
+    nullable: true,
+  })
+  @IsOptional()
+  @IsString({ message: 'ratio phải là chuỗi ký tự' })
+  @MaxLength(100, { message: 'ratio không vượt quá 100 ký tự' })
+  ratio?: string | null;
+
+  @ApiPropertyOptional({
     description: 'Bảng size breakdown của màu',
     type: [ProductColorSizeItemDto],
   })
@@ -50,6 +61,24 @@ export class ProductColorItemDto {
   @ValidateNested({ each: true })
   @Type(() => ProductColorSizeItemDto)
   sizes?: ProductColorSizeItemDto[];
+}
+
+export class ProductColorRatioItemDto {
+  @ApiProperty({ description: 'ID màu của sản phẩm cần cập nhật tỷ lệ' })
+  @IsString({ message: 'id màu phải là chuỗi ký tự' })
+  @IsNotEmpty({ message: 'id màu không được để trống' })
+  id: string;
+
+  @ApiPropertyOptional({
+    description: 'Tỷ lệ riêng của màu (nếu để trống thì lưu null)',
+    example: '1:2:1',
+    maxLength: 100,
+    nullable: true,
+  })
+  @IsOptional()
+  @IsString({ message: 'ratio phải là chuỗi ký tự' })
+  @MaxLength(100, { message: 'ratio không vượt quá 100 ký tự' })
+  ratio?: string | null;
 }
 
 export class CreatePoProductDto {
@@ -310,6 +339,17 @@ export class UpdatePoProductDto {
   @ValidateNested({ each: true })
   @Type(() => ProductColorItemDto)
   colors?: ProductColorItemDto[];
+
+  @ApiPropertyOptional({
+    description:
+      'Danh sách tỷ lệ cập nhật riêng theo từng màu (không thay thế cơ cấu màu/size)',
+    type: [ProductColorRatioItemDto],
+  })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ProductColorRatioItemDto)
+  colorRatios?: ProductColorRatioItemDto[];
 }
 
 export class ProductStepItemDto {
